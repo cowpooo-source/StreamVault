@@ -382,9 +382,10 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 // PLAYER COMPONENT (TiviMate-level keyboard + OSD + PiP + quick-ch)
 // ══════════════════════════════════════════════════════════════════
 function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
-  const videoRef = useRef(null);
-  const hlsRef   = useRef(null);
-  const osdTimer = useRef(null);
+  const videoRef   = useRef(null);
+  const hlsRef     = useRef(null);
+  const mpegtsRef  = useRef(null);
+  const osdTimer   = useRef(null);
   const [osd, setOsd]         = useState(true);
   const [showQCH, setShowQCH] = useState(false);
   const [qchTimer, setQchTimer] = useState(null);
@@ -400,10 +401,15 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
     osdTimer.current = setTimeout(() => setOsd(false), 3500);
   }, []);
 
+  function destroyPlayers() {
+    if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
+    if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
+  }
+
   function initPlayer(url) {
     const video = videoRef.current;
     if (!video) return;
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    destroyPlayers();
     video.removeAttribute("src");
 
     function startHls(u) {
@@ -418,15 +424,35 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
       }
     }
 
-    const needHls = url.includes(".m3u8") || url.includes("/live/") || url.includes("/movie/");
-    if (needHls) {
-      if (window.Hls) startHls(url);
-      else {
-        const s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js";
-        s.onload = () => startHls(url);
-        document.head.appendChild(s);
+    function startMpegts(u) {
+      if (!window.mpegts?.isSupported()) {
+        video.src = u; video.play().catch(()=>{}); return;
       }
+      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: u },
+        { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
+      mpegtsRef.current = player;
+      player.attachMediaElement(video);
+      player.load();
+      player.play().catch(()=>{});
+    }
+
+    function loadScript(src, cb) {
+      if (document.querySelector(`script[src="${src}"]`)) { cb(); return; }
+      const s = document.createElement("script");
+      s.src = src; s.onload = cb; document.head.appendChild(s);
+    }
+
+    const needTs  = url.includes("extension=ts") || /\.ts(\?|$)/.test(url);
+    const needHls = !needTs && (url.includes(".m3u8") || url.includes("/live/") || url.includes("/movie/"));
+
+    if (needTs) {
+      if (window.mpegts) startMpegts(url);
+      else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
+                      () => startMpegts(url));
+    } else if (needHls) {
+      if (window.Hls) startHls(url);
+      else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
+                      () => startHls(url));
     } else {
       video.src = url; video.play().catch(()=>{});
     }
@@ -436,7 +462,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
     initPlayer(current.url);
     showOSD();
     return () => {
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      destroyPlayers();
       clearTimeout(osdTimer.current);
     };
   }, [current.url]);
