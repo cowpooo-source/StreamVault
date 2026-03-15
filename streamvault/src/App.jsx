@@ -447,9 +447,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
     if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
   }
 
+  const [streamErr, setStreamErr] = useState(null);
+
   function initPlayer(url) {
     const video = videoRef.current;
     if (!video || !url) return;
+    setStreamErr(null);
+    if (location.protocol === "https:" && url.startsWith("http://")) {
+      setStreamErr("This stream uses HTTP and cannot be played on an HTTPS page. Use the local version of StreamVault (http://localhost) or ask your provider for HTTPS streams.");
+      return;
+    }
     destroyPlayers();
     video.removeAttribute("src");
 
@@ -600,6 +607,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
       <div className="player-wrap">
         <div style={{ position:"relative" }}>
           <video ref={videoRef} className="player-video" controls playsInline />
+          {streamErr && (
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
+              background:"rgba(0,0,0,.85)",padding:"2rem",textAlign:"center"}}>
+              <div style={{maxWidth:"380px"}}>
+                <div style={{fontSize:"2rem",marginBottom:".75rem"}}>🔒</div>
+                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:500,marginBottom:".5rem"}}>Mixed Content Blocked</div>
+                <div style={{fontSize:".78rem",color:"var(--t2)",lineHeight:1.6}}>{streamErr}</div>
+              </div>
+            </div>
+          )}
           {/* OSD */}
           {osd && (
             <div className="osd" onClick={showOSD}>
