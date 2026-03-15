@@ -25,10 +25,8 @@ function cacheKey(portal, mac) {
 }
 
 function normalizePortal(url) {
-  // Make sure it ends with /c/  (Stalker portal path)
-  url = url.replace(/\/+$/, "");
-  if (!url.endsWith("/c")) url += "/c";
-  return url + "/";
+  // Strip trailing slashes, ensure it ends with /
+  return url.replace(/\/+$/, "") + "/";
 }
 
 // Build Stalker-style headers
@@ -44,22 +42,40 @@ function stalkerHeaders(mac, token = "") {
 }
 
 // Fetch a token from the portal (handshake)
+// Tries the given base first, then falls back to base + "c/" for portals
+// that use /c/ as their Stalker path
 async function fetchToken(portalBase, mac) {
   const key = cacheKey(portalBase, mac);
   const cached = tokenCache.get(key);
   if (cached && cached.expires > Date.now()) return cached.token;
 
-  const url = `${portalBase}server/load.php?type=stb&action=handshake&prehash=0&token=&JsHttpRequest=1-xml`;
-  const res  = await fetch(url, { headers: stalkerHeaders(mac), timeout: 8000 });
-  if (!res.ok) throw new Error(`Handshake failed: HTTP ${res.status}`);
+  const qs = "server/load.php?type=stb&action=handshake&prehash=0&token=&JsHttpRequest=1-xml";
+  const headers = stalkerHeaders(mac);
+  const stripped = portalBase.replace(/\/+$/, "");
+  const bases = [portalBase];
+  // Try with /c/ appended or removed to handle both portal styles
+  if (stripped.endsWith("/c")) bases.push(stripped.replace(/\/c$/, "") + "/");
+  else bases.push(stripped + "/c/");
 
-  const data  = await res.json();
-  const token = data?.js?.token;
-  if (!token) throw new Error("No token in handshake response");
+  for (const base of bases) {
+    try {
+      const res = await fetch(`${base}${qs}`, { headers, timeout: 8000 });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const token = data?.js?.token;
+      if (!token) continue;
+      // Cache for 4 hours, remembering the working base
+      tokenCache.set(key, { token, base, expires: Date.now() + 4 * 60 * 60 * 1000 });
+      return token;
+    } catch { continue; }
+  }
+  throw new Error("Handshake failed: could not obtain token from portal");
+}
 
-  // Cache for 4 hours
-  tokenCache.set(key, { token, expires: Date.now() + 4 * 60 * 60 * 1000 });
-  return token;
+// Get the resolved base URL for a portal (uses cached result from handshake)
+function resolvedBase(portal, mac) {
+  const cached = tokenCache.get(cacheKey(normalizePortal(portal), mac));
+  return cached?.base || normalizePortal(portal);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -94,10 +110,11 @@ app.get("/stalker/api", async (req, res) => {
   try {
     const portalBase = normalizePortal(portal);
     const token      = await fetchToken(portalBase, mac);
+    const base       = resolvedBase(portal, mac);
 
     // Build the upstream URL
     const qs  = new URLSearchParams({ ...apiParams, JsHttpRequest: "1-xml" }).toString();
-    const url = `${portalBase}server/load.php?${qs}`;
+    const url = `${base}server/load.php?${qs}`;
 
     const upstream = await fetch(url, {
       headers: stalkerHeaders(mac, token),
@@ -125,17 +142,18 @@ app.get("/stalker/channels", async (req, res) => {
   try {
     const portalBase = normalizePortal(portal);
     const token      = await fetchToken(portalBase, mac);
+    const base       = resolvedBase(portal, mac);
     const headers    = stalkerHeaders(mac, token);
 
     // 1. Get genre list
-    const genreURL = `${portalBase}server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml`;
+    const genreURL = `${base}server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml`;
     const genreRes = await fetch(genreURL, { headers, timeout: 10000 });
     const genreData = await genreRes.json();
     const genres = genreData?.js || [];
     const genreMap = Object.fromEntries(genres.map(g => [g.id, g.title]));
 
     // 2. Get all channels (page 1, large limit)
-    const chURL = `${portalBase}server/load.php?type=itv&action=get_all_channels&JsHttpRequest=1-xml`;
+    const chURL = `${base}server/load.php?type=itv&action=get_all_channels&JsHttpRequest=1-xml`;
     const chRes  = await fetch(chURL, { headers, timeout: 15000 });
     const chData = await chRes.json();
     const channels = chData?.js?.data || [];
@@ -166,9 +184,10 @@ app.get("/stalker/vod", async (req, res) => {
   try {
     const portalBase = normalizePortal(portal);
     const token      = await fetchToken(portalBase, mac);
+    const base       = resolvedBase(portal, mac);
     const headers    = stalkerHeaders(mac, token);
 
-    const url = `${portalBase}server/load.php?type=vod&action=get_ordered_list&category=${category}&page=${page}&p=${page}&JsHttpRequest=1-xml`;
+    const url = `${base}server/load.php?type=vod&action=get_ordered_list&category=${category}&page=${page}&p=${page}&JsHttpRequest=1-xml`;
     const upstream = await fetch(url, { headers, timeout: 12000 });
     const data = await upstream.json();
 
@@ -199,9 +218,10 @@ app.get("/stalker/stream", async (req, res) => {
   try {
     const portalBase = normalizePortal(portal);
     const token      = await fetchToken(portalBase, mac);
+    const base       = resolvedBase(portal, mac);
     const headers    = stalkerHeaders(mac, token);
 
-    const url = `${portalBase}server/load.php?type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&series=0&forced_storage=0&disable_ad=0&download=0&force_ch_link_check=0&JsHttpRequest=1-xml`;
+    const url = `${base}server/load.php?type=itv&action=create_link&cmd=${encodeURIComponent(cmd)}&series=0&forced_storage=0&disable_ad=0&download=0&force_ch_link_check=0&JsHttpRequest=1-xml`;
     const upstream = await fetch(url, { headers, timeout: 10000 });
     const data = await upstream.json();
 
