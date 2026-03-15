@@ -961,6 +961,21 @@ export default function App() {
     finally { setLoading(false); }
   }
 
+  async function fetchStalkerSeries() {
+    if (!conn || conn.type !== "stalker" || series.length) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${PROXY}/stalker/series?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setSeries((data.items || []).map(s => ({
+        ...s,
+        group: /^\d+$/.test(String(s.group)) ? "Series" : (s.group || "Other"),
+      })));
+    } catch(e) { console.error("Stalker series error:", e); }
+    finally { setLoading(false); }
+  }
+
   async function resolveStalkerStream(item) {
     try {
       const res = await fetch(`${PROXY}/stalker/stream?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(item._stalkerCmd)}`);
@@ -996,7 +1011,7 @@ export default function App() {
   function switchSection(s) {
     setSection(s); setCat("All"); setSearch(""); setPage(1);
     if (s==="vod") { conn?.type==="stalker" ? fetchStalkerVOD() : fetchVOD(); }
-    else if (s==="series") fetchSeries();
+    else if (s==="series") { conn?.type==="stalker" ? fetchStalkerSeries() : fetchSeries(); }
     else if (s==="search") setSection("search");
   }
 

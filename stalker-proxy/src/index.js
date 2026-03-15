@@ -295,6 +295,38 @@ app.get("/stalker/stream", async (req, res) => {
   }
 });
 
+// ── GET /stalker/series
+app.get("/stalker/series", async (req, res) => {
+  const { portal, mac, page = 1, category = "*" } = req.query;
+  if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+  try {
+    const session = await getSession(portal, mac);
+    const [catData, data] = await Promise.all([
+      portalFetch(session, { type: "series", action: "get_categories" }, 10000),
+      portalFetch(session, { type: "series", action: "get_ordered_list", category, page, p: page }),
+    ]);
+
+    const cats = catData?.js || [];
+    const catMap = Object.fromEntries(cats.map(c => [c.id, c.title]));
+
+    const items = (data?.js?.data || []).map(s => ({
+      id:    s.id,
+      name:  s.name,
+      logo:  s.screenshot_uri || s.cover || null,
+      year:  s.year,
+      rating: s.rating_imdb || s.rating || null,
+      group: catMap[s.category_id] || "Other",
+      type:  "series",
+    }));
+
+    res.json({ items, total: data?.js?.total_items, page: data?.js?.cur_page });
+  } catch (e) {
+    console.error("Series error:", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ── GET /stalker/profile (new — from extractstb)
 app.get("/stalker/profile", async (req, res) => {
   const { portal, mac } = req.query;
