@@ -408,7 +408,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
 
   function initPlayer(url) {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !url) return;
     destroyPlayers();
     video.removeAttribute("src");
 
