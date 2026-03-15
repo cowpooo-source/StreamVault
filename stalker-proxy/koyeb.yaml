@@ -25,3 +25,5 @@ services:
         value: production
       - key: ALLOWED_ORIGIN
         value: "*"
+        # Update to your Cloudflare Pages URL once deployed, e.g.:
+        # value: "https://streamvault.pages.dev"

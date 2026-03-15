@@ -118,7 +118,7 @@ npm run build
 3. Set **Work directory** to `stalker-proxy`
 4. Build command: `npm install` · Run command: `npm start`
 5. Add env var: `ALLOWED_ORIGIN` → `*` *(lock down after step 2)*
-6. Deploy — you get a URL like `https://stalker-proxy-xxx.koyeb.app`
+6. Deploy — **Proxy is live at `https://institutional-sacha-streamvault-9dcb405f.koyeb.app`**
 
 > `koyeb.yaml` in `stalker-proxy/` pre-fills most of these settings.
 
@@ -130,7 +130,7 @@ npm run build
 2. Select `frossty/StreamVault`
 3. Set **Root directory** to `streamvault`
 4. Build command: `npm run build` · Build output directory: `dist`
-5. Add env var: `VITE_PROXY_URL` → `https://stalker-proxy-xxx.koyeb.app`
+5. Add env var: `VITE_PROXY_URL` → `https://institutional-sacha-streamvault-9dcb405f.koyeb.app`
 6. Deploy — you get `https://streamvault.pages.dev` (or connect a custom domain)
 
 ---
