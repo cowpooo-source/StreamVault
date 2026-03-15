@@ -1,0 +1,27 @@
+name: stalker-proxy
+
+services:
+  - name: web
+    type: web
+    git:
+      repository: github.com/frossty/StreamVault
+      branch: main
+      workdir: stalker-proxy
+    buildpack:
+      build_command: npm install
+      run_command: npm start
+    instance_type: free
+    regions:
+      - was
+    ports:
+      - port: 8000
+        protocol: http
+    health_checks:
+      - type: http
+        path: /health
+        port: 8000
+    env:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGIN
+        value: "*"

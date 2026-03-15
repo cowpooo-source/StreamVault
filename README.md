@@ -109,16 +109,41 @@ npm run build
 
 ---
 
-## Deploying the proxy
+## Deploying (free)
 
-The stalker-proxy is a plain Express app and deploys anywhere Node.js runs. Free options:
+### Step 1 — Deploy the proxy to Koyeb
 
-- **Railway** — connect GitHub repo, auto-detects Node, set `ALLOWED_ORIGIN`
-- **Render** — New Web Service, build: `npm install`, start: `npm start`
+1. Go to [koyeb.com](https://koyeb.com) → **Create App**
+2. Choose **GitHub** → select `frossty/StreamVault`
+3. Set **Work directory** to `stalker-proxy`
+4. Build command: `npm install` · Run command: `npm start`
+5. Add env var: `ALLOWED_ORIGIN` → `*` *(lock down after step 2)*
+6. Deploy — you get a URL like `https://stalker-proxy-xxx.koyeb.app`
 
-Once deployed, set `VITE_PROXY_URL` in your frontend environment to the proxy's public URL.
+> `koyeb.yaml` in `stalker-proxy/` pre-fills most of these settings.
 
-Full deploy instructions: [`stalker-proxy/README.md`](stalker-proxy/README.md)
+---
+
+### Step 2 — Deploy the frontend to Cloudflare Pages
+
+1. Go to [pages.cloudflare.com](https://pages.cloudflare.com) → **Create a project** → **Connect to Git**
+2. Select `frossty/StreamVault`
+3. Set **Root directory** to `streamvault`
+4. Build command: `npm run build` · Build output directory: `dist`
+5. Add env var: `VITE_PROXY_URL` → `https://stalker-proxy-xxx.koyeb.app`
+6. Deploy — you get `https://streamvault.pages.dev` (or connect a custom domain)
+
+---
+
+### Step 3 — Lock down CORS
+
+Once you have the Pages URL, go back to **Koyeb → Environment** and set:
+
+```
+ALLOWED_ORIGIN=https://streamvault.pages.dev
+```
+
+Every `git push` to `main` auto-deploys both services.
 
 ---
 
