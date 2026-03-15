@@ -1,80 +1,136 @@
 # StreamVault
 
-A personal IPTV client that runs in the browser. Supports Xtream Codes, M3U playlists, Stalker/Ministra portals, and direct HLS/MP4 URLs.
+> A personal IPTV client that runs entirely in the browser — no app install, no subscription, bring your own service.
+
+Supports **Xtream Codes**, **M3U playlists**, **Stalker/Ministra portals**, and **direct HLS/MP4 URLs**.
+
+---
 
 ## Features
 
-- **Live TV** — channel grid with logos, EPG now-playing, favorites
-- **Movies & Series** — poster grid, year/rating, resume progress
-- **TV Guide** — XMLTV-based EPG grid
-- **Global Search** — searches across live, movies and series simultaneously
-- **Multi-profile** — per-profile favorites (up to 4 profiles)
-- **Continue Watching** — history with resume support
-- **4 themes** — Dark, Navy, AMOLED, Forest
-- **Keyboard shortcuts** — Space, F, M, arrows, P (PiP), Esc
+| Category | Details |
+|----------|---------|
+| Live TV | Channel grid with logos, live EPG now-playing, channel switching |
+| Movies & Series | Poster grid with year, rating, and resume progress bar |
+| TV Guide | XMLTV EPG grid (load any provider's XML feed) |
+| Global Search | Searches live, movies, and series simultaneously |
+| Favorites | Per-profile favorites across all content types |
+| Continue Watching | Watch history with resume support (last 60 items) |
+| Themes | Dark · Navy · AMOLED · Forest |
+| Player | HLS.js, keyboard shortcuts, Picture-in-Picture, OSD, quick channel switcher |
+
+**Keyboard shortcuts in player:**
+`Space` play/pause · `F` fullscreen · `M` mute · `←→` channels / ±10s · `↑↓` channels / volume · `P` PiP · `Esc` close
+
+---
 
 ## Project structure
 
 ```
 StreamVault/
-├── streamvault/        # React frontend (Vite)
-└── stalker-proxy/      # Node.js proxy for Stalker portals
+├── streamvault/        # React + Vite frontend
+│   ├── src/App.jsx     # Entire app (single-file architecture)
+│   └── .env.example
+└── stalker-proxy/      # Node.js CORS proxy for Stalker portals
+    ├── src/index.js
+    └── .env.example
 ```
+
+---
 
 ## Quick start
 
-### 1. Start the Stalker proxy (required for Stalker Portal connections)
+### 1. Clone
+
+```bash
+git clone https://github.com/your-username/StreamVault.git
+cd StreamVault
+```
+
+### 2. Start the Stalker proxy *(only needed for Stalker Portal connections)*
 
 ```bash
 cd stalker-proxy
+cp .env.example .env
 npm install
 npm start
-# Runs on http://localhost:3001
+# Proxy runs at http://localhost:3001
 ```
 
-### 2. Start the frontend
+### 3. Start the frontend
 
 ```bash
 cd streamvault
+cp .env.example .env
 npm install
 npm run dev
-# Runs on http://localhost:5173
+# App runs at http://localhost:5173
 ```
 
-### 3. Connect
+### 4. Open and connect
 
-Open the app and choose your connection type:
+Go to `http://localhost:5173` and choose your connection type:
 
-| Type | Details |
-|------|---------|
-| **Xtream Codes** | Server URL + username + password |
-| **M3U Playlist** | Direct `.m3u` / `.m3u8` URL |
-| **Stalker Portal** | Portal URL + MAC address (requires proxy) |
-| **Direct HLS** | Paste any stream URL |
+| Type | What you need |
+|------|--------------|
+| **Xtream Codes** | Server URL · username · password |
+| **M3U Playlist** | Direct `.m3u` or `.m3u8` URL |
+| **Stalker Portal** | Portal URL · MAC address · proxy running |
+| **Direct HLS** | Any `.m3u8`, DASH, or media URL |
+
+---
 
 ## Environment variables
 
-### streamvault
-
-Copy `streamvault/.env.example` to `streamvault/.env`:
+### `streamvault/.env`
 
 ```env
+# URL of the stalker-proxy (local or deployed)
 VITE_PROXY_URL=http://localhost:3001
 ```
 
-### stalker-proxy
-
-Copy `stalker-proxy/.env.example` to `stalker-proxy/.env`:
+### `stalker-proxy/.env`
 
 ```env
 PORT=3001
+# Lock down to your frontend origin in production
 ALLOWED_ORIGIN=*
 ```
 
+---
+
+## Build for production
+
+```bash
+cd streamvault
+npm run build
+# Output in streamvault/dist/
+```
+
+---
+
 ## Deploying the proxy
 
-The stalker-proxy can be deployed for free on Railway or Render — see [`stalker-proxy/README.md`](stalker-proxy/README.md) for instructions. Once deployed, set `VITE_PROXY_URL` in your frontend environment to the deployed URL.
+The stalker-proxy is a plain Express app and deploys anywhere Node.js runs. Free options:
+
+- **Railway** — connect GitHub repo, auto-detects Node, set `ALLOWED_ORIGIN`
+- **Render** — New Web Service, build: `npm install`, start: `npm start`
+
+Once deployed, set `VITE_PROXY_URL` in your frontend environment to the proxy's public URL.
+
+Full deploy instructions: [`stalker-proxy/README.md`](stalker-proxy/README.md)
+
+---
+
+## Tech stack
+
+- **Frontend** — React 19, Vite 8, HLS.js (lazy-loaded)
+- **Proxy** — Node.js 18+, Express, node-fetch
+- **Styling** — CSS-in-JS via template literal, injected as `<style>` tag (no build-time CSS)
+- **Storage** — `localStorage` (browser) with `window.storage` fallback (custom runtimes)
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
