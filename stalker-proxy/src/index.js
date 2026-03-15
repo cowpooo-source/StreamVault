@@ -245,10 +245,13 @@ app.get("/stalker/vod", async (req, res) => {
 
   try {
     const session = await getSession(portal, mac);
-    const data = await portalFetch(session, {
-      type: "vod", action: "get_ordered_list",
-      category, page, p: page,
-    });
+    const [catData, data] = await Promise.all([
+      portalFetch(session, { type: "vod", action: "get_categories" }, 10000),
+      portalFetch(session, { type: "vod", action: "get_ordered_list", category, page, p: page }),
+    ]);
+
+    const cats = catData?.js || [];
+    const catMap = Object.fromEntries(cats.map(c => [c.id, c.title]));
 
     const items = (data?.js?.data || []).map(v => ({
       id:    v.id,
@@ -257,7 +260,7 @@ app.get("/stalker/vod", async (req, res) => {
       year:  v.year,
       rating: v.rating_imdb || v.rating || null,
       url:   v.cmd || null,
-      group: v.category_id || "Other",
+      group: catMap[v.category_id] || "Other",
       type:  "vod",
     }));
 
@@ -324,6 +327,36 @@ app.get("/stalker/account", async (req, res) => {
     res.json(data?.js || {});
   } catch (e) {
     console.error("Account error:", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── GET /stalker/epg?portal=...&mac=...&period=N
+// Fetches EPG data for all channels (period in hours, default 4)
+app.get("/stalker/epg", async (req, res) => {
+  const { portal, mac, period = 4 } = req.query;
+  if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+  try {
+    const session = await getSession(portal, mac);
+    const data = await portalFetch(session, {
+      type: "itv", action: "get_epg_info", period,
+    }, 20000);
+
+    const programs = {};
+    const epgData = data?.js?.data || data?.js || {};
+    for (const [channelId, shows] of Object.entries(epgData)) {
+      if (!Array.isArray(shows)) continue;
+      programs[channelId] = shows.map(s => ({
+        title: s.name || s.title || "",
+        start: (s.start_timestamp || s.start || 0) * 1000,
+        stop:  (s.stop_timestamp || s.stop || 0) * 1000,
+      }));
+    }
+
+    res.json({ programs });
+  } catch (e) {
+    console.error("EPG error:", e.message);
     res.status(502).json({ error: e.message });
   }
 });

@@ -634,15 +634,31 @@ function Setup({ onConnect }) {
   const [err, setErr]       = useState("");
   const set = (k,v) => setF(p => ({...p,[k]:v}));
 
+  useEffect(() => {
+    const saved = localStorage.getItem("sv-lastConn");
+    if (saved) {
+      try {
+        const c = JSON.parse(saved);
+        if (c.type) setType(c.type);
+        if (c.server) set("server", c.server);
+        if (c.user) set("user", c.user);
+        if (c.pass) set("pass", c.pass);
+        if (c.mac) set("mac", c.mac);
+        if (c.url) set("url", c.url);
+      } catch {}
+    }
+  }, []);
+
   async function connect() {
     setErr(""); setLoading(true);
     try {
       if (type === "xtream") {
         if (!f.server||!f.user||!f.pass) throw new Error("All fields required");
-        const server = f.server.replace(/\/$/,"");
+        const server = f.server.trim().replace(/\/$/,"");
         const api = makeXtreamAPI(server, f.user, f.pass);
         const data = await api.auth();
         if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
+        localStorage.setItem("sv-lastConn", JSON.stringify({ type, ...f }));
         onConnect({ type, server, user:f.user, pass:f.pass, info:data?.user_info });
       } else if (type === "m3u") {
         if (!f.url) throw new Error("Playlist URL required");
@@ -652,18 +668,21 @@ function Setup({ onConnect }) {
         if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
         const channels = parseM3U(text);
         if (!channels.length) throw new Error("No channels found");
+        localStorage.setItem("sv-lastConn", JSON.stringify({ type, ...f }));
         onConnect({ type, url:f.url, channels });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
-        const server = f.server.replace(/\/$/,"");
+        const server = f.server.trim().replace(/\/$/,"");
         const hs = await fetch(`${PROXY}/stalker/handshake`, {
           method:"POST", headers:{"Content-Type":"application/json"},
           body: JSON.stringify({ portal: server, mac: f.mac })
         });
         const hsData = await hs.json();
         if (!hs.ok || hsData.error) throw new Error(hsData.error || "Stalker handshake failed");
-        onConnect({ type, server, mac:f.mac });
+        localStorage.setItem("sv-lastConn", JSON.stringify({ type, ...f }));
+        onConnect({ type, server, mac:f.mac.trim() });
       } else {
+        localStorage.setItem("sv-lastConn", JSON.stringify({ type, ...f }));
         onConnect({ type:"hls" });
       }
     } catch(e) { setErr(e.message||"Connection failed"); }
@@ -784,6 +803,8 @@ export default function App() {
   const [section, setSection] = useState("live");
   const [cat, setCat]         = useState("All");
   const [search, setSearch]   = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 100;
   const [globalQ, setGlobalQ] = useState("");
   const [playing, setPlaying] = useState(null);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
@@ -852,6 +873,7 @@ export default function App() {
       fetchLive();
     } else if (conn.type === "stalker") {
       fetchStalkerChannels();
+      loadStalkerEPG();
     }
   }, [conn]);
 
@@ -899,6 +921,16 @@ export default function App() {
     if (!conn || conn.type !== "stalker") return;
     setLoading(true);
     try {
+      const cached = await db.get(`sv-stalker-channels-${conn.server}`);
+      if (cached && cached.length) {
+        setChannels(cached.map(ch => {
+          const raw = (ch.url || "").replace(/^ffmpeg\s+/, "").trim();
+          const isDirect = raw.startsWith("http") && !raw.includes("localhost");
+          return { ...ch, _stalkerCmd: ch.url, url: isDirect ? raw : null };
+        }));
+        setLoading(false);
+        return;
+      }
       const res = await fetch(`${PROXY}/stalker/channels?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -907,6 +939,7 @@ export default function App() {
         const isDirect = raw.startsWith("http") && !raw.includes("localhost");
         return { ...ch, _stalkerCmd: ch.url, url: isDirect ? raw : null };
       }));
+      db.set(`sv-stalker-channels-${conn.server}`, data.channels);
     } catch(e) { console.error("Stalker channels error:", e); }
     finally { setLoading(false); }
   }
@@ -921,7 +954,8 @@ export default function App() {
       setVod((data.items || []).map(v => {
         const raw = (v.url || "").replace(/^ffmpeg\s+/, "").trim();
         const isDirect = raw.startsWith("http") && !raw.includes("localhost");
-        return { ...v, _stalkerCmd: v.url, url: isDirect ? raw : null };
+        const groupName = /^\d+$/.test(String(v.group)) ? "Movies" : (v.group || "Other");
+        return { ...v, group: groupName, _stalkerCmd: v.url, url: isDirect ? raw : null };
       }));
     } catch(e) { console.error("Stalker VOD error:", e); }
     finally { setLoading(false); }
@@ -948,8 +982,19 @@ export default function App() {
     finally { setEpgLoading(false); }
   }
 
+  async function loadStalkerEPG() {
+    if (!conn || conn.type !== "stalker") return;
+    setEpgLoading(true);
+    try {
+      const res = await fetch(`${PROXY}/stalker/epg?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&period=4`);
+      const data = await res.json();
+      if (data.programs) setEpgData(data.programs);
+    } catch(e) { console.error("Stalker EPG error:", e); }
+    finally { setEpgLoading(false); }
+  }
+
   function switchSection(s) {
-    setSection(s); setCat("All"); setSearch("");
+    setSection(s); setCat("All"); setSearch(""); setPage(1);
     if (s==="vod") { conn?.type==="stalker" ? fetchStalkerVOD() : fetchVOD(); }
     else if (s==="series") fetchSeries();
     else if (s==="search") setSection("search");
@@ -1027,6 +1072,8 @@ export default function App() {
     return () => window.removeEventListener("click", close);
   }, []);
 
+  useEffect(() => { setPage(1); }, [cat, search, section]);
+
   function disconnect() {
     setConn(null); setChannels([]); setVod([]); setSeries([]);
     setSection("live"); setPlaying(null); setCat("All");
@@ -1078,6 +1125,8 @@ export default function App() {
   const activeProfile_obj = profiles.find(p=>p.id===activeProfile) || profiles[0];
   const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
   const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
+  const totalPages = Math.ceil(curItems.length / PAGE_SIZE);
+  const paginatedItems = curItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div className="app">
@@ -1204,7 +1253,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Items */}
             {curItems.length === 0 ? (
               <div className="empty">
                 <div className="empty-icon">{section==="live"?"📺":section==="vod"?"🎬":"📽"}</div>
@@ -1213,52 +1261,63 @@ export default function App() {
                   {conn.type==="stalker" ? "Stalker portal browsing requires a backend proxy. Try Xtream Codes or M3U." : "Try a different category or clear your search."}
                 </div>
               </div>
-            ) : section==="live" ? (
-              <div className="ch-grid">
-                {curItems.map((ch,i) => {
-                  const faved = isFav(ch);
-                  const epgNow = getEPGNow(epgData, ch.epgId);
-                  return (
-                    <div key={ch.id||i} className={`ch-card ${playing?.id===ch.id?"playing":""}`}
-                      onClick={() => playItem(ch)}>
-                      {ch.logo
-                        ? <img className="ch-logo" src={ch.logo} alt="" onError={e=>e.target.style.display="none"} />
-                        : <div className="ch-logo-ph">📺</div>}
-                      <div className="ch-name">{ch.name}</div>
-                      {ch.num && <div className="ch-num">CH {ch.num}</div>}
-                      {epgNow && <div className="ch-meta">▶ {epgNow.title}</div>}
-                      <FavBtn on={faved} onClick={() => toggleFav(ch)} />
-                    </div>
-                  );
-                })}
-              </div>
             ) : (
-              <div className="vod-grid">
-                {curItems.map((item,i) => {
-                  const faved = isFav(item);
-                  const hist = history.find(h=>(h.id||h.url)===(item.id||item.url));
-                  const pct = hist?.position && hist?.duration ? Math.min(100, (hist.position/hist.duration)*100) : 0;
-                  return (
-                    <div key={item.id||i} className="vod-card" onClick={() => item.type!=="series" && playItem(item)} title={item.name}>
-                      {item.logo
-                        ? <img className="vod-poster" src={item.logo} alt="" onError={e=>e.target.style.display="none"} />
-                        : <div className="vod-ph">{section==="series"?"📽":"🎬"}</div>}
-                      {pct > 2 && (
-                        <div className="resume-bar"><div className="resume-fill" style={{width:`${pct}%`}} /></div>
-                      )}
-                      <div className="vod-info">
-                        <div className="vod-title">{item.name}</div>
-                        <div className="vod-meta">
-                          {[item.year, item.rating && `★${parseFloat(item.rating||0).toFixed(1)}`].filter(Boolean).join(" · ")}
+              <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}>
+                {section==="live" ? (
+                  <div className="ch-grid">
+                    {paginatedItems.map((ch,i) => {
+                      const faved = isFav(ch);
+                      const epgNow = getEPGNow(epgData, ch.epgId);
+                      return (
+                        <div key={ch.id||i} className={`ch-card ${playing?.id===ch.id?"playing":""}`}
+                          onClick={() => playItem(ch)}>
+                          {ch.logo
+                            ? <img className="ch-logo" src={ch.logo} alt="" onError={e=>e.target.style.display="none"} />
+                            : <div className="ch-logo-ph">📺</div>}
+                          <div className="ch-name">{ch.name}</div>
+                          {ch.num && <div className="ch-num">CH {ch.num}</div>}
+                          {epgNow && <div className="ch-meta">▶ {epgNow.title}</div>}
+                          <FavBtn on={faved} onClick={() => toggleFav(ch)} />
                         </div>
-                      </div>
-                      <button className={`vod-fav ${faved?"on":""}`}
-                        onClick={e=>{e.stopPropagation();toggleFav(item);}}>
-                        {faved?"♥":"♡"}
-                      </button>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="vod-grid">
+                    {paginatedItems.map((item,i) => {
+                      const faved = isFav(item);
+                      const hist = history.find(h=>(h.id||h.url)===(item.id||item.url));
+                      const pct = hist?.position && hist?.duration ? Math.min(100, (hist.position/hist.duration)*100) : 0;
+                      return (
+                        <div key={item.id||i} className="vod-card" onClick={() => item.type!=="series" && playItem(item)} title={item.name}>
+                          {item.logo
+                            ? <img className="vod-poster" src={item.logo} alt="" onError={e=>e.target.style.display="none"} />
+                            : <div className="vod-ph">{section==="series"?"📽":"🎬"}</div>}
+                          {pct > 2 && (
+                            <div className="resume-bar"><div className="resume-fill" style={{width:`${pct}%`}} /></div>
+                          )}
+                          <div className="vod-info">
+                            <div className="vod-title">{item.name}</div>
+                            <div className="vod-meta">
+                              {[item.year, item.rating && `★${parseFloat(item.rating||0).toFixed(1)}`].filter(Boolean).join(" · ")}
+                            </div>
+                          </div>
+                          <button className={`vod-fav ${faved?"on":""}`}
+                            onClick={e=>{e.stopPropagation();toggleFav(item);}}>
+                            {faved?"♥":"♡"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {totalPages > 1 && (
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:".5rem",padding:".75rem 0",width:"100%",flexShrink:0}}>
+                    <button className="c-btn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}>← Prev</button>
+                    <span style={{fontSize:".75rem",color:"var(--t2)"}}>Page {page} of {totalPages}</span>
+                    <button className="c-btn" onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}>Next →</button>
+                  </div>
+                )}
               </div>
             )}
           </div>
