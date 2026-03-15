@@ -7,6 +7,6 @@
     "not_found_handling": "single-page-application"
   },
   "kv_namespaces": [
-    { "binding": "SV_SESSIONS", "id": "PLACEHOLDER_KV_ID" }
+    { "binding": "SV_SESSIONS", "id": "c930fb7b17bf4763ae8c71e05f8e4605" }
   ]
 }
