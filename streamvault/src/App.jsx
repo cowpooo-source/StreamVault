@@ -442,7 +442,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
       s.src = src; s.onload = cb; document.head.appendChild(s);
     }
 
-    const needTs  = url.includes("extension=ts") || /\.ts(\?|$)/.test(url);
+    const needTs  = url.includes("extension=ts") || /\.ts(\?|$)/.test(url)
+      || (current.type === "live" && !url.includes(".m3u8"));
     const needHls = !needTs && (url.includes(".m3u8") || url.includes("/live/") || url.includes("/movie/"));
 
     if (needTs) {
