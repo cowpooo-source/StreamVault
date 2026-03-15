@@ -15,8 +15,32 @@ const THEME_NAMES = Object.keys(THEMES);
 const PROFILE_COLORS = ["#00d4ff","#ff6b35","#00e896","#ff2d55","#a78bfa","#fbbf24"];
 
 // ══════════════════════════════════════════════════════════════════
-// STORAGE
+// STORAGE + GUEST SESSION
 // ══════════════════════════════════════════════════════════════════
+function getGuestId() {
+  let id = localStorage.getItem("sv-guest-id");
+  if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("sv-guest-id", id); }
+  return id;
+}
+const GUEST_ID = getGuestId();
+
+let _syncTimer = null;
+function scheduleCloudSync() {
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(async () => {
+    try {
+      const keys = ["sv-theme","sv-profiles","sv-activeProfile","sv-history","sv-hiddenCats","sv-epgURL","sv-lastConn"];
+      const data = {};
+      for (const k of keys) { const v = localStorage.getItem(k); if (v !== null) data[k] = JSON.parse(v); }
+      // Also save per-profile favorites
+      const profiles = data["sv-profiles"] || [];
+      for (const p of profiles) { const fk = `sv-favs-${p.id}`; const v = localStorage.getItem(fk); if (v !== null) data[fk] = JSON.parse(v); }
+      await fetch("/api/session", { method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ guestId: GUEST_ID, data }) }).catch(() => {});
+    } catch {}
+  }, 5000);
+}
+
 const db = {
   async get(key, fallback = null) {
     try {
@@ -28,9 +52,22 @@ const db = {
     try {
       if (window.storage) { await window.storage.set(key, JSON.stringify(value)); }
       else localStorage.setItem(key, JSON.stringify(value));
+      scheduleCloudSync();
     } catch {}
   },
 };
+
+// On first load, try to restore from cloud if localStorage is empty
+(async () => {
+  try {
+    if (localStorage.getItem("sv-theme")) return; // already have local data
+    const res = await fetch(`/api/session?id=${GUEST_ID}`);
+    const { data } = await res.json();
+    if (!data) return;
+    for (const [k, v] of Object.entries(data)) { localStorage.setItem(k, JSON.stringify(v)); }
+    window.location.reload(); // reload to pick up restored data
+  } catch {}
+})();
 
 // ══════════════════════════════════════════════════════════════════
 // UTILS
@@ -629,7 +666,10 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
 // ══════════════════════════════════════════════════════════════════
 function Setup({ onConnect }) {
   const [type, setType]     = useState("xtream");
-  const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"" });
+  const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [rawText, setRawText] = useState("");
+  const [detected, setDetected] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr]       = useState("");
   const set = (k,v) => setF(p => ({...p,[k]:v}));
@@ -645,6 +685,9 @@ function Setup({ onConnect }) {
         if (c.pass) set("pass", c.pass);
         if (c.mac) set("mac", c.mac);
         if (c.url) set("url", c.url);
+        if (c.serial) set("serial", c.serial);
+        if (c.deviceId) set("deviceId", c.deviceId);
+        if (c.deviceId2) set("deviceId2", c.deviceId2);
       } catch {}
     }
   }, []);
@@ -675,12 +718,12 @@ function Setup({ onConnect }) {
         const server = f.server.trim().replace(/\/$/,"");
         const hs = await fetch(`${PROXY}/stalker/handshake`, {
           method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ portal: server, mac: f.mac })
+          body: JSON.stringify({ portal: server, mac: f.mac.trim(), serial:f.serial?.trim()||undefined, deviceId:f.deviceId?.trim()||undefined, deviceId2:(f.deviceId2?.trim()||f.deviceId?.trim())||undefined })
         });
         const hsData = await hs.json();
         if (!hs.ok || hsData.error) throw new Error(hsData.error || "Stalker handshake failed");
         localStorage.setItem("sv-lastConn", JSON.stringify({ type, ...f }));
-        onConnect({ type, server, mac:f.mac.trim() });
+        onConnect({ type, server, mac:f.mac.trim(), serial:f.serial.trim()||undefined, deviceId:f.deviceId.trim()||undefined, deviceId2:(f.deviceId2.trim()||f.deviceId.trim())||undefined });
       } else {
         localStorage.setItem("sv-lastConn", JSON.stringify({ type, ...f }));
         onConnect({ type:"hls" });
@@ -689,7 +732,78 @@ function Setup({ onConnect }) {
     finally { setLoading(false); }
   }
 
-  const TYPES = [["xtream","Xtream Codes"],["m3u","M3U Playlist"],["stalker","Stalker Portal"],["hls","Direct HLS"]];
+  function detectFromText(text) {
+    const results = [];
+
+    // Detect Stalker portals: URL with /c or /c/ + MAC address
+    const macPattern = /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/g;
+    const portalPattern = /https?:\/\/[^\s"'<>]+?\/(?:stalker_portal\/)?c\/?/gi;
+
+    const portals = text.match(portalPattern) || [];
+    const macs = text.match(macPattern) || [];
+
+    // Pair portals with MACs found nearby in text
+    if (portals.length && macs.length) {
+      portals.forEach(portal => {
+        macs.forEach(mac => {
+          results.push({ type:"stalker", server:portal.replace(/\/+$/,""), mac, label:`Stalker · ${mac.slice(-5)}` });
+        });
+      });
+    } else if (macs.length) {
+      // MACs without portals - still useful
+      macs.forEach(mac => {
+        results.push({ type:"stalker", server:"", mac, label:`MAC · ${mac}` });
+      });
+    }
+
+    // Detect Xtream: http://host:port with username/password patterns
+    const xtreamPattern = /https?:\/\/[^\s"'<>:]+:\d+\/get\.php\?username=([^&]+)&password=([^&\s]+)/gi;
+    let xm;
+    while ((xm = xtreamPattern.exec(text)) !== null) {
+      const url = new URL(xm[0]);
+      results.push({ type:"xtream", server:`${url.protocol}//${url.host}`, user:xm[1], pass:xm[2], label:`Xtream · ${xm[1]}` });
+    }
+
+    // Also detect Xtream from player_api.php URLs
+    const xtreamApi = /https?:\/\/[^\s"'<>:]+:\d+\/player_api\.php\?username=([^&]+)&password=([^&\s]+)/gi;
+    while ((xm = xtreamApi.exec(text)) !== null) {
+      const url = new URL(xm[0]);
+      if (!results.find(r => r.type==="xtream" && r.server===`${url.protocol}//${url.host}` && r.user===xm[1])) {
+        results.push({ type:"xtream", server:`${url.protocol}//${url.host}`, user:xm[1], pass:xm[2], label:`Xtream · ${xm[1]}` });
+      }
+    }
+
+    // Also detect bare Xtream format: host:port/username/password
+    const bareXtream = /https?:\/\/([^\s"'<>:]+:\d+)\/live\/([^/\s]+)\/([^/\s]+)/gi;
+    while ((xm = bareXtream.exec(text)) !== null) {
+      const server = `http://${xm[1]}`;
+      if (!results.find(r => r.type==="xtream" && r.user===xm[2])) {
+        results.push({ type:"xtream", server, user:xm[2], pass:xm[3], label:`Xtream · ${xm[2]}` });
+      }
+    }
+
+    // Detect M3U URLs
+    const m3uPattern = /https?:\/\/[^\s"'<>]+\.m3u8?(?:\?[^\s"'<>]*)?/gi;
+    const m3us = text.match(m3uPattern) || [];
+    m3us.forEach(url => {
+      if (!results.find(r => r.type==="m3u" && r.url===url)) {
+        results.push({ type:"m3u", url, label:`M3U · ${url.split("/").pop()?.slice(0,20)}` });
+      }
+    });
+
+    // Also detect M3U from get.php type URLs (these are often Xtream m3u output)
+    const m3uGet = /https?:\/\/[^\s"'<>]+\/get\.php\?[^\s"'<>]*/gi;
+    const m3uGets = text.match(m3uGet) || [];
+    m3uGets.forEach(url => {
+      if (!results.find(r => r.url===url)) {
+        results.push({ type:"m3u", url, label:`M3U · get.php` });
+      }
+    });
+
+    return results;
+  }
+
+  const TYPES = [["import","Import"],["xtream","Xtream Codes"],["m3u","M3U Playlist"],["stalker","Stalker Portal"],["hls","Direct HLS"]];
 
   return (
     <div className="setup">
@@ -723,13 +837,65 @@ function Setup({ onConnect }) {
           <div className="fg"><label className="fl">MAC Address</label>
             <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} />
             <div className="fhint">The MAC address registered with your IPTV provider</div></div>
+          <div style={{marginTop:".5rem"}}>
+            <button type="button" style={{background:"none",border:"none",color:"var(--accent)",fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"'DM Sans',sans-serif"}}
+              onClick={() => setShowAdvanced(!showAdvanced)}>
+              {showAdvanced ? "▾ Hide advanced" : "▸ Advanced options"}
+            </button>
+          </div>
+          {showAdvanced && (<>
+            <div className="fg"><label className="fl">Serial Number</label>
+              <input className="fi" placeholder="Optional — leave blank for auto" value={f.serial} onChange={e=>set("serial",e.target.value)} />
+              <div className="fhint">Device serial number (if required by provider)</div></div>
+            <div className="fg"><label className="fl">Device ID</label>
+              <input className="fi" placeholder="Optional — used for both ID1 and ID2 if ID2 is blank" value={f.deviceId} onChange={e=>set("deviceId",e.target.value)} />
+              <div className="fhint">Primary device identifier</div></div>
+            <div className="fg"><label className="fl">Device ID 2</label>
+              <input className="fi" placeholder="Optional — defaults to Device ID above" value={f.deviceId2} onChange={e=>set("deviceId2",e.target.value)} />
+              <div className="fhint">Secondary device identifier (some providers use same value for both)</div></div>
+          </>)}
         </>)}
         {type==="hls" && (
           <div style={{padding:"1rem 0",color:"var(--t2)",fontSize:".86rem",lineHeight:1.7}}>
             Play any HLS stream, M3U8 URL, or direct media URL instantly — no account needed.
           </div>
         )}
-        <button className="btn-primary" onClick={connect} disabled={loading}>
+        {type==="import" && (
+          <div>
+            <div className="fg">
+              <label className="fl">Paste raw text, URLs, or config</label>
+              <textarea className="fi" style={{minHeight:"120px",resize:"vertical",fontFamily:"monospace",fontSize:".75rem"}}
+                placeholder={"Paste any text containing:\n• Stalker portal URLs + MAC addresses\n• Xtream Codes URLs with username/password\n• M3U/M3U8 playlist URLs\n\nAuto-detects all connection types."}
+                value={rawText}
+                onChange={e => { setRawText(e.target.value); setDetected(detectFromText(e.target.value)); }}
+              />
+            </div>
+            {detected.length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem"}}>
+                <div className="fl">Detected ({detected.length})</div>
+                {detected.map((d, i) => (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".45rem .65rem",
+                    background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
+                    onClick={() => {
+                      if (d.type==="stalker") { setType("stalker"); set("server",d.server); set("mac",d.mac); }
+                      else if (d.type==="xtream") { setType("xtream"); set("server",d.server); set("user",d.user); set("pass",d.pass); }
+                      else if (d.type==="m3u") { setType("m3u"); set("url",d.url); }
+                    }}
+                    onMouseEnter={e=>e.currentTarget.style.borderColor="var(--accent)"}
+                    onMouseLeave={e=>e.currentTarget.style.borderColor="var(--b2)"}>
+                    <span style={{fontSize:".7rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",minWidth:"50px"}}>{d.type}</span>
+                    <span style={{fontSize:".78rem",color:"var(--t1)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.label}</span>
+                    <span style={{fontSize:".65rem",color:"var(--t3)"}}>Click to fill →</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {rawText && detected.length === 0 && (
+              <div style={{fontSize:".78rem",color:"var(--t3)",padding:".5rem 0"}}>No connections detected in the pasted text.</div>
+            )}
+          </div>
+        )}
+        <button className="btn-primary" onClick={connect} disabled={loading || type==="import"} style={type==="import"?{display:"none"}:{}}>
           {loading ? "Connecting…" : "Connect →"}
         </button>
       </div>

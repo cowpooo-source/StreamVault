@@ -31,12 +31,11 @@ const API_PATHS = [
 ];
 
 // Build Stalker-style headers (improved from extractstb)
-function stalkerHeaders(mac, token = "", portalUrl = "") {
-  // Use the portal's own URL as Referer (extractstb pattern)
+function stalkerHeaders(mac, token = "", portalUrl = "", opts = {}) {
   const referer = portalUrl
     ? portalUrl.replace(/\/+$/, "").replace(/\/c$/, "") + "/c/"
     : "http://localhost/";
-  return {
+  const headers = {
     "User-Agent":    "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
     "Accept":        "*/*",
     "Content-Type":  "application/x-www-form-urlencoded; charset=UTF-8",
@@ -45,6 +44,8 @@ function stalkerHeaders(mac, token = "", portalUrl = "") {
     "Cookie":        `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe%2FParis`,
     "Referer":       referer,
   };
+  if (opts.serial) headers["Cookie"] += `; sn=${opts.serial}`;
+  return headers;
 }
 
 // Try to extract the real API path from the portal's xpcom.common.js
@@ -138,13 +139,13 @@ async function fetchToken(portalUrl, mac) {
 }
 
 // Get a valid token + resolved base + apiPath for a portal
-async function getSession(portal, mac) {
+async function getSession(portal, mac, opts = {}) {
   const session = await fetchToken(portal, mac);
   return {
     token:   session.token,
     base:    session.base,
     apiPath: session.apiPath,
-    headers: stalkerHeaders(mac, session.token, portal),
+    headers: stalkerHeaders(mac, session.token, portal, opts),
   };
 }
 
@@ -176,11 +177,22 @@ app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime
 
 // ── POST /stalker/handshake
 app.post("/stalker/handshake", async (req, res) => {
-  const { portal, mac } = req.body;
+  const { portal, mac, serial, deviceId, deviceId2 } = req.body;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial });
+    // Auto-call get_profile if device IDs provided (registers device with portal)
+    if (serial || deviceId) {
+      try {
+        const params = { type: "stb", action: "get_profile", auth_second_step: 1,
+          hw_version_2: "8b80dfaa8cf83485567849b7202a79360fc988e3" };
+        if (serial) params.sn = serial;
+        if (deviceId) params.device_id = deviceId;
+        if (deviceId2 || deviceId) params.device_id2 = deviceId2 || deviceId;
+        await portalFetch(session, params);
+      } catch {}
+    }
     res.json({ token: session.token });
   } catch (e) {
     console.error("Handshake error:", e.message);
@@ -329,16 +341,20 @@ app.get("/stalker/series", async (req, res) => {
 
 // ── GET /stalker/profile (new — from extractstb)
 app.get("/stalker/profile", async (req, res) => {
-  const { portal, mac } = req.query;
+  const { portal, mac, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   try {
-    const session = await getSession(portal, mac);
-    const data = await portalFetch(session, {
+    const session = await getSession(portal, mac, { serial });
+    const params = {
       type: "stb", action: "get_profile",
       auth_second_step: 1,
       hw_version_2: "8b80dfaa8cf83485567849b7202a79360fc988e3",
-    });
+    };
+    if (serial) params.sn = serial;
+    if (deviceId) params.device_id = deviceId;
+    if (deviceId2 || deviceId) params.device_id2 = deviceId2 || deviceId;
+    const data = await portalFetch(session, params);
     res.json(data?.js || {});
   } catch (e) {
     console.error("Profile error:", e.message);
