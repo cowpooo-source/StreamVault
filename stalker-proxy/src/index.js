@@ -411,6 +411,29 @@ app.get("/stalker/epg", async (req, res) => {
   }
 });
 
+// ── GET /proxy?url=... — generic CORS proxy for Xtream API and M3U fetches
+app.get("/proxy", async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: "url required" });
+
+  try {
+    const upstream = await fetch(url, { timeout: 30000, headers: { "User-Agent": "StreamVault/1.0" } });
+    const contentType = upstream.headers.get("content-type") || "";
+
+    if (contentType.includes("json")) {
+      const data = await upstream.json();
+      res.json(data);
+    } else {
+      const text = await upstream.text();
+      res.set("Content-Type", contentType || "text/plain");
+      res.send(text);
+    }
+  } catch (e) {
+    console.error("Proxy error:", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);

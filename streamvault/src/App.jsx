@@ -125,16 +125,20 @@ function fmtTime(sec) {
   return h > 0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}` : `${m}:${String(s).padStart(2,"0")}`;
 }
 
+function proxyFetch(url) {
+  return fetch(`${PROXY}/proxy?url=${encodeURIComponent(url)}`);
+}
+
 function makeXtreamAPI(server, user, pass) {
   const base = `${server}/player_api.php?username=${user}&password=${pass}`;
   return {
-    auth: () => fetch(`${base}`).then(r => r.json()),
-    getLiveCategories: () => fetch(`${base}&action=get_live_categories`).then(r => r.json()),
-    getLive: () => fetch(`${base}&action=get_live_streams`).then(r => r.json()),
-    getVODCategories: () => fetch(`${base}&action=get_vod_categories`).then(r => r.json()),
-    getVOD: () => fetch(`${base}&action=get_vod_streams`).then(r => r.json()),
-    getSeriesCategories: () => fetch(`${base}&action=get_series_categories`).then(r => r.json()),
-    getSeries: () => fetch(`${base}&action=get_series`).then(r => r.json()),
+    auth: () => proxyFetch(base).then(r => r.json()),
+    getLiveCategories: () => proxyFetch(`${base}&action=get_live_categories`).then(r => r.json()),
+    getLive: () => proxyFetch(`${base}&action=get_live_streams`).then(r => r.json()),
+    getVODCategories: () => proxyFetch(`${base}&action=get_vod_categories`).then(r => r.json()),
+    getVOD: () => proxyFetch(`${base}&action=get_vod_streams`).then(r => r.json()),
+    getSeriesCategories: () => proxyFetch(`${base}&action=get_series_categories`).then(r => r.json()),
+    getSeries: () => proxyFetch(`${base}&action=get_series`).then(r => r.json()),
     liveURL: id => `${server}/live/${user}/${pass}/${id}.m3u8`,
     vodURL: (id, ext="mp4") => `${server}/movie/${user}/${pass}/${id}.${ext}`,
   };
@@ -705,7 +709,7 @@ function Setup({ onConnect }) {
         onConnect({ type, server, user:f.user, pass:f.pass, info:data?.user_info });
       } else if (type === "m3u") {
         if (!f.url) throw new Error("Playlist URL required");
-        const res = await fetch(f.url);
+        const res = await proxyFetch(f.url.trim());
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const text = await res.text();
         if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
@@ -1172,7 +1176,7 @@ export default function App() {
     if (!url) return;
     setEpgLoading(true);
     try {
-      const res = await fetch(url);
+      const res = await proxyFetch(url);
       const text = await res.text();
       setEpgData(parseXMLTV(text));
       db.set("sv-epgURL", url);
