@@ -131,7 +131,7 @@ npm run build
 3. Set **Root directory** to `streamvault`
 4. Build command: `npm run build` · Build output directory: `dist`
 5. Add env var: `VITE_PROXY_URL` → `https://institutional-sacha-streamvault-9dcb405f.koyeb.app`
-6. Deploy — you get `https://streamvault.pages.dev` (or connect a custom domain)
+6. Deploy — **Frontend is live at `https://streamvault.lookin2share.workers.dev`**
 
 ---
 
@@ -140,7 +140,7 @@ npm run build
 Once you have the Pages URL, go back to **Koyeb → Environment** and set:
 
 ```
-ALLOWED_ORIGIN=https://streamvault.pages.dev
+ALLOWED_ORIGIN=https://streamvault.lookin2share.workers.dev
 ```
 
 Every `git push` to `main` auto-deploys both services.

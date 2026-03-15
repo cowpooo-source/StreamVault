@@ -24,6 +24,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: ALLOWED_ORIGIN
-        value: "*"
-        # Update to your Cloudflare Pages URL once deployed, e.g.:
-        # value: "https://streamvault.pages.dev"
+        value: "https://streamvault.lookin2share.workers.dev"
