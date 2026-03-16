@@ -449,30 +449,41 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
 
   const [streamErr, setStreamErr] = useState(null);
 
+  const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
+  const streamProxy = (u) => `/stream?url=${encodeURIComponent(u)}`;
+
   function initPlayer(url) {
     const video = videoRef.current;
     if (!video || !url) return;
     setStreamErr(null);
-    if (location.protocol === "https:" && url.startsWith("http://")) {
-      setStreamErr("This stream uses HTTP and cannot be played on an HTTPS page. Use the local version of StreamVault (http://localhost) or ask your provider for HTTPS streams.");
-      return;
-    }
     destroyPlayers();
     video.removeAttribute("src");
 
     function startHls(u) {
       if (window.Hls?.isSupported()) {
-        const hls = new window.Hls({ enableWorker: false, fragLoadingMaxRetry: 4 });
+        const opts = { enableWorker: false, fragLoadingMaxRetry: 4 };
+        // On HTTPS pages, proxy HTTP streams through Cloudflare Worker
+        if (isMixed(u)) {
+          u = streamProxy(u);
+          opts.xhrSetup = (xhr, xhrUrl) => {
+            if (xhrUrl.startsWith("http://")) xhr.open("GET", streamProxy(xhrUrl));
+          };
+        }
+        const hls = new window.Hls(opts);
         hlsRef.current = hls;
         hls.loadSource(u);
         hls.attachMedia(video);
         hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = u; video.play().catch(()=>{});
+        video.src = isMixed(u) ? streamProxy(u) : u; video.play().catch(()=>{});
       }
     }
 
     function startMpegts(u) {
+      if (isMixed(u)) {
+        setStreamErr("This live stream uses HTTP and cannot be proxied on an HTTPS page. Use the local version of StreamVault (http://localhost) or ask your provider for HTTPS/HLS streams.");
+        return;
+      }
       if (!window.mpegts?.isSupported()) {
         video.src = u; video.play().catch(()=>{}); return;
       }
@@ -494,6 +505,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
       || (current.type === "live" && !url.includes(".m3u8"));
     const needHls = !needTs && (url.includes(".m3u8") || url.includes("/live/") || url.includes("/movie/"));
 
+    // For Xtream streams on HTTPS, prefer HLS (.m3u8) over raw TS since we can proxy HLS segments
+    const xtreamBase = url.match(/^(https?:\/\/[^/]+\/)[^/]+\/[^/]+\/(\d+)$/);
+    if (needTs && isMixed(url) && xtreamBase) {
+      // Rewrite to .m3u8 — Xtream servers support both formats
+      const hlsUrl = xtreamBase[1] + url.split("/").slice(3).join("/") + ".m3u8";
+      if (window.Hls) startHls(hlsUrl);
+      else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
+                      () => startHls(hlsUrl));
+      return;
+    }
+
     if (needTs) {
       if (window.mpegts) startMpegts(url);
       else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
@@ -503,7 +525,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
       else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
                       () => startHls(url));
     } else {
-      video.src = url; video.play().catch(()=>{});
+      video.src = isMixed(url) ? streamProxy(url) : url; video.play().catch(()=>{});
     }
   }
 
