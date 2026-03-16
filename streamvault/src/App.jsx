@@ -568,11 +568,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav }) {
     }
 
     function startMpegts(u) {
-      if (isMixed(u)) {
-        setStreamErr({ icon: "🔒", title: "Mixed Content Blocked",
-          body: "This stream uses HTTP and can't be proxied on an HTTPS page. Open StreamVault on http://localhost instead, or ask your provider for an HTTPS stream." });
-        return;
-      }
+      // Proxy HTTP streams through Cloudflare Worker when on HTTPS
+      if (isMixed(u)) u = streamProxy(u);
       if (!window.mpegts?.isSupported()) {
         video.src = u; video.play().catch(()=>{}); return;
       }
