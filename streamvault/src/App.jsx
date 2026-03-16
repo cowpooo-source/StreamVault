@@ -57,6 +57,31 @@ const db = {
   },
 };
 
+// IndexedDB cache for large stalker data (avoids localStorage 5MB limit)
+const idbCache = (() => {
+  let dbP;
+  function open() {
+    if (dbP) return dbP;
+    dbP = new Promise(r => {
+      const req = indexedDB.open("sv-stalker-cache", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("c");
+      req.onsuccess = () => r(req.result);
+      req.onerror = () => r(null);
+    });
+    return dbP;
+  }
+  return {
+    async get(key) {
+      const d = await open(); if (!d) return null;
+      return new Promise(r => { const g = d.transaction("c","readonly").objectStore("c").get(key); g.onsuccess = () => r(g.result ?? null); g.onerror = () => r(null); });
+    },
+    async set(key, val) {
+      const d = await open(); if (!d) return;
+      return new Promise(r => { const tx = d.transaction("c","readwrite"); tx.objectStore("c").put(val, key); tx.oncomplete = () => r(); tx.onerror = () => r(); });
+    },
+  };
+})();
+
 // On first load, try to restore from cloud if localStorage is empty
 (async () => {
   try {
@@ -1312,7 +1337,7 @@ export default function App() {
     }
   }
 
-  // ── Load items for one Stalker category (sequential fetch + 6h per-cat cache)
+  // ── Load items for one Stalker category (sequential fetch + 6h IndexedDB cache)
   async function loadStalkerCatItems(sec, catId, catTitle, silent = false) {
     const refKey = `${sec}-${catId}`;
     if (fetchingCatRef.current.has(refKey)) return;
@@ -1330,10 +1355,9 @@ export default function App() {
       setLoadedCatIds(prev => ({ ...prev, [sec]: new Set([...prev[sec], catId]) }));
     };
     try {
-      const raw = localStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const { ts, items } = JSON.parse(raw);
-        if (Date.now() - ts < TTL) { applyItems(items); fetchingCatRef.current.delete(refKey); return; }
+      const cached = await idbCache.get(CACHE_KEY);
+      if (cached && Date.now() - cached.ts < TTL) {
+        applyItems(cached.items); fetchingCatRef.current.delete(refKey); return;
       }
     } catch {}
     if (!silent) setCatLoading(true);
@@ -1343,7 +1367,7 @@ export default function App() {
       if (data.error) throw new Error(data.error);
       const items = data.items || [];
       applyItems(items);
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), items }));
+      idbCache.set(CACHE_KEY, { ts: Date.now(), items });
     } catch(e) { console.error(`Stalker ${sec} cat items:`, e); }
     finally { if (!silent) setCatLoading(false); fetchingCatRef.current.delete(refKey); }
   }
