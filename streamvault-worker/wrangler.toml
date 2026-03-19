@@ -6,3 +6,10 @@ compatibility_date = "2024-12-01"
 [[kv_namespaces]]
 binding = "SV_CACHE"
 id = "852bb8a28504423e867886eac35fde3e"
+
+# D1 database for persistent content storage
+[[d1_databases]]
+binding = "SV_DB"
+database_name = "streamvault-db"
+database_id = "aa169664-7ce3-45f1-b1f1-ff4cdcfa292f"
+migrations_dir = "migrations"

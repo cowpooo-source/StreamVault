@@ -83,6 +83,90 @@ const idbCache = (() => {
   };
 })();
 
+// Deterministic connection ID for IDB/D1 keying
+function connId(c) {
+  if (!c) return null;
+  if (c.type === "stalker") return `stalker:${c.server}:${c.mac}`;
+  if (c.type === "xtream") return `xtream:${c.server}:${c.user}`;
+  if (c.type === "m3u") return `m3u:${c.url}`;
+  return "hls";
+}
+
+// D1 catalog API helper (fire-and-forget background sync)
+function catalogAPI(path, opts = {}) {
+  const { method = "GET", body } = opts;
+  const headers = { "X-Guest-Id": GUEST_ID };
+  if (body) headers["Content-Type"] = "application/json";
+  return fetch(`${PROXY}/api/catalog/${path}`, {
+    method, headers, body: body ? JSON.stringify(body) : undefined,
+  }).then(r => r.json()).catch(() => null);
+}
+
+function syncContentToD1(connectionId, type, items) {
+  catalogAPI("content", { method: "PUT", body: { connectionId, type, items: items.map(i => ({
+    id: i.id, name: i.name, logo: i.logo, group: i.group, url: i.url,
+    num: i.num, epgId: i.epgId, year: i.year, rating: i.rating,
+    stalkerCmd: i._stalkerCmd || i.stalkerCmd,
+  })) } });
+}
+
+function syncCategoriesToD1(connectionId, section, categories) {
+  catalogAPI("categories", { method: "PUT", body: { connectionId, section, categories } });
+}
+
+function syncConnectionToD1(id, type, config) {
+  catalogAPI("connections", { method: "PUT", body: { id, type, config } });
+}
+
+function syncFavoritesToD1(profileId, favorites) {
+  catalogAPI("favorites", { method: "PUT", body: { profileId, favorites } });
+}
+
+function syncHistoryToD1(history) {
+  catalogAPI("history", { method: "PUT", body: { history } });
+}
+
+function syncPreferencesToD1(prefs) {
+  catalogAPI("preferences", { method: "PUT", body: { preferences: prefs } });
+}
+
+// Migrate old idbCache/localStorage data to new permanent IDB keys
+async function migrateOldCache() {
+  try {
+    const migrated = await idbCache.get("sv-migrated-v2");
+    if (migrated) return;
+    // Migrate old stalker category caches from localStorage
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("sv-s-") && key.includes("cats-")) {
+        try {
+          const { cats } = JSON.parse(localStorage.getItem(key));
+          if (cats) {
+            // Extract server from key: sv-s-{section}cats-{server}
+            const match = key.match(/^sv-s-(vod|series)cats-(.+)$/);
+            if (match) await idbCache.set(`cats-ls:${match[2]}:${match[1]}`, cats);
+          }
+        } catch {}
+      }
+    }
+    // Migrate old stalker channel caches (stored via db.set → localStorage)
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("sv-stalker-channels-")) {
+        try {
+          const channels = JSON.parse(localStorage.getItem(key));
+          if (channels) {
+            const server = key.replace("sv-stalker-channels-", "");
+            await idbCache.set(`channels-ls:${server}`, channels);
+          }
+        } catch {}
+      }
+    }
+    await idbCache.set("sv-migrated-v2", true);
+  } catch {}
+}
+migrateOldCache();
+
 // On first load, try to restore from cloud if localStorage is empty
 (async () => {
   try {
@@ -1263,6 +1347,10 @@ export default function App() {
   const fetchingCatRef = useRef(new Set());  // tracks in-progress category fetches
   const [prefetchProgress, setPrefetchProgress] = useState(null); // {done,total} or null
 
+  // ── last synced timestamps
+  const [lastSynced, setLastSynced] = useState({}); // {live: timestamp, vod: timestamp, series: timestamp}
+  const [autoConnected, setAutoConnected] = useState(false); // true if loaded from IDB cache
+
   // ── TMDB
   const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "");
 
@@ -1272,7 +1360,7 @@ export default function App() {
     el.textContent = genCSS(THEMES[themeName]);
   }, [themeName]);
 
-  // ── load persisted data
+  // ── load persisted data + auto-connect from IDB
   useEffect(() => {
     (async () => {
       const [th, pr, ap, fv, hi, hc, eq] = await Promise.all([
@@ -1288,11 +1376,49 @@ export default function App() {
       setProfiles(pr); setActiveProfile(ap);
       setFavs(fv); setHistory(hi); setHiddenCats(hc);
       if (eq) setEpgURL(eq);
+
+      // Auto-connect: if we have a saved connection + cached content in IDB, skip Setup
+      try {
+        const saved = localStorage.getItem("sv-lastConn");
+        if (saved) {
+          const lastConn = JSON.parse(saved);
+          const cId = connId(lastConn);
+          if (cId) {
+            const cachedChannels = await idbCache.get(`content:${cId}:live`);
+            if (cachedChannels && cachedChannels.length) {
+              setConn(lastConn);
+              setChannels(cachedChannels);
+              setAutoConnected(true);
+              // Also load VOD, series, stalker categories from IDB
+              const [cachedVod, cachedSeries] = await Promise.all([
+                idbCache.get(`content:${cId}:vod`),
+                idbCache.get(`content:${cId}:series`),
+              ]);
+              if (cachedVod) setVod(cachedVod);
+              if (cachedSeries) setSeries(cachedSeries);
+              if (lastConn.type === "stalker") {
+                const [vc, sc] = await Promise.all([
+                  idbCache.get(`cats:${cId}:vod`),
+                  idbCache.get(`cats:${cId}:series`),
+                ]);
+                if (vc) setStalkerVodCats(vc);
+                if (sc) setStalkerSeriesCats(sc);
+              }
+              // Load last-synced timestamps
+              const syncTs = await idbCache.get(`sync:${cId}`);
+              if (syncTs) setLastSynced(syncTs);
+            }
+          }
+        }
+      } catch {}
     })();
   }, []);
 
   // ── save theme
-  useEffect(() => { db.set("sv-theme", themeName); }, [themeName]);
+  useEffect(() => {
+    db.set("sv-theme", themeName);
+    syncPreferencesToD1({ theme: themeName });
+  }, [themeName]);
 
   // ── load favs when profile changes
   useEffect(() => {
@@ -1302,81 +1428,153 @@ export default function App() {
   // ── connection
   useEffect(() => {
     if (!conn) return;
+    // If auto-connected from IDB cache, skip fetching from provider
+    if (autoConnected) {
+      setAutoConnected(false);
+      // Still load EPG (transient, not cached)
+      if (conn.type === "stalker") loadStalkerEPG();
+      else if (epgURL) loadEPG(epgURL);
+      return;
+    }
     if (conn.type === "m3u") {
       setChannels(conn.channels);
+      // Save M3U channels to IDB for persistence
+      const cId = connId(conn);
+      if (cId && conn.channels?.length) {
+        idbCache.set(`content:${cId}:live`, conn.channels);
+        syncContentToD1(cId, "live", conn.channels);
+        idbCache.set(`sync:${cId}`, { ...lastSynced, live: Date.now() });
+        setLastSynced(prev => ({ ...prev, live: Date.now() }));
+      }
       if (epgURL) loadEPG(epgURL);
     } else if (conn.type === "xtream") {
       fetchLive();
+      // Pre-fetch VOD + series in background so they're ready when user switches tabs
+      fetchVOD(false, true);
+      fetchSeries(false, true);
       if (epgURL) loadEPG(epgURL);
     } else if (conn.type === "stalker") {
       fetchStalkerChannels();
+      // Pre-fetch VOD + series categories + items in background
+      loadStalkerCats("vod", false, true);
+      loadStalkerCats("series", false, true);
       loadStalkerEPG();
+    }
+    // Save connection to D1
+    const cId = connId(conn);
+    if (cId) {
+      syncConnectionToD1(cId, conn.type, conn);
     }
   }, [conn]);
 
-  async function fetchLive() {
+  async function fetchLive(force = false) {
     if (!conn || conn.type !== "xtream") return;
+    const cId = connId(conn);
+    // Check IDB first (unless force refresh)
+    if (!force && cId) {
+      const cached = await idbCache.get(`content:${cId}:live`);
+      if (cached && cached.length) { setChannels(cached); return; }
+    }
     setLoading(true);
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getLiveCategories(), api.getLive()]);
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
-      setChannels(sd.map(s => ({ id:String(s.stream_id), name:s.name, logo:s.stream_icon,
-        group:cm[s.category_id]||"Other", url:api.liveURL(s.stream_id), num:s.num, epgId:s.epg_channel_id, type:"live" })));
+      const items = sd.map(s => ({ id:String(s.stream_id), name:s.name, logo:s.stream_icon,
+        group:cm[s.category_id]||"Other", url:api.liveURL(s.stream_id), num:s.num, epgId:s.epg_channel_id, type:"live" }));
+      setChannels(items);
+      // Persist to IDB + D1
+      if (cId) {
+        idbCache.set(`content:${cId}:live`, items);
+        syncContentToD1(cId, "live", items);
+        const now = Date.now();
+        setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
+      }
     } catch(e) { console.error(e); }
     finally { setLoading(false); }
   }
 
-  async function fetchVOD() {
-    if (!conn || conn.type !== "xtream" || vod.length) return;
-    setLoading(true);
+  async function fetchVOD(force = false, background = false) {
+    if (!conn || conn.type !== "xtream") return;
+    const cId = connId(conn);
+    // Check IDB first (unless force refresh)
+    if (!force && cId && !vod.length) {
+      const cached = await idbCache.get(`content:${cId}:vod`);
+      if (cached && cached.length) { setVod(cached); return; }
+    }
+    if (!force && vod.length) return;
+    if (!background) setLoading(true);
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getVODCategories(), api.getVOD()]);
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
-      setVod(sd.map(s => ({ id:String(s.stream_id), name:s.name, logo:s.stream_icon,
+      const items = sd.map(s => ({ id:String(s.stream_id), name:s.name, logo:s.stream_icon,
         group:cm[s.category_id]||"Other", url:api.vodURL(s.stream_id, s.container_extension||"mp4"),
-        year:s.year, rating:s.rating, type:"vod" })));
+        year:s.year, rating:s.rating, type:"vod" }));
+      setVod(items);
+      if (cId) {
+        idbCache.set(`content:${cId}:vod`, items);
+        syncContentToD1(cId, "vod", items);
+        const now = Date.now();
+        setLastSynced(prev => { const n = { ...prev, vod: now }; idbCache.set(`sync:${cId}`, n); return n; });
+      }
     } catch(e) { console.error(e); }
-    finally { setLoading(false); }
+    finally { if (!background) setLoading(false); }
   }
 
-  async function fetchSeries() {
-    if (!conn || conn.type !== "xtream" || series.length) return;
-    setLoading(true);
+  async function fetchSeries(force = false, background = false) {
+    if (!conn || conn.type !== "xtream") return;
+    const cId = connId(conn);
+    if (!force && cId && !series.length) {
+      const cached = await idbCache.get(`content:${cId}:series`);
+      if (cached && cached.length) { setSeries(cached); return; }
+    }
+    if (!force && series.length) return;
+    if (!background) setLoading(true);
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getSeriesCategories(), api.getSeries()]);
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
-      setSeries(sd.map(s => ({ id:String(s.series_id), name:s.name, logo:s.cover,
-        group:cm[s.category_id]||"Other", year:s.releaseDate?.slice(0,4), rating:s.rating, type:"series" })));
+      const items = sd.map(s => ({ id:String(s.series_id), name:s.name, logo:s.cover,
+        group:cm[s.category_id]||"Other", year:s.releaseDate?.slice(0,4), rating:s.rating, type:"series" }));
+      setSeries(items);
+      if (cId) {
+        idbCache.set(`content:${cId}:series`, items);
+        syncContentToD1(cId, "series", items);
+        const now = Date.now();
+        setLastSynced(prev => { const n = { ...prev, series: now }; idbCache.set(`sync:${cId}`, n); return n; });
+      }
     } catch(e) { console.error(e); }
-    finally { setLoading(false); }
+    finally { if (!background) setLoading(false); }
   }
 
-  async function fetchStalkerChannels() {
+  async function fetchStalkerChannels(force = false) {
     if (!conn || conn.type !== "stalker") return;
+    const cId = connId(conn);
+    const transformChannels = (list) => list.map(ch => {
+      const raw = (ch.url || "").replace(/^ffmpeg\s+/, "").trim();
+      const isDirect = raw.startsWith("http") && !raw.includes("localhost");
+      return { ...ch, _stalkerCmd: ch.url, url: isDirect ? raw : null };
+    });
+    // Check IDB first (permanent, no TTL)
+    if (!force && cId) {
+      const cached = await idbCache.get(`content:${cId}:live`);
+      if (cached && cached.length) { setChannels(cached); return; }
+    }
     setLoading(true);
     try {
-      const cached = await db.get(`sv-stalker-channels-${conn.server}`);
-      if (cached && cached.length) {
-        setChannels(cached.map(ch => {
-          const raw = (ch.url || "").replace(/^ffmpeg\s+/, "").trim();
-          const isDirect = raw.startsWith("http") && !raw.includes("localhost");
-          return { ...ch, _stalkerCmd: ch.url, url: isDirect ? raw : null };
-        }));
-        setLoading(false);
-        return;
-      }
       const res = await fetch(`${PROXY}/stalker/channels?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      setChannels((data.channels || []).map(ch => {
-        const raw = (ch.url || "").replace(/^ffmpeg\s+/, "").trim();
-        const isDirect = raw.startsWith("http") && !raw.includes("localhost");
-        return { ...ch, _stalkerCmd: ch.url, url: isDirect ? raw : null };
-      }));
-      db.set(`sv-stalker-channels-${conn.server}`, data.channels);
+      const items = transformChannels(data.channels || []);
+      setChannels(items);
+      // Persist to IDB (permanent) + D1
+      if (cId) {
+        idbCache.set(`content:${cId}:live`, items);
+        syncContentToD1(cId, "live", items);
+        const now = Date.now();
+        setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
+      }
     } catch(e) { console.error("Stalker channels error:", e); }
     finally { setLoading(false); }
   }
@@ -1388,12 +1586,18 @@ export default function App() {
       const res = await fetch(`${PROXY}/stalker/vod?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      setVod((data.items || []).map(v => {
+      const items = (data.items || []).map(v => {
         const raw = (v.url || "").replace(/^ffmpeg\s+/, "").trim();
         const isDirect = raw.startsWith("http") && !raw.includes("localhost");
         const groupName = /^\d+$/.test(String(v.group)) ? "Movies" : (v.group || "Other");
         return { ...v, group: groupName, _stalkerCmd: v.url, url: isDirect ? raw : null };
-      }));
+      });
+      setVod(items);
+      const cId = connId(conn);
+      if (cId) {
+        idbCache.set(`content:${cId}:vod`, items);
+        syncContentToD1(cId, "vod", items);
+      }
     } catch(e) { console.error("Stalker VOD error:", e); }
     finally { setLoading(false); }
   }
@@ -1405,55 +1609,66 @@ export default function App() {
       const res = await fetch(`${PROXY}/stalker/series?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      setSeries((data.items || []).map(s => ({
+      const items = (data.items || []).map(s => ({
         ...s,
         group: /^\d+$/.test(String(s.group)) ? "Series" : (s.group || "Other"),
-      })));
+      }));
+      setSeries(items);
+      const cId = connId(conn);
+      if (cId) {
+        idbCache.set(`content:${cId}:series`, items);
+        syncContentToD1(cId, "series", items);
+      }
     } catch(e) { console.error("Stalker series error:", e); }
     finally { setLoading(false); }
   }
 
-  // ── Load category list for Stalker VOD / Series (fast, single request + 6h cache)
-  async function loadStalkerCats(sec) {
-    const CACHE_KEY = `sv-s-${sec}cats-${conn.server}`;
-    const TTL = 6 * 3600 * 1000;
+  // ── Load category list for Stalker VOD / Series (permanent IDB cache, no TTL)
+  // background=true: don't touch setCat/setLoading (used for pre-fetching on connect)
+  async function loadStalkerCats(sec, force = false, background = false) {
+    const cId = connId(conn);
     let cats = null;
-    try {
-      const raw = localStorage.getItem(CACHE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Date.now() - parsed.ts < TTL) cats = parsed.cats;
-      }
-    } catch {}
+    // Check IDB first (permanent, no TTL)
+    if (!force && cId) {
+      try { cats = await idbCache.get(`cats:${cId}:${sec}`); } catch {}
+    }
     if (!cats) {
-      setLoading(true);
+      if (!background) setLoading(true);
       try {
         const res  = await fetch(`${PROXY}/stalker/${sec}/categories?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         cats = data.categories || [];
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), cats }));
+        // Save to IDB (permanent) + D1
+        if (cId) {
+          idbCache.set(`cats:${cId}:${sec}`, cats);
+          syncCategoriesToD1(cId, sec, cats);
+        }
       } catch(e) { console.error(`Stalker ${sec} cats:`, e); return; }
-      finally { setLoading(false); }
+      finally { if (!background) setLoading(false); }
     }
     sec === "vod" ? setStalkerVodCats(cats) : setStalkerSeriesCats(cats);
     if (cats.length) {
-      setCat(cats[0].title);
-      loadStalkerCatItems(sec, cats[0].id, cats[0].title);
-      // Option F: background prefetch remaining categories
-      prefetchRemainingStalkerCats(sec, cats);
+      if (!background) {
+        setCat(cats[0].title);
+        loadStalkerCatItems(sec, cats[0].id, cats[0].title);
+      }
+      // Background prefetch all categories (silent)
+      prefetchRemainingStalkerCats(sec, cats, force);
     }
   }
 
-  // ── Load items for one Stalker category (sequential fetch + 6h IndexedDB cache)
-  async function loadStalkerCatItems(sec, catId, catTitle, silent = false) {
+  // ── Load items for one Stalker category (permanent IndexedDB cache, no TTL)
+  async function loadStalkerCatItems(sec, catId, catTitle, silent = false, force = false) {
     const refKey = `${sec}-${catId}`;
     if (fetchingCatRef.current.has(refKey)) return;
     fetchingCatRef.current.add(refKey);
-    const CACHE_KEY = `sv-s-${sec}item-${conn.server}-${catId}`;
-    const TTL = 6 * 3600 * 1000;
+    const cId = connId(conn);
+    const CACHE_KEY = cId ? `catitems:${cId}:${sec}:${catId}` : `sv-s-${sec}item-${conn.server}-${catId}`;
     const applyItems = (items) => {
       const mapped = items.map(item => {
+        // Skip transform if already transformed (loaded from IDB with _stalkerCmd)
+        if (item._stalkerCmd !== undefined) return { ...item, group: catTitle };
         const raw = (item.url || "").replace(/^ffmpeg\s+/, "").trim();
         const isDirect = raw.startsWith("http") && !raw.includes("localhost");
         return { ...item, group: catTitle, _stalkerCmd: item.url, url: isDirect ? raw : null };
@@ -1462,12 +1677,16 @@ export default function App() {
       else setSeries(prev => [...prev.filter(s => s.group !== catTitle), ...mapped]);
       setLoadedCatIds(prev => ({ ...prev, [sec]: new Set([...prev[sec], catId]) }));
     };
-    try {
-      const cached = await idbCache.get(CACHE_KEY);
-      if (cached && Date.now() - cached.ts < TTL) {
-        applyItems(cached.items); fetchingCatRef.current.delete(refKey); return;
-      }
-    } catch {}
+    if (!force) {
+      try {
+        const cached = await idbCache.get(CACHE_KEY);
+        // No TTL — permanent cache
+        if (cached) {
+          const items = cached.items || cached;
+          if (items.length) { applyItems(items); fetchingCatRef.current.delete(refKey); return; }
+        }
+      } catch {}
+    }
     if (!silent) setCatLoading(true);
     try {
       const res  = await fetch(`${PROXY}/stalker/${sec}?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cat=${catId}`);
@@ -1475,22 +1694,51 @@ export default function App() {
       if (data.error) throw new Error(data.error);
       const items = data.items || [];
       applyItems(items);
-      idbCache.set(CACHE_KEY, { ts: Date.now(), items });
+      // Save transformed items to IDB (permanent)
+      const transformed = items.map(item => {
+        const raw = (item.url || "").replace(/^ffmpeg\s+/, "").trim();
+        const isDirect = raw.startsWith("http") && !raw.includes("localhost");
+        return { ...item, _stalkerCmd: item.url, url: isDirect ? raw : null };
+      });
+      idbCache.set(CACHE_KEY, transformed);
     } catch(e) { console.error(`Stalker ${sec} cat items:`, e); }
     finally { if (!silent) setCatLoading(false); fetchingCatRef.current.delete(refKey); }
   }
 
   // ── Option F: background prefetch remaining categories sequentially
-  async function prefetchRemainingStalkerCats(sec, cats) {
+  async function prefetchRemainingStalkerCats(sec, cats, force = false) {
     setPrefetchProgress({ done: 0, total: cats.length });
     let done = 0;
     for (const cat of cats) {
-      await loadStalkerCatItems(sec, cat.id, cat.title, true);
+      await loadStalkerCatItems(sec, cat.id, cat.title, true, force);
       done++;
       setPrefetchProgress({ done, total: cats.length });
     }
     setPrefetchProgress(null);
+    // Full dataset save is handled by the debounced contentSaveEffect below
   }
+
+  // ── Debounced save: persist vod/series to IDB + D1 when data stabilizes
+  const contentSaveTimer = useRef(null);
+  useEffect(() => {
+    if (!conn) return;
+    const cId = connId(conn);
+    if (!cId) return;
+    clearTimeout(contentSaveTimer.current);
+    contentSaveTimer.current = setTimeout(() => {
+      if (vod.length) {
+        idbCache.set(`content:${cId}:vod`, vod);
+        syncContentToD1(cId, "vod", vod);
+        setLastSynced(prev => { const n = { ...prev, vod: Date.now() }; idbCache.set(`sync:${cId}`, n); return n; });
+      }
+      if (series.length) {
+        idbCache.set(`content:${cId}:series`, series);
+        syncContentToD1(cId, "series", series);
+        setLastSynced(prev => { const n = { ...prev, series: Date.now() }; idbCache.set(`sync:${cId}`, n); return n; });
+      }
+    }, 3000);
+    return () => clearTimeout(contentSaveTimer.current);
+  }, [vod, series, conn]);
 
   // Build /stalker/play URL — resolves token + streams in one CF Worker request (same IP)
   function stalkerPlayUrl(cmd, contentType = "live", episode = null) {
@@ -1567,6 +1815,7 @@ export default function App() {
     else newFavs[type][key] = { id:item.id, name:item.name, url:item.url, logo:item.logo, group:item.group, type };
     setFavs(newFavs);
     db.set(`sv-favs-${activeProfile}`, newFavs);
+    syncFavoritesToD1(activeProfile, newFavs);
   }
 
   function isFav(item) {
@@ -1580,6 +1829,7 @@ export default function App() {
     const newH = [entry, ...history.filter(h => (h.id||h.url) !== (item.id||item.url))].slice(0, 60);
     setHistory(newH);
     db.set("sv-history", newH);
+    syncHistoryToD1(newH);
   }
 
   async function playItem(item) {
@@ -1859,16 +2109,15 @@ export default function App() {
               {conn?.type === "stalker" && (
                 <>
                   <button className="c-btn" title="Reload from portal" onClick={() => {
-                    if (section === "live") { setChannels([]); fetchStalkerChannels(); }
+                    if (section === "live") { setChannels([]); fetchStalkerChannels(true); }
                     else if (section === "vod" || section === "series") {
-                      localStorage.removeItem(`sv-s-${section}cats-${conn.server}`);
                       setVod(section === "vod" ? [] : vod);
                       setSeries(section === "series" ? [] : series);
                       if (section === "vod") setStalkerVodCats([]); else setStalkerSeriesCats([]);
                       setLoadedCatIds(prev => ({ ...prev, [section]: new Set() }));
                       fetchingCatRef.current.clear();
                       setCat(null);
-                      loadStalkerCats(section);
+                      loadStalkerCats(section, true);
                     }
                   }}>↺ Refresh</button>
                   {prefetchProgress && (
@@ -1877,6 +2126,43 @@ export default function App() {
                     </span>
                   )}
                 </>
+              )}
+              {conn?.type === "xtream" && (
+                <button className="c-btn" title="Reload from provider" onClick={() => {
+                  if (section === "live") { setChannels([]); fetchLive(true); }
+                  else if (section === "vod") { setVod([]); fetchVOD(true); }
+                  else if (section === "series") { setSeries([]); fetchSeries(true); }
+                }}>↺ Refresh</button>
+              )}
+              {conn?.type === "m3u" && section === "live" && (
+                <button className="c-btn" title="Re-fetch M3U playlist" onClick={async () => {
+                  try {
+                    setLoading(true);
+                    const res = await proxyFetch(conn.url);
+                    const text = await res.text();
+                    const chs = parseM3U(text);
+                    setChannels(chs);
+                    const cId = connId(conn);
+                    if (cId) {
+                      idbCache.set(`content:${cId}:live`, chs);
+                      syncContentToD1(cId, "live", chs);
+                      setLastSynced(prev => ({ ...prev, live: Date.now() }));
+                    }
+                  } catch(e) { console.error("M3U refresh error:", e); }
+                  finally { setLoading(false); }
+                }}>↺ Refresh</button>
+              )}
+              {lastSynced[section] && (
+                <span style={{fontSize:".62rem",color:"var(--t3)",whiteSpace:"nowrap"}} title={new Date(lastSynced[section]).toLocaleString()}>
+                  Synced {(() => {
+                    const mins = Math.floor((Date.now() - lastSynced[section]) / 60000);
+                    if (mins < 1) return "just now";
+                    if (mins < 60) return `${mins}m ago`;
+                    const hrs = Math.floor(mins / 60);
+                    if (hrs < 24) return `${hrs}h ago`;
+                    return `${Math.floor(hrs / 24)}d ago`;
+                  })()}
+                </span>
               )}
               <div className="c-search-wrap">
                 <span className="c-search-icon">🔍</span>
