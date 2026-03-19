@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 const PROXY = import.meta.env.VITE_PROXY_URL || "http://localhost:3001";
 const STREAM_PROXY = import.meta.env.VITE_STREAM_PROXY_URL || PROXY;
+const CATALOG_API = import.meta.env.VITE_CATALOG_URL || PROXY;
 
 // ══════════════════════════════════════════════════════════════════
 // THEMES (OTT Navigator style multi-theme)
@@ -102,7 +103,7 @@ function catalogAPI(path, opts = {}) {
   const { method = "GET", body } = opts;
   const headers = { "X-Guest-Id": GUEST_ID };
   if (body) headers["Content-Type"] = "application/json";
-  return fetch(`${PROXY}/api/catalog/${path}`, {
+  return fetch(`${CATALOG_API}/api/catalog/${path}`, {
     method, headers, body: body ? JSON.stringify(body) : undefined,
   }).then(r => r.json()).catch(() => null);
 }
