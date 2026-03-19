@@ -958,7 +958,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect }) {
+function Setup({ onConnect, connections = [], onReconnect }) {
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -1173,6 +1173,37 @@ function Setup({ onConnect }) {
       <div className="card">
         <div className="logo">STREAMVAULT</div>
         <div className="tagline">Your personal IPTV client · Connect your own legal service</div>
+
+        {/* Saved connections — quick reconnect */}
+        {connections.length > 0 && (
+          <div style={{marginBottom:"1.2rem"}}>
+            <div className="fl" style={{marginBottom:".5rem"}}>Saved Connections</div>
+            <div style={{display:"flex",flexDirection:"column",gap:".35rem"}}>
+              {connections.map(c => (
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .7rem",
+                  background:"var(--s2)",border:"1px solid var(--b2)",borderLeft:`3px solid ${c.color}`,
+                  borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
+                  onClick={() => onReconnect(c.id)}
+                  onMouseEnter={e => e.currentTarget.style.borderColor="var(--accent)"}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor="var(--b2)"; e.currentTarget.style.borderLeftColor=c.color; }}>
+                  <span style={{fontSize:"1.1rem"}}>{CONN_ICONS[c.type] || "📡"}</span>
+                  <div style={{flex:1,overflow:"hidden"}}>
+                    <div style={{fontSize:".82rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
+                    <div style={{fontSize:".62rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
+                  </div>
+                  <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>Connect →</span>
+                </div>
+              ))}
+            </div>
+            <div style={{borderBottom:"1px solid var(--b2)",margin:"1rem 0 .2rem",position:"relative"}}>
+              <span style={{position:"absolute",left:"50%",transform:"translate(-50%,-50%)",background:"var(--s1)",
+                padding:"0 .6rem",fontSize:".65rem",color:"var(--t3)",textTransform:"uppercase",letterSpacing:".08em",fontWeight:600}}>
+                or add new
+              </span>
+            </div>
+          </div>
+        )}
+
         {err && <div className="err">⚠ {err}</div>}
         <div className="tabs">
           {TYPES.map(([k,label]) => (
@@ -2129,7 +2160,7 @@ export default function App() {
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} />
+      <Setup onConnect={handleConnect} connections={connections} onReconnect={switchConnection} />
     </>
   );
 
