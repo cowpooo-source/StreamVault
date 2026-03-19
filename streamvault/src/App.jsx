@@ -2035,9 +2035,16 @@ export default function App() {
     const newConns = connections.filter(c => c.id !== id);
     setConnections(newConns);
     db.set("sv-connections", newConns);
-    // Clean up per-connection data
+    // Clean up localStorage
     localStorage.removeItem(`sv-favs-${id}`);
     localStorage.removeItem(`sv-history-${id}`);
+    // Clean up IDB cache
+    for (const key of [`content:${id}:live`, `content:${id}:vod`, `content:${id}:series`,
+      `cats:${id}:vod`, `cats:${id}:series`, `sync:${id}`]) {
+      idbCache.set(key, null);
+    }
+    // Clean up D1 (cascades: content_items, categories, sync_meta)
+    catalogAPI(`connections?id=${id}`, { method: "DELETE" });
   }
 
   function addNewConnection() {
