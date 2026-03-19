@@ -239,7 +239,7 @@ function makeXtreamAPI(server, user, pass) {
     getSeriesCategories: () => proxyFetch(`${base}&action=get_series_categories`).then(r => r.json()),
     getSeries: () => proxyFetch(`${base}&action=get_series`).then(r => r.json()),
     getSeriesInfo: (id) => proxyFetch(`${base}&action=get_series_info&series_id=${id}`).then(r => r.json()),
-    liveURL: id => `${server}/live/${user}/${pass}/${id}.m3u8`,
+    liveURL: id => `${server}/live/${user}/${pass}/${id}.ts`,
     vodURL: (id, ext="mp4") => `${server}/movie/${user}/${pass}/${id}.${ext}`,
     seriesStreamURL: (id, ext="mp4") => `${server}/series/${user}/${pass}/${id}.${ext}`,
   };
