@@ -1395,7 +1395,7 @@ export default function App() {
   const [autoConnected, setAutoConnected] = useState(false); // true if loaded from IDB cache
 
   // ── TMDB
-  const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "");
+  const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "548cb796fc67d6997619a8a0f7e011a5");
 
   // ── CSS injection
   useEffect(() => {
