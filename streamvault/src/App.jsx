@@ -1782,9 +1782,9 @@ export default function App() {
     return () => clearTimeout(contentSaveTimer.current);
   }, [vod, series, conn]);
 
-  // Build /stalker/play URL — resolves token + streams in one CF Worker request (same IP)
+  // Build /stalker/play URL — resolves token + streams via CF Worker (stalker tokens are MAC-bound, not IP-bound)
   function stalkerPlayUrl(cmd, contentType = "live", episode = null) {
-    let url = `${PROXY}/stalker/play?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(cmd)}&content_type=${encodeURIComponent(contentType)}`;
+    let url = `${CATALOG_API}/stalker/play?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(cmd)}&content_type=${encodeURIComponent(contentType)}`;
     if (episode) url += `&episode=${episode}`;
     return url;
   }
