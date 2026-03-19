@@ -24,4 +24,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: ALLOWED_ORIGIN
-        value: "https://streamvault.lookin2share.workers.dev"
+        value: "https://streamvault.lookin2share.workers.dev,https://streamvault-poc.pages.dev"

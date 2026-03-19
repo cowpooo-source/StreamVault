@@ -7,7 +7,7 @@ const app  = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN || "*",
+  origin: process.env.ALLOWED_ORIGIN ? process.env.ALLOWED_ORIGIN.split(",").map(s => s.trim()) : "*",
   methods: ["GET", "POST", "OPTIONS", "HEAD"],
 }));
 app.use(express.json());
