@@ -638,20 +638,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
       if (window.Hls?.isSupported()) {
         const opts = { enableWorker: false, fragLoadingMaxRetry: 2 };
         // On HTTPS pages, proxy HTTP streams through proxy
+        // The proxy rewrites HLS manifests so segments also go through proxy (same IP)
         if (isMixed(u)) {
-          // Extract original server origin for rewriting relative segment paths
-          const origOrigin = new URL(u).origin; // e.g. http://portal5458.com:8080
           u = streamProxy(u);
-          opts.xhrSetup = (xhr, xhrUrl) => {
-            if (xhrUrl.startsWith("http://")) {
-              xhr.open("GET", streamProxy(xhrUrl));
-            } else if ((xhrUrl.startsWith(STREAM_PROXY) || xhrUrl.startsWith(PROXY)) && !xhrUrl.includes("/stream?")) {
-              // Relative segment resolved against proxy origin (e.g. koyeb.app/hlsr/...)
-              // Rewrite to original server + proxy through /stream
-              const path = new URL(xhrUrl).pathname;
-              xhr.open("GET", streamProxy(`${origOrigin}${path}`));
-            }
-          };
         }
         const hls = new window.Hls(opts);
         hlsRef.current = hls;

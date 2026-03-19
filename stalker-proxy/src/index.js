@@ -578,12 +578,28 @@ app.get("/stream", async (req, res) => {
       redirect: "follow",
     });
     if (!upstream.ok) return res.status(upstream.status).end();
-    const ct = upstream.headers.get("content-type");
+    const ct = upstream.headers.get("content-type") || "";
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
     res.set("Access-Control-Allow-Headers", "Range, Content-Type");
-    if (ct) res.set("Content-Type", ct);
-    upstream.body.pipe(res);
+
+    // For HLS manifests: rewrite relative segment URLs to proxy through /stream
+    // This ensures segments are fetched from the same IP that got the manifest
+    if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
+      const text = await upstream.text();
+      const origin = new URL(url).origin;
+      const selfBase = `${req.protocol}://${req.get("host")}`;
+      const rewritten = text.replace(/^(\/[^\s]+\.ts[^\s]*)$/gm, (match) => {
+        return `${selfBase}/stream?url=${encodeURIComponent(origin + match)}`;
+      }).replace(/^(\/[^\s]+\.m3u8[^\s]*)$/gm, (match) => {
+        return `${selfBase}/stream?url=${encodeURIComponent(origin + match)}`;
+      });
+      res.set("Content-Type", ct);
+      res.send(rewritten);
+    } else {
+      if (ct) res.set("Content-Type", ct);
+      upstream.body.pipe(res);
+    }
   } catch (e) {
     console.error("Stream proxy error:", e.message);
     if (!res.headersSent) res.status(502).json({ error: e.message });
