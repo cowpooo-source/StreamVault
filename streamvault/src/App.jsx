@@ -364,10 +364,10 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   color:var(--t2);font-family:'DM Sans',sans-serif;font-size:.75rem;cursor:pointer;transition:all .2s;white-space:nowrap}
 .c-btn:hover{color:var(--t1);border-color:var(--b2)}
 .c-btn.active{color:var(--accent);border-color:${t.accent}40;background:${t.accent}10}
-.c-body{flex:1;overflow-y:auto;padding:1.1rem 1.4rem;display:flex;gap:1.1rem}
+.c-body{flex:1;overflow:hidden;padding:1.1rem 1.4rem;display:flex;gap:1.1rem;min-height:0}
 
 /* CATEGORIES */
-.cats{width:150px;flex-shrink:0}
+.cats{width:150px;flex-shrink:0;overflow-y:auto;overflow-x:hidden;height:0;min-height:100%}
 .cat{padding:.4rem .65rem;border-radius:7px;font-size:.75rem;color:var(--t2);cursor:pointer;
   transition:all .15s;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   display:flex;align-items:center;gap:.4rem}
