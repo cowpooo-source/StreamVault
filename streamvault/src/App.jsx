@@ -1795,14 +1795,15 @@ export default function App() {
       const playUrl = stalkerPlayUrl(item._stalkerCmd, contentType);
       // Try /stalker/play — if Worker can stream directly, use the play URL
       // If it returns JSON with fallback:true, the Worker couldn't stream (CF-to-CF block etc)
-      // In that case, use the resolved URL through /stream proxy
+      // In that case, route through Koyeb /stream proxy (stable connection to portal)
       const res = await fetch(playUrl);
       const ct = res.headers.get("content-type") || "";
       if (ct.includes("json")) {
         const data = await res.json();
         if (data.url) {
           const u = data.url;
-          return (u.startsWith(PROXY) || u.startsWith(STREAM_PROXY) || u.startsWith(CATALOG_API)) ? u : `${CATALOG_API}/stream?url=${encodeURIComponent(u)}`;
+          // Use Koyeb for stalker stream fallback (CF Worker gets 462 from portals)
+          return (u.startsWith(PROXY) || u.startsWith(STREAM_PROXY) || u.startsWith(CATALOG_API)) ? u : `${STREAM_PROXY}/stream?url=${encodeURIComponent(u)}`;
         }
         if (data.error) throw new Error(data.error);
       }
@@ -1945,7 +1946,7 @@ export default function App() {
         let resolvedUrl = playUrl;
         if (ct.includes("json")) {
           const data = await res.json();
-          if (data.url) resolvedUrl = (data.url.startsWith(PROXY) || data.url.startsWith(STREAM_PROXY) || data.url.startsWith(CATALOG_API)) ? data.url : `${CATALOG_API}/stream?url=${encodeURIComponent(data.url)}`;
+          if (data.url) resolvedUrl = (data.url.startsWith(PROXY) || data.url.startsWith(STREAM_PROXY) || data.url.startsWith(CATALOG_API)) ? data.url : `${STREAM_PROXY}/stream?url=${encodeURIComponent(data.url)}`;
         }
         const epItem = {
           id: `${seriesDetail.item.id}-s${seriesDetail.activeSeason}-e${episodeNum}`,
