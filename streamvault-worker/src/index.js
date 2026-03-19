@@ -30,6 +30,15 @@ export default {
     // CORS preflight for all routes
     if (method === "OPTIONS") return handleOptions();
 
+    // Track daily request count (fire-and-forget, non-blocking)
+    const today = new Date().toISOString().slice(0, 10);
+    const isStream = pathname === "/stream" || pathname.startsWith("/stalker/play");
+    ctx.waitUntil(
+      env.SV_DB.prepare(
+        "INSERT INTO usage_log (date, metric, value) VALUES (?, ?, 1) ON CONFLICT(date, metric) DO UPDATE SET value = value + 1"
+      ).bind(today, isStream ? "cf_stream_requests" : "cf_api_requests").run().catch(() => {})
+    );
+
     // Health check
     if (pathname === "/health") {
       return jsonResponse({ status: "ok", runtime: "cloudflare-worker" });
