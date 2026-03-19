@@ -952,14 +952,15 @@ function Setup({ onConnect }) {
   const set = (k,v) => setF(p => ({...p,[k]:v}));
 
   useEffect(() => {
-    // Pre-fill from last active connection if available
+    // Pre-fill from last active connection (or most recent saved connection)
     try {
-      const acId = localStorage.getItem("sv-activeConn");
       const conns = localStorage.getItem("sv-connections");
-      if (acId && conns) {
-        const activeId = JSON.parse(acId);
+      if (conns) {
         const connList = JSON.parse(conns);
-        const active = connList.find(c => c.id === activeId);
+        if (!connList?.length) return;
+        const acId = localStorage.getItem("sv-activeConn");
+        const activeId = acId ? JSON.parse(acId) : null;
+        const active = (activeId && connList.find(c => c.id === activeId)) || connList[connList.length - 1];
         if (active?.config) {
           const c = active.config;
           if (c.type) setType(c.type);
