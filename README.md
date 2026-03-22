@@ -251,4 +251,4 @@ StreamVault is a **client application** — it does not provide any IPTV content
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal and noncommercial use. Commercial use requires a separate license.
