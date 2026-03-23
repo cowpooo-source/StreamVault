@@ -331,9 +331,9 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .ch-meta{font-size:.62rem;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .ch-num{font-size:.62rem;color:var(--t3)}
 .fav-btn{position:absolute;top:.4rem;right:.4rem;background:none;border:none;cursor:pointer;
-  font-size:.85rem;opacity:.35;transition:all .2s;line-height:1;padding:.15rem}
-.fav-btn:hover{opacity:1;transform:scale(1.2)}
-.fav-btn.on{opacity:1}
+  font-size:.85rem;opacity:.7;transition:all .2s;line-height:1;padding:.15rem;color:#8890b0}
+.fav-btn:hover{opacity:1;transform:scale(1.2);color:#ff4466}
+.fav-btn.on{opacity:1;color:#ff4466}
 .live-dot{width:5px;height:5px;border-radius:50%;background:var(--danger);display:inline-block;margin-right:3px;animation:blink 1.5s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
 .vod-grid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:.75rem;align-content:start}
@@ -347,9 +347,9 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .vod-meta{font-size:.62rem;color:var(--t3);margin-top:.18rem}
 .vod-fav{position:absolute;top:.4rem;right:.4rem;background:var(--bg)88;backdrop-filter:blur(4px);
   border:none;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;
-  cursor:pointer;font-size:.72rem;opacity:.5;transition:all .2s}
-.vod-fav:hover{opacity:1;transform:scale(1.15)}
-.vod-fav.on{opacity:1}
+  cursor:pointer;font-size:.72rem;opacity:.7;transition:all .2s;color:#8890b0}
+.vod-fav:hover{opacity:1;transform:scale(1.15);color:#ff4466}
+.vod-fav.on{opacity:1;color:#ff4466}
 .resume-bar{position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--s3)}
 .resume-fill{height:100%;background:var(--accent);transition:width .3s}
 .badge{display:inline-block;padding:.1rem .32rem;background:${t.accent}18;border:1px solid ${t.accent}30;
@@ -1380,6 +1380,28 @@ export default function App() {
 
   // ── TMDB
   const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "548cb796fc67d6997619a8a0f7e011a5");
+
+  // ── Feedback widget
+  const [fbOpen, setFbOpen] = useState(false);
+  const [fbMsg, setFbMsg] = useState("");
+  const [fbSending, setFbSending] = useState(false);
+  const [fbDone, setFbDone] = useState(false);
+
+  const sendFeedback = useCallback(async () => {
+    if (!fbMsg.trim() || fbSending) return;
+    setFbSending(true);
+    try {
+      await fetch(`${API}/api/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID },
+        body: JSON.stringify({ message: fbMsg.trim(), guestId: GUEST_ID, timestamp: Date.now(), userAgent: navigator.userAgent }),
+      });
+    } catch {}
+    setFbSending(false);
+    setFbMsg("");
+    setFbDone(true);
+    setTimeout(() => { setFbDone(false); setFbOpen(false); }, 1800);
+  }, [fbMsg, fbSending]);
 
   // ── CSS injection
   useEffect(() => {
@@ -3007,6 +3029,70 @@ function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
             <div style={{marginTop:"1.1rem",textAlign:"right"}}>
               <button className="btn-cancel" onClick={() => setPicker(null)}>Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Feedback Widget ── */}
+      <button onClick={() => setFbOpen(true)} title="Send feedback"
+        style={{position:"fixed",bottom:18,left:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
+          background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",color:"var(--accent,#00d4ff)",
+          fontSize:"1.15rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+          boxShadow:"0 2px 12px rgba(0,0,0,0.4)",transition:"transform .15s,background .15s"}}
+        onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.1)"; e.currentTarget.style.background = "var(--s3,#1d1d35)"; }}
+        onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.background = "var(--s2,#16162a)"; }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+
+      {fbOpen && (
+        <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",
+          display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+          onClick={e => { if (e.target === e.currentTarget && !fbSending) { setFbOpen(false); setFbMsg(""); setFbDone(false); }}}>
+          <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
+            borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:420,boxShadow:"0 8px 32px rgba(0,0,0,0.5)"}}>
+            {fbDone ? (
+              <div style={{textAlign:"center",padding:"2rem 0"}}>
+                <div style={{fontSize:"1.5rem",marginBottom:".5rem"}}>Thank you!</div>
+                <div style={{color:"var(--t2,#8080aa)",fontSize:".85rem"}}>Your feedback has been received.</div>
+              </div>
+            ) : (
+              <>
+                <div style={{fontSize:"1.05rem",fontWeight:600,color:"var(--t1,#dde0f5)",marginBottom:".2rem"}}>
+                  Send Feedback
+                </div>
+                <div style={{fontSize:".75rem",color:"var(--t2,#8080aa)",marginBottom:"1rem"}}>
+                  Bug reports, feature requests, or general comments
+                </div>
+                <textarea value={fbMsg} onChange={e => setFbMsg(e.target.value)}
+                  placeholder="What's on your mind?"
+                  maxLength={2000}
+                  style={{width:"100%",minHeight:120,background:"var(--s2,#16162a)",
+                    border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,padding:".75rem",
+                    color:"var(--t1,#dde0f5)",fontSize:".85rem",resize:"vertical",
+                    fontFamily:"inherit",outline:"none"}}
+                  onFocus={e => e.target.style.borderColor = "var(--accent,#00d4ff)"}
+                  onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
+                  autoFocus />
+                <div style={{display:"flex",justifyContent:"flex-end",gap:".5rem",marginTop:".8rem"}}>
+                  <button onClick={() => { setFbOpen(false); setFbMsg(""); }}
+                    style={{padding:".45rem 1rem",background:"transparent",
+                      border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,
+                      color:"var(--t2,#8080aa)",fontSize:".8rem",cursor:"pointer"}}>
+                    Cancel
+                  </button>
+                  <button onClick={sendFeedback} disabled={!fbMsg.trim() || fbSending}
+                    style={{padding:".45rem 1rem",
+                      background: !fbMsg.trim() || fbSending ? "rgba(255,255,255,0.05)" : "var(--accent,#00d4ff)",
+                      border:"none",borderRadius:7,
+                      color: !fbMsg.trim() || fbSending ? "var(--t3,#44445a)" : "#fff",
+                      fontSize:".8rem",fontWeight:600,cursor: !fbMsg.trim() || fbSending ? "default" : "pointer"}}>
+                    {fbSending ? "Sending..." : "Send"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -48,6 +48,23 @@ app.post("/api/track", express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /api/feedback — submit user feedback
+app.post("/api/feedback", express.json(), (req, res) => {
+  const { message, guestId, timestamp, userAgent } = req.body;
+  if (!message || !message.trim()) return res.status(400).json({ error: "Message is required" });
+  if (message.length > 2000) return res.status(400).json({ error: "Message too long (max 2000 chars)" });
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+  cache.saveFeedback(message.trim(), guestId, userAgent, ip);
+  res.json({ ok: true });
+});
+
+// ── GET /api/feedback — admin-only, returns all feedback
+app.get("/api/feedback", (req, res) => {
+  const token = req.query.token || req.headers["x-admin-token"];
+  if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
+  res.json({ feedback: cache.getFeedback() });
+});
+
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
 const pathCache = new Map();
 
@@ -868,6 +885,7 @@ app.get("/api/analytics", (req, res) => {
       today: stats.todayReqs,
       daily: stats.daily,
     },
+    feedback: cache.getFeedback(),
     generated_at: new Date().toISOString(),
   });
 });
@@ -1042,6 +1060,21 @@ async function load(){
       h+='<div class="section"><div class="section-title">Recent Visitors</div>';
       h+='<table><tr><th>IP</th><th>First Seen</th><th>Last Active</th><th>Requests</th></tr>';
       visitors.forEach(v=>{h+='<tr><td><code>'+v.ip+'</code></td><td>'+ago(v.first_seen)+'</td><td>'+ago(v.last_seen)+'</td><td>'+v.hits+'</td></tr>'});
+      h+='</table></div>';
+    }
+
+    // Feedback
+    const feedback=d.feedback||[];
+    if(feedback.length){
+      h+='<div class="section"><div class="section-title">Feedback ('+feedback.length+')</div>';
+      h+='<table><tr><th>Date</th><th>Guest ID</th><th>IP</th><th>Message</th></tr>';
+      feedback.forEach(f=>{
+        const date=f.created_at?new Date(f.created_at*1000).toLocaleString():'\\u2014';
+        const gid=f.guest_id?(f.guest_id.substring(0,8)+'...'):'\\u2014';
+        const ip=f.ip?f.ip.replace(/(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)/,'$1.$2.***.$4'):'\\u2014';
+        const msg=(f.message||'').length>200?f.message.substring(0,200)+'...':f.message||'';
+        h+='<tr><td style="white-space:nowrap">'+date+'</td><td><code>'+gid+'</code></td><td><code>'+ip+'</code></td><td>'+msg+'</td></tr>';
+      });
       h+='</table></div>';
     }
 

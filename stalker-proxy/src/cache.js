@@ -207,6 +207,23 @@ function trackWatch(name, type) {
   dirty = true;
 }
 
+function saveFeedback(message, guestId, userAgent, ip) {
+  if (!db || !message) return;
+  const now = Math.floor(Date.now() / 1000);
+  db.run("INSERT INTO feedback (message, guest_id, user_agent, ip, created_at) VALUES (?, ?, ?, ?, ?)",
+    [message, guestId || null, userAgent || null, ip || null, now]);
+  dirty = true;
+}
+
+function getFeedback() {
+  if (!db) return [];
+  const rows = db.exec("SELECT id, message, guest_id, user_agent, ip, created_at FROM feedback ORDER BY created_at DESC LIMIT 100");
+  if (!rows[0]) return [];
+  return rows[0].values.map(([id, message, guest_id, user_agent, ip, created_at]) => ({
+    id, message, guest_id, user_agent, ip, created_at,
+  }));
+}
+
 // Cleanup expired entries every hour
 setInterval(cleanup, 60 * 60 * 1000);
 
@@ -231,7 +248,11 @@ const ready = init().then(() => {
     key TEXT PRIMARY KEY, portal TEXT, mac TEXT, type TEXT,
     first_seen INTEGER, last_seen INTEGER, hits INTEGER DEFAULT 0
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, guest_id TEXT,
+    user_agent TEXT, ip TEXT, created_at INTEGER
+  )`);
   cleanup();
 });
 
-module.exports = { get, set, del, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats };
+module.exports = { get, set, del, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback };
