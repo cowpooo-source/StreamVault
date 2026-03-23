@@ -747,7 +747,10 @@ app.get("/proxy", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
+cache.ready.then(() => {
+  app.listen(PORT, () => {
+    console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
+    console.log(`   Health: http://localhost:${PORT}/health`);
+    console.log(`   Cache: SQLite (7-day TTL)`);
+  });
 });
