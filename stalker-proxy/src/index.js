@@ -781,6 +781,39 @@ app.get("/proxy", async (req, res) => {
   }
 });
 
+// Read network bandwidth from /proc/net/dev (Linux only)
+function getNetworkStats() {
+  try {
+    const fs = require("fs");
+    const data = fs.readFileSync("/proc/net/dev", "utf8");
+    const lines = data.split("\n");
+    let totalRx = 0, totalTx = 0;
+    for (const line of lines) {
+      // Skip loopback and header lines
+      if (line.includes("lo:") || !line.includes(":")) continue;
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 10) {
+        totalRx += parseInt(parts[1]) || 0;
+        totalTx += parseInt(parts[9]) || 0;
+      }
+    }
+    return { rx_bytes: totalRx, tx_bytes: totalTx, rx_gb: Math.round(totalRx / 1073741824 * 100) / 100, tx_gb: Math.round(totalTx / 1073741824 * 100) / 100 };
+  } catch { return null; }
+}
+
+// Track bandwidth per day in SQLite
+function trackDailyBandwidth() {
+  const net = getNetworkStats();
+  if (!net) return;
+  const today = new Date().toISOString().slice(0, 10);
+  // Store current cumulative values — diff is calculated at read time
+  cache.set(`bw:${today}:current`, { rx: net.rx_bytes, tx: net.tx_bytes }, 30 * 24 * 60 * 60 * 1000);
+  // Store start-of-day snapshot if not exists
+  const startKey = `bw:${today}:start`;
+  if (!cache.get(startKey)) cache.set(startKey, { rx: net.rx_bytes, tx: net.tx_bytes }, 30 * 24 * 60 * 60 * 1000);
+}
+setInterval(trackDailyBandwidth, 60000); // every minute
+
 // ── GET /api/analytics — JSON stats (requires auth token)
 app.get("/api/analytics", (req, res) => {
   const token = req.query.token || req.headers["x-admin-token"];
@@ -788,6 +821,22 @@ app.get("/api/analytics", (req, res) => {
 
   const stats = cache.getStats();
   const mem = process.memoryUsage();
+  const net = getNetworkStats();
+
+  // Calculate today's bandwidth
+  const today = new Date().toISOString().slice(0, 10);
+  const bwStart = cache.get(`bw:${today}:start`);
+  let todayBw = null;
+  if (net && bwStart) {
+    todayBw = {
+      rx_gb: Math.round((net.rx_bytes - bwStart.rx) / 1073741824 * 100) / 100,
+      tx_gb: Math.round((net.tx_bytes - bwStart.tx) / 1073741824 * 100) / 100,
+    };
+    todayBw.total_gb = Math.round((todayBw.rx_gb + todayBw.tx_gb) * 100) / 100;
+  }
+
+  trackDailyBandwidth(); // ensure current snapshot
+
   res.json({
     server: {
       uptime_hours: Math.round(process.uptime() / 3600 * 10) / 10,
@@ -795,6 +844,10 @@ app.get("/api/analytics", (req, res) => {
       heap_mb: Math.round(mem.heapUsed / 1024 / 1024),
       node: process.version,
       platform: process.platform,
+    },
+    bandwidth: {
+      total: net ? { rx_gb: net.rx_gb, tx_gb: net.tx_gb, total_gb: Math.round((net.rx_gb + net.tx_gb) * 100) / 100 } : null,
+      today: todayBw,
     },
     visitors: stats.visitors,
     recent_visitors: stats.recentVisitors,
@@ -911,8 +964,16 @@ async function load(){
     h+='<div class="card"><div class="card-label">Uptime</div><div class="card-value green">'+d.server.uptime_hours+'h</div></div>';
     h+='<div class="card"><div class="card-label">Memory</div><div class="card-value">'+d.server.memory_mb+' MB</div></div>';
     h+='<div class="card"><div class="card-label">Cache Entries</div><div class="card-value orange">'+d.cache.valid_entries+'</div></div>';
-    h+='<div class="card"><div class="card-label">Cache Size</div><div class="card-value">'+d.cache.size_mb+' MB</div></div>';
     h+='<div class="card"><div class="card-label">Cache Hit Rate</div><div class="card-value '+(d.cache.hit_rate>=80?'green':d.cache.hit_rate>=50?'yellow':'red')+'">'+d.cache.hit_rate+'%</div></div>';
+    if(d.bandwidth?.total){
+      h+='<div class="card"><div class="card-label">Total Download</div><div class="card-value">'+d.bandwidth.total.rx_gb+' GB</div></div>';
+      h+='<div class="card"><div class="card-label">Total Upload</div><div class="card-value">'+d.bandwidth.total.tx_gb+' GB</div></div>';
+    }
+    if(d.bandwidth?.today){
+      h+='<div class="card"><div class="card-label">Today Download</div><div class="card-value green">'+d.bandwidth.today.rx_gb+' GB</div></div>';
+      h+='<div class="card"><div class="card-label">Today Upload</div><div class="card-value green">'+d.bandwidth.today.tx_gb+' GB</div></div>';
+      h+='<div class="card"><div class="card-label">Today Total</div><div class="card-value yellow">'+d.bandwidth.today.total_gb+' GB</div></div>';
+    }
     h+='<div class="card"><div class="card-label">Node.js</div><div class="card-value purple" style="font-size:1rem">'+d.server.node+'</div></div>';
     h+='</div></div>';
 
