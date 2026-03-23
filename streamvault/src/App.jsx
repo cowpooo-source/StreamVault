@@ -6,6 +6,31 @@ const API = import.meta.env.VITE_API_URL || "";
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
 function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID }, body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
 
+// Server sync — fire-and-forget with debounce
+const _syncTimers = {};
+function syncToServer(type, connId, data) {
+  const key = `${type}:${connId}`;
+  clearTimeout(_syncTimers[key]);
+  _syncTimers[key] = setTimeout(() => {
+    fetch(`${API}/api/sync/${type}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID },
+      body: JSON.stringify({ connId, data }),
+    }).catch(() => {});
+  }, 2000);
+}
+
+async function restoreFromServer(type, connId) {
+  try {
+    const res = await fetch(`${API}/api/sync/${type}?connId=${encodeURIComponent(connId)}`, {
+      headers: { "X-Guest-Id": GUEST_ID },
+    });
+    if (!res.ok) return null;
+    const { data } = await res.json();
+    return data;
+  } catch { return null; }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // THEMES (OTT Navigator style multi-theme)
 // ══════════════════════════════════════════════════════════════════
@@ -1436,6 +1461,18 @@ export default function App() {
         ]);
         setFavs(fv);
         setHistory(hi);
+
+        // Restore from server if local is empty
+        const favsEmpty = !fv || (Object.keys(fv.live||{}).length === 0 && Object.keys(fv.vod||{}).length === 0 && Object.keys(fv.series||{}).length === 0);
+        const histEmpty = !hi || hi.length === 0;
+        if (favsEmpty || histEmpty) {
+          const [serverFavs, serverHist] = await Promise.all([
+            favsEmpty ? restoreFromServer("favorites", acId) : null,
+            histEmpty ? restoreFromServer("history", acId) : null,
+          ]);
+          if (serverFavs && favsEmpty) { setFavs(serverFavs); db.set(`sv-favs-${acId}`, serverFavs); }
+          if (serverHist && histEmpty) { setHistory(serverHist); db.set(`sv-history-${acId}`, serverHist); }
+        }
       }
 
       // Auto-connect: if we have an active connection + cached content in IDB, skip Setup
@@ -1850,6 +1887,7 @@ export default function App() {
     setFavs(newFavs);
     if (activeConnId) {
       db.set(`sv-favs-${activeConnId}`, newFavs);
+      if (activeConnId) syncToServer("favorites", activeConnId, newFavs);
     }
   }
 
@@ -1865,6 +1903,7 @@ export default function App() {
     setHistory(newH);
     if (activeConnId) {
       db.set(`sv-history-${activeConnId}`, newH);
+      if (activeConnId) syncToServer("history", activeConnId, newH);
     }
   }
 
@@ -2035,6 +2074,8 @@ export default function App() {
       `cats:${id}:vod`, `cats:${id}:series`, `sync:${id}`]) {
       idbCache.set(key, null);
     }
+    // Clean up server-side sync data
+    fetch(`${API}/api/sync?connId=${encodeURIComponent(id)}`, { method: "DELETE", headers: { "X-Guest-Id": GUEST_ID } }).catch(() => {});
     // Clean up D1 (cascades: content_items, categories, sync_meta)
   }
 

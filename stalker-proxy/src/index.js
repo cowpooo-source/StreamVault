@@ -65,6 +65,40 @@ app.get("/api/feedback", (req, res) => {
   res.json({ feedback: cache.getFeedback() });
 });
 
+// ── PUT /api/sync/:type — save favorites or history
+app.put("/api/sync/:type", express.json(), (req, res) => {
+  const { type } = req.params;
+  if (type !== "favorites" && type !== "history") return res.status(400).json({ error: "Invalid type" });
+  const guestId = req.headers["x-guest-id"];
+  if (!guestId) return res.status(400).json({ error: "X-Guest-Id required" });
+  const { connId, data } = req.body;
+  if (!connId || !data) return res.status(400).json({ error: "connId and data required" });
+  cache.saveGuestData(guestId, connId, type, data);
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+  cache.trackGuest(guestId, ip);
+  res.json({ ok: true });
+});
+
+// ── GET /api/sync/:type — restore favorites or history
+app.get("/api/sync/:type", (req, res) => {
+  const { type } = req.params;
+  if (type !== "favorites" && type !== "history") return res.status(400).json({ error: "Invalid type" });
+  const guestId = req.headers["x-guest-id"];
+  if (!guestId) return res.status(400).json({ error: "X-Guest-Id required" });
+  const connId = req.query.connId;
+  if (!connId) return res.status(400).json({ error: "connId required" });
+  const data = cache.getGuestData(guestId, connId, type);
+  res.json({ data });
+});
+
+// ── DELETE /api/sync — delete all data for a connection
+app.delete("/api/sync", (req, res) => {
+  const guestId = req.headers["x-guest-id"];
+  const connId = req.query.connId;
+  if (guestId && connId) cache.deleteGuestData(guestId, connId);
+  res.json({ ok: true });
+});
+
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
 const pathCache = new Map();
 

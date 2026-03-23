@@ -224,8 +224,39 @@ function getFeedback() {
   }));
 }
 
+function saveGuestData(guestId, connId, type, data) {
+  if (!db || !guestId || !connId) return;
+  const now = Math.floor(Date.now() / 1000);
+  db.run("INSERT OR REPLACE INTO guest_data (guest_id, conn_id, type, data, updated_at) VALUES (?, ?, ?, ?, ?)",
+    [guestId, connId, type, JSON.stringify(data), now]);
+  dirty = true;
+}
+
+function getGuestData(guestId, connId, type) {
+  if (!db) return null;
+  const stmt = db.prepare("SELECT data FROM guest_data WHERE guest_id = ? AND conn_id = ? AND type = ?");
+  stmt.bind([guestId, connId, type]);
+  if (stmt.step()) { const row = stmt.getAsObject(); stmt.free(); return JSON.parse(row.data); }
+  stmt.free();
+  return null;
+}
+
+function deleteGuestData(guestId, connId) {
+  if (!db) return;
+  db.run("DELETE FROM guest_data WHERE guest_id = ? AND conn_id = ?", [guestId, connId]);
+  dirty = true;
+}
+
+function cleanupGuestData() {
+  if (!db) return;
+  const cutoff = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+  db.run("DELETE FROM guest_data WHERE updated_at < ?", [cutoff]);
+  db.run("DELETE FROM guests WHERE last_seen < ?", [cutoff]);
+  dirty = true;
+}
+
 // Cleanup expired entries every hour
-setInterval(cleanup, 60 * 60 * 1000);
+setInterval(() => { cleanup(); cleanupGuestData(); }, 60 * 60 * 1000);
 
 // Initialize on load
 const ready = init().then(() => {
@@ -252,7 +283,12 @@ const ready = init().then(() => {
     id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, guest_id TEXT,
     user_agent TEXT, ip TEXT, created_at INTEGER
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS guest_data (
+    guest_id TEXT NOT NULL, conn_id TEXT NOT NULL, type TEXT NOT NULL,
+    data TEXT NOT NULL, updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guest_id, conn_id, type)
+  )`);
   cleanup();
 });
 
-module.exports = { get, set, del, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback };
+module.exports = { get, set, del, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };
