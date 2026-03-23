@@ -13,13 +13,22 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "10mb" }));
 
-// Track requests by type
+// Track requests, visitors, and portals
 app.use((req, res, next) => {
   const p = req.path;
-  if (p.startsWith("/stalker/")) cache.trackRequest("stalker");
-  else if (p === "/stream") cache.trackRequest("stream");
-  else if (p === "/proxy") cache.trackRequest("proxy");
-  else if (p !== "/health" && p !== "/analytics" && p !== "/api/analytics") cache.trackRequest("other");
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+  if (p !== "/health" && p !== "/analytics" && p !== "/api/analytics") {
+    if (p.startsWith("/stalker/")) cache.trackRequest("stalker");
+    else if (p === "/stream") cache.trackRequest("stream");
+    else if (p === "/proxy") cache.trackRequest("proxy");
+    else cache.trackRequest("other");
+    cache.trackVisitor(ip);
+  }
+  // Track portal usage from query params
+  if (p.startsWith("/stalker/") && req.query.portal && req.query.mac) {
+    const type = p.includes("/vod") ? "vod" : p.includes("/series") ? "series" : p.includes("/epg") ? "epg" : "live";
+    cache.trackPortal(req.query.portal, req.query.mac, type);
+  }
   next();
 });
 
@@ -311,7 +320,7 @@ app.get("/stalker/vod/categories", async (req, res) => {
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   const ck = cache.cacheKey(portal, mac, "vod-cats");
-  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+  if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
     const session = await getSession(portal, mac);
@@ -337,7 +346,7 @@ app.get("/stalker/vod", async (req, res) => {
   if (!cat)            return res.status(400).json({ error: "cat (category id) required" });
 
   const ck = cache.cacheKey(portal, mac, "vod", cat);
-  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+  if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
     const session  = await getSession(portal, mac);
@@ -446,7 +455,7 @@ app.get("/stalker/series/seasons", async (req, res) => {
   if (!portal || !mac || !seriesId) return res.status(400).json({ error: "portal, mac and seriesId required" });
 
   const ck = cache.cacheKey(portal, mac, "seasons", seriesId);
-  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+  if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
     const session = await getSession(portal, mac);
@@ -476,7 +485,7 @@ app.get("/stalker/series/categories", async (req, res) => {
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   const ck = cache.cacheKey(portal, mac, "series-cats");
-  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+  if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
     const session = await getSession(portal, mac);
@@ -502,7 +511,7 @@ app.get("/stalker/series", async (req, res) => {
   if (!cat)            return res.status(400).json({ error: "cat (category id) required" });
 
   const ck = cache.cacheKey(portal, mac, "series", cat);
-  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+  if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
     const session  = await getSession(portal, mac);
@@ -636,7 +645,7 @@ app.get("/stalker/epg", async (req, res) => {
   // EPG cached for 4 hours (not 7 days — program data changes frequently)
   const EPG_TTL = 4 * 60 * 60 * 1000;
   const ck = cache.cacheKey(portal, mac, "epg");
-  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+  if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
     const session = await getSession(portal, mac);
@@ -768,10 +777,16 @@ app.get("/api/analytics", (req, res) => {
       node: process.version,
       platform: process.platform,
     },
+    visitors: stats.visitors,
+    recent_visitors: stats.recentVisitors,
+    portals: { connections: stats.portals, by_type: stats.portalsByType },
     cache: {
       total_entries: stats.cacheTotal,
       valid_entries: stats.cacheValid,
       size_mb: stats.cacheSizeMB,
+      hit_rate: stats.cacheHitRate,
+      hits: stats.cacheHits,
+      misses: stats.cacheMisses,
       breakdown: stats.cacheBreakdown,
     },
     requests: {
@@ -797,24 +812,27 @@ h1{font-size:1.6rem;margin-bottom:.3rem;background:linear-gradient(135deg,#00d4f
 .card{background:#0f0f1c;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:1.2rem}
 .card-label{font-size:.7rem;color:#8080aa;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.4rem}
 .card-value{font-size:1.8rem;font-weight:700;color:#00d4ff}
-.card-value.green{color:#00e896}.card-value.orange{color:#ff6b35}.card-value.purple{color:#a78bfa}
+.card-value.green{color:#00e896}.card-value.orange{color:#ff6b35}.card-value.purple{color:#a78bfa}.card-value.yellow{color:#fbbf24}.card-value.red{color:#ff4466}
 .section{margin-bottom:2rem}
 .section-title{font-size:1rem;font-weight:600;margin-bottom:.8rem;color:#dde0f5;border-bottom:1px solid rgba(255,255,255,0.06);padding-bottom:.4rem}
 table{width:100%;border-collapse:collapse;font-size:.82rem}
 th{text-align:left;color:#8080aa;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;padding:.5rem .6rem;border-bottom:1px solid rgba(255,255,255,0.1)}
 td{padding:.5rem .6rem;border-bottom:1px solid rgba(255,255,255,0.04);color:#dde0f5}
-.tag{display:inline-block;padding:.15rem .4rem;border-radius:4px;font-size:.65rem;font-weight:600;text-transform:uppercase;background:#00d4ff22;color:#00d4ff}
+tr:hover td{background:rgba(255,255,255,0.02)}
+.tag{display:inline-block;padding:.15rem .4rem;border-radius:4px;font-size:.65rem;font-weight:600;text-transform:uppercase}
+.tag-stalker{background:#ff6b3522;color:#ff6b35}.tag-stream{background:#00d4ff22;color:#00d4ff}.tag-proxy{background:#00e89622;color:#00e896}
+.tag-live{background:#ff2d5522;color:#ff2d55}.tag-vod{background:#a78bfa22;color:#a78bfa}.tag-series{background:#fbbf2422;color:#fbbf24}.tag-epg{background:#00d4ff22;color:#00d4ff}
 .loading{text-align:center;padding:3rem;color:#8080aa}
 .err{color:#ff4466;padding:1rem;background:#ff446612;border-radius:8px}
 .refresh{background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);color:#00d4ff;padding:.4rem .8rem;border-radius:6px;cursor:pointer;font-size:.75rem;float:right}
 .refresh:hover{background:#16162a}
+.bar{height:8px;background:#16162a;border-radius:4px;overflow:hidden;margin-top:.4rem}
+.bar-fill{height:100%;border-radius:4px;transition:width .3s}
 .chart{display:flex;align-items:flex-end;gap:3px;height:80px;margin-top:.5rem}
 .chart-bar{flex:1;border-radius:2px 2px 0 0;min-width:12px;position:relative;cursor:pointer}
 .chart-bar:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);padding:.2rem .4rem;border-radius:4px;font-size:.6rem;white-space:nowrap;color:#dde0f5;z-index:1}
 .chart-labels{display:flex;gap:3px;margin-top:.3rem}
 .chart-labels span{flex:1;text-align:center;font-size:.55rem;color:#44445a;min-width:12px}
-.legend{display:flex;gap:1rem;margin-top:.5rem;font-size:.72rem;color:#8080aa}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
 </style>
 </head><body>
 <button class="refresh" onclick="load()">Refresh</button>
@@ -823,48 +841,56 @@ td{padding:.5rem .6rem;border-bottom:1px solid rgba(255,255,255,0.04);color:#dde
 <div id="app"><div class="loading">Loading...</div></div>
 <script>
 function fmt(n){return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'K':String(n)}
+function tag(t){return'<span class="tag tag-'+t+'">'+t+'</span>'}
+function ago(ts){if(!ts)return'\\u2014';const d=Date.now()-ts*1000;const m=Math.floor(d/60000);if(m<1)return'just now';if(m<60)return m+'m ago';const h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago'}
+function barColor(p){return p>=90?'#ff4466':p>=70?'#ff6b35':p>=50?'#fbbf24':'#00e896'}
+
 async function load(){
   const app=document.getElementById('app');
   try{
     const d=(await(await fetch('/api/analytics')).json());
     let h='';
 
-    // Server cards
-    h+='<div class="grid">';
-    h+='<div class="card"><div class="card-label">Uptime</div><div class="card-value green">'+d.server.uptime_hours+'h</div></div>';
-    h+='<div class="card"><div class="card-label">Memory (RSS)</div><div class="card-value">'+d.server.memory_mb+' MB</div></div>';
-    h+='<div class="card"><div class="card-label">Heap Used</div><div class="card-value">'+d.server.heap_mb+' MB</div></div>';
-    h+='<div class="card"><div class="card-label">Node.js</div><div class="card-value purple" style="font-size:1rem">'+d.server.node+'</div></div>';
-    h+='</div>';
+    // Visitors
+    h+='<div class="section"><div class="section-title">Visitors</div><div class="grid">';
+    h+='<div class="card"><div class="card-label">Total Visitors</div><div class="card-value">'+d.visitors.total+'</div></div>';
+    h+='<div class="card"><div class="card-label">Active (1h)</div><div class="card-value green">'+d.visitors.active_1h+'</div></div>';
+    h+='<div class="card"><div class="card-label">Active (24h)</div><div class="card-value green">'+d.visitors.active_24h+'</div></div>';
+    h+='<div class="card"><div class="card-label">Active (7d)</div><div class="card-value">'+d.visitors.active_7d+'</div></div>';
+    h+='</div></div>';
 
-    // Cache cards
-    h+='<div class="grid">';
+    // Server + Cache
+    h+='<div class="section"><div class="section-title">Server</div><div class="grid">';
+    h+='<div class="card"><div class="card-label">Uptime</div><div class="card-value green">'+d.server.uptime_hours+'h</div></div>';
+    h+='<div class="card"><div class="card-label">Memory</div><div class="card-value">'+d.server.memory_mb+' MB</div></div>';
     h+='<div class="card"><div class="card-label">Cache Entries</div><div class="card-value orange">'+d.cache.valid_entries+'</div></div>';
     h+='<div class="card"><div class="card-label">Cache Size</div><div class="card-value">'+d.cache.size_mb+' MB</div></div>';
-    const bk=d.cache.breakdown||{};
-    Object.keys(bk).forEach(k=>{
-      h+='<div class="card"><div class="card-label">'+k+'</div><div class="card-value" style="font-size:1.3rem">'+bk[k]+' cached</div></div>';
-    });
-    h+='</div>';
+    h+='<div class="card"><div class="card-label">Cache Hit Rate</div><div class="card-value '+(d.cache.hit_rate>=80?'green':d.cache.hit_rate>=50?'yellow':'red')+'">'+d.cache.hit_rate+'%</div></div>';
+    h+='<div class="card"><div class="card-label">Node.js</div><div class="card-value purple" style="font-size:1rem">'+d.server.node+'</div></div>';
+    h+='</div></div>';
 
-    // Today's requests
+    // Cache breakdown
+    const bk=d.cache.breakdown||{};
+    if(Object.keys(bk).length){
+      h+='<div class="section"><div class="section-title">Cache Breakdown</div><div class="grid">';
+      Object.entries(bk).forEach(([k,v])=>{h+='<div class="card"><div class="card-label">'+tag(k)+'</div><div class="card-value" style="font-size:1.3rem">'+v+'</div></div>'});
+      h+='</div></div>';
+    }
+
+    // Requests today
     const t=d.requests.today||{};
     const total=Object.values(t).reduce((a,b)=>a+b,0);
-    h+='<div class="grid">';
-    h+='<div class="card"><div class="card-label">Requests Today</div><div class="card-value">'+fmt(total)+'</div></div>';
-    Object.entries(t).forEach(([k,v])=>{
-      h+='<div class="card"><div class="card-label">'+k+'</div><div class="card-value" style="font-size:1.3rem">'+fmt(v)+'</div></div>';
-    });
-    h+='</div>';
+    h+='<div class="section"><div class="section-title">Requests Today</div><div class="grid">';
+    h+='<div class="card"><div class="card-label">Total</div><div class="card-value">'+fmt(total)+'</div></div>';
+    Object.entries(t).forEach(([k,v])=>{h+='<div class="card"><div class="card-label">'+tag(k)+'</div><div class="card-value" style="font-size:1.3rem">'+fmt(v)+'</div></div>'});
+    h+='</div></div>';
 
     // 7-day chart
     const days=Object.keys(d.requests.daily||{}).sort();
     if(days.length>0){
-      const colors={stalker:'#00d4ff',stream:'#ff6b35',proxy:'#00e896',other:'#a78bfa'};
       const types=[...new Set(days.flatMap(d2=>Object.keys(d.requests.daily[d2])))];
       const maxDay=Math.max(...days.map(d2=>Object.values(d.requests.daily[d2]).reduce((a,b)=>a+b,0)),1);
-      h+='<div class="section"><div class="section-title">Last 7 Days</div>';
-      h+='<div class="chart">';
+      h+='<div class="section"><div class="section-title">Last 7 Days</div><div class="chart">';
       days.forEach(day=>{
         const vals=d.requests.daily[day];
         const total2=Object.values(vals).reduce((a,b)=>a+b,0);
@@ -874,10 +900,35 @@ async function load(){
       });
       h+='</div><div class="chart-labels">';
       days.forEach(day=>{h+='<span>'+day.slice(5)+'</span>'});
-      h+='</div>';
-      h+='<div class="legend">';
-      types.forEach(t2=>{h+='<span><i style="background:'+(colors[t2]||'#8080aa')+'"></i>'+t2+'</span>'});
       h+='</div></div>';
+    }
+
+    // Portals / Connections
+    const portals=d.portals?.connections||[];
+    if(portals.length){
+      h+='<div class="section"><div class="section-title">Active Portals</div>';
+      const pt=d.portals.by_type||{};
+      if(Object.keys(pt).length){
+        h+='<div class="grid" style="margin-bottom:1rem">';
+        Object.entries(pt).forEach(([k,v])=>{h+='<div class="card"><div class="card-label">'+tag(k)+'</div><div class="card-value" style="font-size:1.3rem">'+v+' portals</div></div>'});
+        h+='</div>';
+      }
+      h+='<table><tr><th>Portal</th><th>MAC</th><th>Type</th><th>Hits</th><th>Last Active</th></tr>';
+      portals.forEach(p=>{
+        h+='<tr><td style="font-size:.75rem">'+p.portal+'</td><td><code>'+p.mac+'</code></td><td>'+tag(p.type)+'</td><td>'+p.hits+'</td><td>'+ago(p.last_seen)+'</td></tr>';
+      });
+      h+='</table></div>';
+    }
+
+    // Recent visitors
+    const visitors=d.recent_visitors||[];
+    if(visitors.length){
+      h+='<div class="section"><div class="section-title">Recent Visitors</div>';
+      h+='<table><tr><th>IP</th><th>First Seen</th><th>Last Active</th><th>Requests</th></tr>';
+      visitors.forEach(v=>{
+        h+='<tr><td><code>'+v.ip+'</code></td><td>'+ago(v.first_seen)+'</td><td>'+ago(v.last_seen)+'</td><td>'+v.hits+'</td></tr>';
+      });
+      h+='</table></div>';
     }
 
     h+='<div class="sub" style="margin-top:2rem">Generated: '+new Date(d.generated_at).toLocaleString()+'</div>';
