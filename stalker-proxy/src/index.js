@@ -13,6 +13,16 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "10mb" }));
 
+// Track requests by type
+app.use((req, res, next) => {
+  const p = req.path;
+  if (p.startsWith("/stalker/")) cache.trackRequest("stalker");
+  else if (p === "/stream") cache.trackRequest("stream");
+  else if (p === "/proxy") cache.trackRequest("proxy");
+  else if (p !== "/health" && p !== "/analytics" && p !== "/api/analytics") cache.trackRequest("other");
+  next();
+});
+
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
 const pathCache = new Map();
 
@@ -744,6 +754,139 @@ app.get("/proxy", async (req, res) => {
     console.error("Proxy error:", e.message);
     res.status(502).json({ error: e.message });
   }
+});
+
+// ── GET /api/analytics — JSON stats
+app.get("/api/analytics", (req, res) => {
+  const stats = cache.getStats();
+  const mem = process.memoryUsage();
+  res.json({
+    server: {
+      uptime_hours: Math.round(process.uptime() / 3600 * 10) / 10,
+      memory_mb: Math.round(mem.rss / 1024 / 1024),
+      heap_mb: Math.round(mem.heapUsed / 1024 / 1024),
+      node: process.version,
+      platform: process.platform,
+    },
+    cache: {
+      total_entries: stats.cacheTotal,
+      valid_entries: stats.cacheValid,
+      size_mb: stats.cacheSizeMB,
+      breakdown: stats.cacheBreakdown,
+    },
+    requests: {
+      today: stats.todayReqs,
+      daily: stats.daily,
+    },
+    generated_at: new Date().toISOString(),
+  });
+});
+
+// ── GET /analytics — HTML dashboard
+app.get("/analytics", (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StreamVault Analytics</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#07070f;color:#dde0f5;font-family:'Segoe UI',system-ui,sans-serif;padding:2rem}
+h1{font-size:1.6rem;margin-bottom:.3rem;background:linear-gradient(135deg,#00d4ff,#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sub{color:#8080aa;font-size:.82rem;margin-bottom:2rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem;margin-bottom:2rem}
+.card{background:#0f0f1c;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:1.2rem}
+.card-label{font-size:.7rem;color:#8080aa;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.4rem}
+.card-value{font-size:1.8rem;font-weight:700;color:#00d4ff}
+.card-value.green{color:#00e896}.card-value.orange{color:#ff6b35}.card-value.purple{color:#a78bfa}
+.section{margin-bottom:2rem}
+.section-title{font-size:1rem;font-weight:600;margin-bottom:.8rem;color:#dde0f5;border-bottom:1px solid rgba(255,255,255,0.06);padding-bottom:.4rem}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{text-align:left;color:#8080aa;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;padding:.5rem .6rem;border-bottom:1px solid rgba(255,255,255,0.1)}
+td{padding:.5rem .6rem;border-bottom:1px solid rgba(255,255,255,0.04);color:#dde0f5}
+.tag{display:inline-block;padding:.15rem .4rem;border-radius:4px;font-size:.65rem;font-weight:600;text-transform:uppercase;background:#00d4ff22;color:#00d4ff}
+.loading{text-align:center;padding:3rem;color:#8080aa}
+.err{color:#ff4466;padding:1rem;background:#ff446612;border-radius:8px}
+.refresh{background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);color:#00d4ff;padding:.4rem .8rem;border-radius:6px;cursor:pointer;font-size:.75rem;float:right}
+.refresh:hover{background:#16162a}
+.chart{display:flex;align-items:flex-end;gap:3px;height:80px;margin-top:.5rem}
+.chart-bar{flex:1;border-radius:2px 2px 0 0;min-width:12px;position:relative;cursor:pointer}
+.chart-bar:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);padding:.2rem .4rem;border-radius:4px;font-size:.6rem;white-space:nowrap;color:#dde0f5;z-index:1}
+.chart-labels{display:flex;gap:3px;margin-top:.3rem}
+.chart-labels span{flex:1;text-align:center;font-size:.55rem;color:#44445a;min-width:12px}
+.legend{display:flex;gap:1rem;margin-top:.5rem;font-size:.72rem;color:#8080aa}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+</style>
+</head><body>
+<button class="refresh" onclick="load()">Refresh</button>
+<h1>STREAMVAULT</h1>
+<div class="sub">VPS Analytics Dashboard</div>
+<div id="app"><div class="loading">Loading...</div></div>
+<script>
+function fmt(n){return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'K':String(n)}
+async function load(){
+  const app=document.getElementById('app');
+  try{
+    const d=(await(await fetch('/api/analytics')).json());
+    let h='';
+
+    // Server cards
+    h+='<div class="grid">';
+    h+='<div class="card"><div class="card-label">Uptime</div><div class="card-value green">'+d.server.uptime_hours+'h</div></div>';
+    h+='<div class="card"><div class="card-label">Memory (RSS)</div><div class="card-value">'+d.server.memory_mb+' MB</div></div>';
+    h+='<div class="card"><div class="card-label">Heap Used</div><div class="card-value">'+d.server.heap_mb+' MB</div></div>';
+    h+='<div class="card"><div class="card-label">Node.js</div><div class="card-value purple" style="font-size:1rem">'+d.server.node+'</div></div>';
+    h+='</div>';
+
+    // Cache cards
+    h+='<div class="grid">';
+    h+='<div class="card"><div class="card-label">Cache Entries</div><div class="card-value orange">'+d.cache.valid_entries+'</div></div>';
+    h+='<div class="card"><div class="card-label">Cache Size</div><div class="card-value">'+d.cache.size_mb+' MB</div></div>';
+    const bk=d.cache.breakdown||{};
+    Object.keys(bk).forEach(k=>{
+      h+='<div class="card"><div class="card-label">'+k+'</div><div class="card-value" style="font-size:1.3rem">'+bk[k]+' cached</div></div>';
+    });
+    h+='</div>';
+
+    // Today's requests
+    const t=d.requests.today||{};
+    const total=Object.values(t).reduce((a,b)=>a+b,0);
+    h+='<div class="grid">';
+    h+='<div class="card"><div class="card-label">Requests Today</div><div class="card-value">'+fmt(total)+'</div></div>';
+    Object.entries(t).forEach(([k,v])=>{
+      h+='<div class="card"><div class="card-label">'+k+'</div><div class="card-value" style="font-size:1.3rem">'+fmt(v)+'</div></div>';
+    });
+    h+='</div>';
+
+    // 7-day chart
+    const days=Object.keys(d.requests.daily||{}).sort();
+    if(days.length>0){
+      const colors={stalker:'#00d4ff',stream:'#ff6b35',proxy:'#00e896',other:'#a78bfa'};
+      const types=[...new Set(days.flatMap(d2=>Object.keys(d.requests.daily[d2])))];
+      const maxDay=Math.max(...days.map(d2=>Object.values(d.requests.daily[d2]).reduce((a,b)=>a+b,0)),1);
+      h+='<div class="section"><div class="section-title">Last 7 Days</div>';
+      h+='<div class="chart">';
+      days.forEach(day=>{
+        const vals=d.requests.daily[day];
+        const total2=Object.values(vals).reduce((a,b)=>a+b,0);
+        const hp=Math.max(3,Math.round(total2/maxDay*100));
+        const tip=day+': '+fmt(total2)+' ('+types.map(t2=>t2+':'+fmt(vals[t2]||0)).join(', ')+')';
+        h+='<div class="chart-bar" style="height:'+hp+'%;background:linear-gradient(to top,#00d4ff,#7c3aed)" data-tip="'+tip+'"></div>';
+      });
+      h+='</div><div class="chart-labels">';
+      days.forEach(day=>{h+='<span>'+day.slice(5)+'</span>'});
+      h+='</div>';
+      h+='<div class="legend">';
+      types.forEach(t2=>{h+='<span><i style="background:'+(colors[t2]||'#8080aa')+'"></i>'+t2+'</span>'});
+      h+='</div></div>';
+    }
+
+    h+='<div class="sub" style="margin-top:2rem">Generated: '+new Date(d.generated_at).toLocaleString()+'</div>';
+    app.innerHTML=h;
+  }catch(e){app.innerHTML='<div class="err">Failed: '+e.message+'</div>'}
+}
+load();setInterval(load,60000);
+</script>
+</body></html>`);
 });
 
 // ─────────────────────────────────────────────────────────────────
