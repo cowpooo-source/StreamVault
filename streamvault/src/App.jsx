@@ -1,15 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
-const PROXY = import.meta.env.VITE_PROXY_URL || "http://localhost:3001";
-const STREAM_PROXY = import.meta.env.VITE_STREAM_PROXY_URL || PROXY;
-const CATALOG_API = import.meta.env.VITE_CATALOG_URL || PROXY;
-
-// Try CF Worker first (always-open CORS), fall back to Koyeb
-async function stalkerFetch(path) {
-  let res = await fetch(`${CATALOG_API}${path}`).catch(() => null);
-  if (!res?.ok) res = await fetch(`${PROXY}${path}`);
-  return res;
-}
+const API = import.meta.env.VITE_API_URL || "";
 
 // ══════════════════════════════════════════════════════════════════
 // THEMES (OTT Navigator style multi-theme)
@@ -28,17 +19,6 @@ const PROFILE_COLORS = ["#00d4ff","#ff6b35","#00e896","#ff2d55","#a78bfa","#fbbf
 // ══════════════════════════════════════════════════════════════════
 // STORAGE + GUEST SESSION
 // ══════════════════════════════════════════════════════════════════
-function getGuestId() {
-  let id = localStorage.getItem("sv-guest-id");
-  if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("sv-guest-id", id); }
-  return id;
-}
-const GUEST_ID = getGuestId();
-
-// Cloud sync is handled by per-connection D1 catalog API (syncContentToD1, etc.)
-// Legacy session sync disabled — no /api/session endpoint on CF Worker
-function scheduleCloudSync() {}
-
 const db = {
   async get(key, fallback = null) {
     try {
@@ -50,7 +30,6 @@ const db = {
     try {
       if (window.storage) { await window.storage.set(key, JSON.stringify(value)); }
       else localStorage.setItem(key, JSON.stringify(value));
-      scheduleCloudSync();
     } catch {}
   },
 };
@@ -89,45 +68,6 @@ function connId(c) {
   return "hls";
 }
 
-// D1 catalog API helper (fire-and-forget background sync)
-function catalogAPI(path, opts = {}) {
-  const { method = "GET", body } = opts;
-  const headers = { "X-Guest-Id": GUEST_ID };
-  if (body) headers["Content-Type"] = "application/json";
-  return fetch(`${CATALOG_API}/api/catalog/${path}`, {
-    method, headers, body: body ? JSON.stringify(body) : undefined,
-  }).then(r => r.json()).catch(() => null);
-}
-
-function syncContentToD1(connectionId, type, items) {
-  catalogAPI("content", { method: "PUT", body: { connectionId, type, items: items.map(i => ({
-    id: i.id, name: i.name, logo: i.logo, group: i.group, url: i.url,
-    num: i.num, epgId: i.epgId, year: i.year, rating: i.rating,
-    stalkerCmd: i._stalkerCmd || i.stalkerCmd,
-  })) } });
-}
-
-function syncCategoriesToD1(connectionId, section, categories) {
-  catalogAPI("categories", { method: "PUT", body: { connectionId, section, categories } });
-}
-
-function syncConnectionToD1(id, type, config) {
-  // Strip large arrays (channels, etc.) — content is synced separately via syncContentToD1
-  const { channels, ...light } = config;
-  catalogAPI("connections", { method: "PUT", body: { id, type, config: light } });
-}
-
-function syncFavoritesToD1(connectionId, favorites) {
-  catalogAPI("favorites", { method: "PUT", body: { profileId: connectionId, favorites } });
-}
-
-function syncHistoryToD1(history) {
-  catalogAPI("history", { method: "PUT", body: { history } });
-}
-
-function syncPreferencesToD1(prefs) {
-  catalogAPI("preferences", { method: "PUT", body: { preferences: prefs } });
-}
 
 // Migrate old idbCache/localStorage data to new permanent IDB keys
 async function migrateOldCache() {
@@ -233,11 +173,8 @@ function fmtTime(sec) {
   return h > 0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}` : `${m}:${String(s).padStart(2,"0")}`;
 }
 
-async function proxyFetch(url) {
-  const path = `/proxy?url=${encodeURIComponent(url)}`;
-  let res = await fetch(`${CATALOG_API}${path}`).catch(() => null);
-  if (!res?.ok) res = await fetch(`${PROXY}${path}`);
-  return res;
+function proxyFetch(url) {
+  return fetch(`${API}/proxy?url=${encodeURIComponent(url)}`);
 }
 
 function makeXtreamAPI(server, user, pass) {
@@ -637,9 +574,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
 
   const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
   // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
-  const needsProxy = (u) => isMixed(u) || ((connType === "m3u" || connType === "xtream") && u && !u.startsWith(PROXY) && !u.startsWith(STREAM_PROXY) && !u.startsWith(CATALOG_API));
-  // Proxy streams through STREAM_PROXY (may differ from API proxy) — skip if already proxied
-  const streamProxy = (u) => (u?.startsWith(PROXY) || u?.startsWith(STREAM_PROXY) || u?.startsWith(CATALOG_API)) ? u : `${STREAM_PROXY}/stream?url=${encodeURIComponent(u)}`;
+  const origin = API || location.origin;
+  const needsProxy = (u) => u && !u.startsWith(origin);
+  const streamProxy = (u) => u?.startsWith(origin) ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
 
   function initPlayer(url) {
     const video = videoRef.current;
@@ -1032,8 +969,7 @@ function Setup({ onConnect, connections = [], onReconnect }) {
         const server = f.server.trim().replace(/\/$/,"");
         const hsBody = JSON.stringify({ portal: server, mac: f.mac.trim(), serial:f.serial?.trim()||undefined, deviceId:f.deviceId?.trim()||undefined, deviceId2:(f.deviceId2?.trim()||f.deviceId?.trim())||undefined });
         // Try CF Worker first (always-open CORS), fall back to Koyeb
-        let hs = await fetch(`${CATALOG_API}/stalker/handshake`, { method:"POST", headers:{"Content-Type":"application/json"}, body: hsBody }).catch(()=>null);
-        if (!hs?.ok) hs = await fetch(`${PROXY}/stalker/handshake`, { method:"POST", headers:{"Content-Type":"application/json"}, body: hsBody });
+        const hs = await fetch(`${API}/stalker/handshake`, { method:"POST", headers:{"Content-Type":"application/json"}, body: hsBody });
         const hsData = await hs.json();
         if (!hs.ok || hsData.error) throw new Error(hsData.error || "Stalker handshake failed");
         // Connection saved by handleConnect in App
@@ -1555,7 +1491,6 @@ export default function App() {
   // ── save theme
   useEffect(() => {
     db.set("sv-theme", themeName);
-    syncPreferencesToD1({ theme: themeName });
   }, [themeName]);
 
   // ── load favs + history when active connection changes
@@ -1587,7 +1522,6 @@ export default function App() {
       const cId = connId(conn);
       if (cId && conn.channels?.length) {
         idbCache.set(`content:${cId}:live`, conn.channels);
-        syncContentToD1(cId, "live", conn.channels);
         idbCache.set(`sync:${cId}`, { ...lastSynced, live: Date.now() });
         setLastSynced(prev => ({ ...prev, live: Date.now() }));
       }
@@ -1608,7 +1542,6 @@ export default function App() {
     // Save connection to D1
     const cId = connId(conn);
     if (cId) {
-      syncConnectionToD1(cId, conn.type, conn);
     }
   }, [conn]);
 
@@ -1631,7 +1564,6 @@ export default function App() {
       // Persist to IDB + D1
       if (cId) {
         idbCache.set(`content:${cId}:live`, items);
-        syncContentToD1(cId, "live", items);
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
@@ -1659,7 +1591,6 @@ export default function App() {
       setVod(items);
       if (cId) {
         idbCache.set(`content:${cId}:vod`, items);
-        syncContentToD1(cId, "vod", items);
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, vod: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
@@ -1685,7 +1616,6 @@ export default function App() {
       setSeries(items);
       if (cId) {
         idbCache.set(`content:${cId}:series`, items);
-        syncContentToD1(cId, "series", items);
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, series: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
@@ -1703,7 +1633,7 @@ export default function App() {
     }
     setLoading(true);
     try {
-      const res = await stalkerFetch(`/stalker/channels?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
+      const res = await fetch(`${API}/stalker/channels?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const items = (data.channels || []).map(transformStalkerItem);
@@ -1711,7 +1641,6 @@ export default function App() {
       // Persist to IDB (permanent) + D1
       if (cId) {
         idbCache.set(`content:${cId}:live`, items);
-        syncContentToD1(cId, "live", items);
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
@@ -1731,14 +1660,13 @@ export default function App() {
     if (!cats) {
       if (!background) setLoading(true);
       try {
-        const res  = await stalkerFetch(`/stalker/${sec}/categories?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
+        const res  = await fetch(`${API}/stalker/${sec}/categories?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         cats = data.categories || [];
         // Save to IDB (permanent) + D1
         if (cId) {
           idbCache.set(`cats:${cId}:${sec}`, cats);
-          syncCategoriesToD1(cId, sec, cats);
         }
       } catch(e) { console.error(`Stalker ${sec} cats:`, e); return; }
       finally { if (!background) setLoading(false); }
@@ -1779,7 +1707,7 @@ export default function App() {
     }
     if (!silent) setCatLoading(true);
     try {
-      const res  = await stalkerFetch(`/stalker/${sec}?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cat=${catId}`);
+      const res  = await fetch(`${API}/stalker/${sec}?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cat=${catId}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const items = data.items || [];
@@ -1813,21 +1741,18 @@ export default function App() {
     contentSaveTimer.current = setTimeout(() => {
       if (vod.length) {
         idbCache.set(`content:${cId}:vod`, vod);
-        syncContentToD1(cId, "vod", vod);
         setLastSynced(prev => { const n = { ...prev, vod: Date.now() }; idbCache.set(`sync:${cId}`, n); return n; });
       }
       if (series.length) {
         idbCache.set(`content:${cId}:series`, series);
-        syncContentToD1(cId, "series", series);
         setLastSynced(prev => { const n = { ...prev, series: Date.now() }; idbCache.set(`sync:${cId}`, n); return n; });
       }
     }, 3000);
     return () => clearTimeout(contentSaveTimer.current);
   }, [vod, series, conn]);
 
-  // Build /stalker/play URL — resolves token + streams via CF Worker (stalker tokens are MAC-bound, not IP-bound)
   function stalkerPlayUrl(cmd, contentType = "live", episode = null) {
-    let url = `${CATALOG_API}/stalker/play?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(cmd)}&content_type=${encodeURIComponent(contentType)}`;
+    let url = `${API}/stalker/play?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(cmd)}&content_type=${encodeURIComponent(contentType)}`;
     if (episode) url += `&episode=${episode}`;
     return url;
   }
@@ -1835,9 +1760,6 @@ export default function App() {
   async function resolveStalkerStream(item) {
     const contentType = item.type || "live";
     const cmd = item._stalkerCmd;
-
-    // Step 1: Try CF Worker /stalker/play — resolves create_link + streams in same invocation (same IP)
-    // Some portals work fine with CF Worker IPs; this avoids using Koyeb bandwidth entirely.
     try {
       const playUrl = stalkerPlayUrl(cmd, contentType);
       const res = await fetch(playUrl);
@@ -1845,28 +1767,14 @@ export default function App() {
         const ct = res.headers.get("content-type") || "";
         if (ct.includes("json")) {
           const data = await res.json();
-          if (data.url) {
-            const u = data.url;
-            return (u.startsWith(PROXY) || u.startsWith(STREAM_PROXY) || u.startsWith(CATALOG_API)) ? u
-              : `${STREAM_PROXY}/stream?url=${encodeURIComponent(u)}`;
-          }
-          if (data.error) console.warn("CF Worker play error:", data.error);
-          else return playUrl; // Worker streamed directly
-        } else {
-          return playUrl; // Worker streamed directly (non-JSON = stream body)
+          if (data.url) return `${API}/stream?url=${encodeURIComponent(data.url)}`;
+          if (data.error) { console.warn("Stalker play error:", data.error); return null; }
+          return playUrl;
         }
+        return playUrl; // non-JSON = stream body
       }
-    } catch(e) { console.warn("CF Worker stalker play failed, trying Koyeb:", e.message); }
-
-    // Step 2: Fall back to Koyeb /stalker/stream — stable non-datacenter IP, portal more likely to allow
-    try {
-      const koRes = await fetch(
-        `${PROXY}/stalker/stream?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(cmd)}&content_type=${encodeURIComponent(contentType)}`
-      );
-      const koData = await koRes.json();
-      if (koData.url) return `${STREAM_PROXY}/stream?url=${encodeURIComponent(koData.url)}`;
-      throw new Error(koData.error || "No stream URL from Koyeb");
-    } catch(e) { console.error("Stalker stream resolve failed:", e); return null; }
+    } catch(e) { console.error("Stalker stream resolve failed:", e); }
+    return null;
   }
 
   async function loadEPG(url) {
@@ -1886,7 +1794,7 @@ export default function App() {
     if (!conn || conn.type !== "stalker") return;
     setEpgLoading(true);
     try {
-      const res = await stalkerFetch(`/stalker/epg?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&period=4`);
+      const res = await fetch(`${API}/stalker/epg?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&period=4`);
       const data = await res.json();
       if (data.programs) setEpgData(data.programs);
     } catch(e) { console.error("Stalker EPG error:", e); }
@@ -1916,7 +1824,6 @@ export default function App() {
     setFavs(newFavs);
     if (activeConnId) {
       db.set(`sv-favs-${activeConnId}`, newFavs);
-      syncFavoritesToD1(activeConnId, newFavs);
     }
   }
 
@@ -1933,7 +1840,6 @@ export default function App() {
     if (activeConnId) {
       db.set(`sv-history-${activeConnId}`, newH);
     }
-    syncHistoryToD1(newH);
   }
 
   async function playItem(item) {
@@ -1962,7 +1868,7 @@ export default function App() {
 
     try {
       if (conn?.type === "stalker") {
-        const res = await stalkerFetch(`/stalker/series/seasons?seriesId=${encodeURIComponent(item.id)}&portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
+        const res = await fetch(`${API}/stalker/series/seasons?seriesId=${encodeURIComponent(item.id)}&portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         const seasons = data.seasons || [];
@@ -2004,15 +1910,10 @@ export default function App() {
           const ct = res.headers.get("content-type") || "";
           if (ct.includes("json")) {
             const data = await res.json();
-            if (data.url) resolvedUrl = (data.url.startsWith(PROXY) || data.url.startsWith(STREAM_PROXY) || data.url.startsWith(CATALOG_API)) ? data.url : `${STREAM_PROXY}/stream?url=${encodeURIComponent(data.url)}`;
+            if (data.url) resolvedUrl = `${API}/stream?url=${encodeURIComponent(data.url)}`;
             else if (!data.error) resolvedUrl = playUrl;
           } else { resolvedUrl = playUrl; }
-        } catch(e) { console.warn("CF Worker episode play failed, trying Koyeb:", e.message); }
-        if (!resolvedUrl) {
-          const koRes = await fetch(`${PROXY}/stalker/series/episode/stream?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(season.cmd)}&episode=${episodeNum}`);
-          const koData = await koRes.json();
-          if (koData.url) resolvedUrl = `${STREAM_PROXY}/stream?url=${encodeURIComponent(koData.url)}`;
-        }
+        } catch(e) { console.error("Episode play failed:", e.message); }
         const epItem = {
           id: `${seriesDetail.item.id}-s${seriesDetail.activeSeason}-e${episodeNum}`,
           name: `${seriesDetail.item.name} - ${season.name} E${episodeNum}`,
@@ -2107,7 +2008,6 @@ export default function App() {
       idbCache.set(key, null);
     }
     // Clean up D1 (cascades: content_items, categories, sync_meta)
-    catalogAPI(`connections?id=${id}`, { method: "DELETE" });
   }
 
   function addNewConnection() {
@@ -2318,7 +2218,6 @@ export default function App() {
                     const cId = connId(conn);
                     if (cId) {
                       idbCache.set(`content:${cId}:live`, chs);
-                      syncContentToD1(cId, "live", chs);
                       setLastSynced(prev => ({ ...prev, live: Date.now() }));
                     }
                   } catch(e) { console.error("M3U refresh error:", e); }

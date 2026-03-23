@@ -368,6 +368,73 @@ app.get("/stalker/stream", async (req, res) => {
   }
 });
 
+// ── GET /stalker/play — resolve create_link + stream in one request (same IP)
+app.get("/stalker/play", async (req, res) => {
+  const { portal, mac, cmd, content_type, episode } = req.query;
+  if (!portal || !mac || !cmd) return res.status(400).json({ error: "portal, mac and cmd required" });
+  const stalkerType = (content_type === "vod" || content_type === "series") ? "vod" : "itv";
+  try {
+    const session = await getSession(portal, mac);
+    const data = await portalFetchRetry(session, {
+      type: stalkerType, action: "create_link", cmd,
+      series: episode || 0, forced_storage: 0,
+      disable_ad: 0, download: 0, force_ch_link_check: 0,
+    });
+    const streamUrl = data?.js?.cmd;
+    if (!streamUrl) throw new Error("No stream URL returned");
+    let cleanUrl = streamUrl.replace(/^ffmpeg\s+/, "").trim();
+    if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
+      try { const h = new URL(portal).host; cleanUrl = cleanUrl.replace(/localhost(:\d+)?/g, h).replace(/127\.0\.0\.1(:\d+)?/g, h); } catch {}
+    }
+    // Try to pipe the stream (same IP as create_link)
+    const upstream = await fetch(cleanUrl, { headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow" });
+    if (!upstream.ok) return res.json({ url: cleanUrl });
+    const ct = upstream.headers.get("content-type") || "";
+    res.set("Access-Control-Allow-Origin", "*");
+    if (ct.includes("mpegurl") || ct.includes("m3u") || cleanUrl.endsWith(".m3u8")) {
+      const text = await upstream.text();
+      const origin = new URL(cleanUrl).origin;
+      const proto = req.get("x-forwarded-proto") || req.protocol;
+      const selfBase = `${proto}://${req.get("host")}`;
+      const rewritten = text
+        .replace(/^(\/[^\s]+\.ts[^\s]*)$/gm, m => `${selfBase}/stream?url=${encodeURIComponent(origin + m)}`)
+        .replace(/^(\/[^\s]+\.m3u8[^\s]*)$/gm, m => `${selfBase}/stream?url=${encodeURIComponent(origin + m)}`);
+      res.set("Content-Type", ct);
+      res.send(rewritten);
+    } else {
+      if (ct) res.set("Content-Type", ct);
+      upstream.body.pipe(res);
+    }
+  } catch (e) {
+    console.error("Play error:", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── GET /stalker/series/seasons (query-param version)
+app.get("/stalker/series/seasons", async (req, res) => {
+  const { portal, mac, seriesId } = req.query;
+  if (!portal || !mac || !seriesId) return res.status(400).json({ error: "portal, mac and seriesId required" });
+  try {
+    const session = await getSession(portal, mac);
+    const movieId = seriesId.split(":")[0];
+    const data = await portalFetchRetry(session, {
+      type: "series", action: "get_ordered_list",
+      movie_id: movieId, page: 1, p: 1,
+    }, 20000);
+    const rawSeasons = data?.js?.data || [];
+    const seasons = rawSeasons.map(s => ({
+      id: s.id, name: s.name, cmd: s.cmd || "",
+      episodes: Array.isArray(s.series) ? s.series : [],
+      logo: s.screenshot_uri || s.cover || null,
+    }));
+    res.json({ seasons });
+  } catch (e) {
+    console.error("Series seasons error:", e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ── GET /stalker/series/categories
 app.get("/stalker/series/categories", async (req, res) => {
   const { portal, mac } = req.query;

@@ -6,10 +6,10 @@ export default defineConfig({
 
   server: {
     proxy: {
-      '/stalker': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
+      '/stalker': { target: 'http://localhost:3001', changeOrigin: true },
+      '/stream': { target: 'http://localhost:3001', changeOrigin: true },
+      '/proxy': { target: 'http://localhost:3001', changeOrigin: true },
+      '/health': { target: 'http://localhost:3001', changeOrigin: true },
     },
   },
 
