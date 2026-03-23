@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const fetch   = require("node-fetch");
 const cors    = require("cors");
+const cache   = require("./cache");
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -225,8 +226,14 @@ app.get("/stalker/api", async (req, res) => {
 
 // ── GET /stalker/channels
 app.get("/stalker/channels", async (req, res) => {
-  const { portal, mac } = req.query;
+  const { portal, mac, refresh } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+  const ck = cache.cacheKey(portal, mac, "channels");
+  if (!refresh) {
+    const cached = cache.get(ck);
+    if (cached) return res.json(cached);
+  }
 
   try {
     const session = await getSession(portal, mac);
@@ -249,7 +256,9 @@ app.get("/stalker/channels", async (req, res) => {
       type:  "live",
     }));
 
-    res.json({ channels: result, total: result.length });
+    const data = { channels: result, total: result.length };
+    cache.set(ck, data);
+    res.json(data);
   } catch (e) {
     console.error("Channels error:", e.message);
     res.status(502).json({ error: e.message });
@@ -288,8 +297,12 @@ async function fetchAllPages(session, type, category, maxItems = 500) {
 
 // ── GET /stalker/vod/categories  — returns category list only (fast, single request)
 app.get("/stalker/vod/categories", async (req, res) => {
-  const { portal, mac } = req.query;
+  const { portal, mac, refresh } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+  const ck = cache.cacheKey(portal, mac, "vod-cats");
+  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+
   try {
     const session = await getSession(portal, mac);
     const catData = await portalFetchRetry(session, { type: "vod", action: "get_categories" }, 10000);
@@ -298,7 +311,9 @@ app.get("/stalker/vod/categories", async (req, res) => {
       title: c.title,
       count: parseInt(c.count || c.videos_count || c.censored_count || 0),
     }));
-    res.json({ categories });
+    const data = { categories };
+    cache.set(ck, data);
+    res.json(data);
   } catch (e) {
     console.error("VOD categories error:", e.message);
     res.status(502).json({ error: e.message });
@@ -307,9 +322,12 @@ app.get("/stalker/vod/categories", async (req, res) => {
 
 // ── GET /stalker/vod?cat=ID  — returns items for one category (lazy load)
 app.get("/stalker/vod", async (req, res) => {
-  const { portal, mac, cat } = req.query;
+  const { portal, mac, cat, refresh } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
   if (!cat)            return res.status(400).json({ error: "cat (category id) required" });
+
+  const ck = cache.cacheKey(portal, mac, "vod", cat);
+  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
 
   try {
     const session  = await getSession(portal, mac);
@@ -325,8 +343,9 @@ app.get("/stalker/vod", async (req, res) => {
       type:   "vod",
     }));
 
-    console.log(`VOD cat=${cat} loaded: ${items.length} items`);
-    res.json({ items, total: items.length });
+    const data = { items, total: items.length };
+    cache.set(ck, data);
+    res.json(data);
   } catch (e) {
     console.error("VOD error:", e.message);
     res.status(502).json({ error: e.message });
@@ -413,8 +432,12 @@ app.get("/stalker/play", async (req, res) => {
 
 // ── GET /stalker/series/seasons (query-param version)
 app.get("/stalker/series/seasons", async (req, res) => {
-  const { portal, mac, seriesId } = req.query;
+  const { portal, mac, seriesId, refresh } = req.query;
   if (!portal || !mac || !seriesId) return res.status(400).json({ error: "portal, mac and seriesId required" });
+
+  const ck = cache.cacheKey(portal, mac, "seasons", seriesId);
+  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+
   try {
     const session = await getSession(portal, mac);
     const movieId = seriesId.split(":")[0];
@@ -428,7 +451,9 @@ app.get("/stalker/series/seasons", async (req, res) => {
       episodes: Array.isArray(s.series) ? s.series : [],
       logo: s.screenshot_uri || s.cover || null,
     }));
-    res.json({ seasons });
+    const result = { seasons };
+    cache.set(ck, result);
+    res.json(result);
   } catch (e) {
     console.error("Series seasons error:", e.message);
     res.status(502).json({ error: e.message });
@@ -437,8 +462,12 @@ app.get("/stalker/series/seasons", async (req, res) => {
 
 // ── GET /stalker/series/categories
 app.get("/stalker/series/categories", async (req, res) => {
-  const { portal, mac } = req.query;
+  const { portal, mac, refresh } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+  const ck = cache.cacheKey(portal, mac, "series-cats");
+  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+
   try {
     const session = await getSession(portal, mac);
     const catData = await portalFetchRetry(session, { type: "series", action: "get_categories" }, 10000);
@@ -447,7 +476,9 @@ app.get("/stalker/series/categories", async (req, res) => {
       title: c.title,
       count: parseInt(c.count || c.videos_count || c.censored_count || 0),
     }));
-    res.json({ categories });
+    const data = { categories };
+    cache.set(ck, data);
+    res.json(data);
   } catch (e) {
     console.error("Series categories error:", e.message);
     res.status(502).json({ error: e.message });
@@ -456,9 +487,12 @@ app.get("/stalker/series/categories", async (req, res) => {
 
 // ── GET /stalker/series?cat=ID
 app.get("/stalker/series", async (req, res) => {
-  const { portal, mac, cat } = req.query;
+  const { portal, mac, cat, refresh } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
   if (!cat)            return res.status(400).json({ error: "cat (category id) required" });
+
+  const ck = cache.cacheKey(portal, mac, "series", cat);
+  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
 
   try {
     const session  = await getSession(portal, mac);
@@ -473,8 +507,9 @@ app.get("/stalker/series", async (req, res) => {
       type:   "series",
     }));
 
-    console.log(`Series cat=${cat} loaded: ${items.length} items`);
-    res.json({ items, total: items.length });
+    const data = { items, total: items.length };
+    cache.set(ck, data);
+    res.json(data);
   } catch (e) {
     console.error("Series error:", e.message);
     res.status(502).json({ error: e.message });
@@ -585,8 +620,13 @@ app.get("/stalker/account", async (req, res) => {
 // ── GET /stalker/epg?portal=...&mac=...&period=N
 // Fetches EPG data for all channels (period in hours, default 4)
 app.get("/stalker/epg", async (req, res) => {
-  const { portal, mac, period = 4 } = req.query;
+  const { portal, mac, period = 4, refresh } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+  // EPG cached for 4 hours (not 7 days — program data changes frequently)
+  const EPG_TTL = 4 * 60 * 60 * 1000;
+  const ck = cache.cacheKey(portal, mac, "epg");
+  if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
 
   try {
     const session = await getSession(portal, mac);
@@ -605,7 +645,9 @@ app.get("/stalker/epg", async (req, res) => {
       }));
     }
 
-    res.json({ programs });
+    const result = { programs };
+    cache.set(ck, result, EPG_TTL);
+    res.json(result);
   } catch (e) {
     console.error("EPG error:", e.message);
     res.status(502).json({ error: e.message });
