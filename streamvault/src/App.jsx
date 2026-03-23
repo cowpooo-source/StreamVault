@@ -575,8 +575,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
   const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
   // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
   const origin = API || location.origin;
-  const needsProxy = (u) => u && !u.startsWith(origin);
-  const streamProxy = (u) => u?.startsWith(origin) ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
+  const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin);
+  const streamProxy = (u) => (u?.startsWith('/') || u?.startsWith(origin)) ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
 
   function initPlayer(url) {
     const video = videoRef.current;
