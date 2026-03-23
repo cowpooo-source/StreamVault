@@ -13,7 +13,10 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "10mb" }));
 
-// Track requests, visitors, and portals
+// Admin password for analytics (set in .env or defaults to "admin")
+const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
+
+// Track requests, visitors, guests, and portals
 app.use((req, res, next) => {
   const p = req.path;
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
@@ -23,13 +26,26 @@ app.use((req, res, next) => {
     else if (p === "/proxy") cache.trackRequest("proxy");
     else cache.trackRequest("other");
     cache.trackVisitor(ip);
+    // Track guest
+    const guestId = req.headers["x-guest-id"];
+    if (guestId) cache.trackGuest(guestId, ip);
   }
-  // Track portal usage from query params
+  // Track portal usage
   if (p.startsWith("/stalker/") && req.query.portal && req.query.mac) {
     const type = p.includes("/vod") ? "vod" : p.includes("/series") ? "series" : p.includes("/epg") ? "epg" : "live";
     cache.trackPortal(req.query.portal, req.query.mac, type);
   }
   next();
+});
+
+// ── POST /api/track — track watch events from frontend
+app.post("/api/track", express.json(), (req, res) => {
+  const { name, type, guestId, event } = req.body;
+  if (event === "play" && name) cache.trackWatch(name, type);
+  if (guestId && event === "connect") cache.trackGuestActivity(guestId, "connections");
+  if (guestId && event === "favorite") cache.trackGuestActivity(guestId, "favorites");
+  if (guestId && event === "history") cache.trackGuestActivity(guestId, "history");
+  res.json({ ok: true });
 });
 
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
@@ -765,8 +781,11 @@ app.get("/proxy", async (req, res) => {
   }
 });
 
-// ── GET /api/analytics — JSON stats
+// ── GET /api/analytics — JSON stats (requires auth token)
 app.get("/api/analytics", (req, res) => {
+  const token = req.query.token || req.headers["x-admin-token"];
+  if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
+
   const stats = cache.getStats();
   const mem = process.memoryUsage();
   res.json({
@@ -779,6 +798,9 @@ app.get("/api/analytics", (req, res) => {
     },
     visitors: stats.visitors,
     recent_visitors: stats.recentVisitors,
+    guests: stats.guests,
+    recent_guests: stats.recentGuests,
+    most_watched: stats.mostWatched,
     portals: { connections: stats.portals, by_type: stats.portalsByType },
     cache: {
       total_entries: stats.cacheTotal,
@@ -797,7 +819,7 @@ app.get("/api/analytics", (req, res) => {
   });
 });
 
-// ── GET /analytics — HTML dashboard
+// ── GET /analytics — HTML dashboard (with login)
 app.get("/analytics", (req, res) => {
   res.send(`<!DOCTYPE html>
 <html><head>
@@ -838,25 +860,50 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 <button class="refresh" onclick="load()">Refresh</button>
 <h1>STREAMVAULT</h1>
 <div class="sub">VPS Analytics Dashboard</div>
-<div id="app"><div class="loading">Loading...</div></div>
+<div id="login" style="display:flex;justify-content:center;padding:4rem 0">
+  <div style="background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:2rem;width:320px">
+    <div style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;color:#dde0f5">Admin Login</div>
+    <input id="pass" type="password" placeholder="Password" style="width:100%;padding:.6rem;background:#16162a;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#dde0f5;font-size:.9rem;margin-bottom:.8rem" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()" style="width:100%;padding:.6rem;background:linear-gradient(135deg,#00d4ff,#7c3aed);border:none;border-radius:6px;color:white;font-weight:600;cursor:pointer;font-size:.9rem">Login</button>
+    <div id="login-err" style="color:#ff4466;font-size:.8rem;margin-top:.5rem;display:none"></div>
+  </div>
+</div>
+<div id="app" style="display:none"></div>
 <script>
+let TOKEN=sessionStorage.getItem('sv-admin')||'';
 function fmt(n){return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'K':String(n)}
 function tag(t){return'<span class="tag tag-'+t+'">'+t+'</span>'}
 function ago(ts){if(!ts)return'\\u2014';const d=Date.now()-ts*1000;const m=Math.floor(d/60000);if(m<1)return'just now';if(m<60)return m+'m ago';const h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago'}
 function barColor(p){return p>=90?'#ff4466':p>=70?'#ff6b35':p>=50?'#fbbf24':'#00e896'}
 
+async function doLogin(){
+  TOKEN=document.getElementById('pass').value;
+  const r=await fetch('/api/analytics?token='+encodeURIComponent(TOKEN));
+  if(r.status===401){document.getElementById('login-err').style.display='block';document.getElementById('login-err').textContent='Invalid password';return}
+  sessionStorage.setItem('sv-admin',TOKEN);
+  document.getElementById('login').style.display='none';
+  document.getElementById('app').style.display='block';
+  load();
+}
+
+if(TOKEN){fetch('/api/analytics?token='+encodeURIComponent(TOKEN)).then(r=>{if(r.ok){document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';load()}else{TOKEN='';sessionStorage.removeItem('sv-admin')}})}
+
 async function load(){
   const app=document.getElementById('app');
   try{
-    const d=(await(await fetch('/api/analytics')).json());
-    let h='';
+    const r=await fetch('/api/analytics?token='+encodeURIComponent(TOKEN));
+    if(r.status===401){sessionStorage.removeItem('sv-admin');location.reload();return}
+    const d=await r.json();
+    let h='<button class="refresh" onclick="load()">Refresh</button>';
+    h+='<button class="refresh" style="margin-right:.5rem" onclick="sessionStorage.removeItem(\\'sv-admin\\');location.reload()">Logout</button>';
 
-    // Visitors
-    h+='<div class="section"><div class="section-title">Visitors</div><div class="grid">';
+    // Visitors + Guests
+    h+='<div class="section"><div class="section-title">Users &amp; Visitors</div><div class="grid">';
     h+='<div class="card"><div class="card-label">Total Visitors</div><div class="card-value">'+d.visitors.total+'</div></div>';
     h+='<div class="card"><div class="card-label">Active (1h)</div><div class="card-value green">'+d.visitors.active_1h+'</div></div>';
     h+='<div class="card"><div class="card-label">Active (24h)</div><div class="card-value green">'+d.visitors.active_24h+'</div></div>';
     h+='<div class="card"><div class="card-label">Active (7d)</div><div class="card-value">'+d.visitors.active_7d+'</div></div>';
+    h+='<div class="card"><div class="card-label">Total Guests</div><div class="card-value purple">'+d.guests.total+'</div></div>';
     h+='</div></div>';
 
     // Server + Cache
@@ -892,42 +939,48 @@ async function load(){
       const maxDay=Math.max(...days.map(d2=>Object.values(d.requests.daily[d2]).reduce((a,b)=>a+b,0)),1);
       h+='<div class="section"><div class="section-title">Last 7 Days</div><div class="chart">';
       days.forEach(day=>{
-        const vals=d.requests.daily[day];
-        const total2=Object.values(vals).reduce((a,b)=>a+b,0);
+        const vals=d.requests.daily[day];const total2=Object.values(vals).reduce((a,b)=>a+b,0);
         const hp=Math.max(3,Math.round(total2/maxDay*100));
-        const tip=day+': '+fmt(total2)+' ('+types.map(t2=>t2+':'+fmt(vals[t2]||0)).join(', ')+')';
-        h+='<div class="chart-bar" style="height:'+hp+'%;background:linear-gradient(to top,#00d4ff,#7c3aed)" data-tip="'+tip+'"></div>';
+        h+='<div class="chart-bar" style="height:'+hp+'%;background:linear-gradient(to top,#00d4ff,#7c3aed)" data-tip="'+day+': '+fmt(total2)+'"></div>';
       });
-      h+='</div><div class="chart-labels">';
-      days.forEach(day=>{h+='<span>'+day.slice(5)+'</span>'});
-      h+='</div></div>';
+      h+='</div><div class="chart-labels">';days.forEach(day=>{h+='<span>'+day.slice(5)+'</span>'});h+='</div></div>';
     }
 
-    // Portals / Connections
-    const portals=d.portals?.connections||[];
-    if(portals.length){
-      h+='<div class="section"><div class="section-title">Active Portals</div>';
-      const pt=d.portals.by_type||{};
-      if(Object.keys(pt).length){
-        h+='<div class="grid" style="margin-bottom:1rem">';
-        Object.entries(pt).forEach(([k,v])=>{h+='<div class="card"><div class="card-label">'+tag(k)+'</div><div class="card-value" style="font-size:1.3rem">'+v+' portals</div></div>'});
-        h+='</div>';
-      }
-      h+='<table><tr><th>Portal</th><th>MAC</th><th>Type</th><th>Hits</th><th>Last Active</th></tr>';
-      portals.forEach(p=>{
-        h+='<tr><td style="font-size:.75rem">'+p.portal+'</td><td><code>'+p.mac+'</code></td><td>'+tag(p.type)+'</td><td>'+p.hits+'</td><td>'+ago(p.last_seen)+'</td></tr>';
+    // Recent Guests
+    const guests=d.recent_guests||[];
+    if(guests.length){
+      h+='<div class="section"><div class="section-title">Recent Users</div>';
+      h+='<table><tr><th>Guest ID</th><th>IP</th><th>Created</th><th>Last Active</th><th>Conn</th><th>Favs</th><th>History</th></tr>';
+      guests.forEach(g=>{
+        h+='<tr><td><code>'+g.guest_id+'</code></td><td><code>'+g.ip+'</code></td><td>'+ago(g.created_at)+'</td><td>'+ago(g.last_seen)+'</td><td>'+g.connections+'</td><td>'+g.favorites+'</td><td>'+g.history+'</td></tr>';
       });
       h+='</table></div>';
     }
 
-    // Recent visitors
+    // Most Watched
+    const watched=d.most_watched||[];
+    if(watched.length){
+      h+='<div class="section"><div class="section-title">Most Watched</div>';
+      h+='<table><tr><th>Title</th><th>Type</th><th>Plays</th></tr>';
+      watched.forEach(w=>{h+='<tr><td>'+w.name+'</td><td>'+tag(w.type)+'</td><td>'+w.plays+'</td></tr>'});
+      h+='</table></div>';
+    }
+
+    // Active Portals
+    const portals=d.portals?.connections||[];
+    if(portals.length){
+      h+='<div class="section"><div class="section-title">Active Portals</div>';
+      h+='<table><tr><th>Portal</th><th>MAC</th><th>Type</th><th>Hits</th><th>Last Active</th></tr>';
+      portals.forEach(p=>{h+='<tr><td style="font-size:.75rem">'+p.portal+'</td><td><code>'+p.mac+'</code></td><td>'+tag(p.type)+'</td><td>'+p.hits+'</td><td>'+ago(p.last_seen)+'</td></tr>'});
+      h+='</table></div>';
+    }
+
+    // Recent Visitors
     const visitors=d.recent_visitors||[];
     if(visitors.length){
       h+='<div class="section"><div class="section-title">Recent Visitors</div>';
       h+='<table><tr><th>IP</th><th>First Seen</th><th>Last Active</th><th>Requests</th></tr>';
-      visitors.forEach(v=>{
-        h+='<tr><td><code>'+v.ip+'</code></td><td>'+ago(v.first_seen)+'</td><td>'+ago(v.last_seen)+'</td><td>'+v.hits+'</td></tr>';
-      });
+      visitors.forEach(v=>{h+='<tr><td><code>'+v.ip+'</code></td><td>'+ago(v.first_seen)+'</td><td>'+ago(v.last_seen)+'</td><td>'+v.hits+'</td></tr>'});
       h+='</table></div>';
     }
 
@@ -935,7 +988,7 @@ async function load(){
     app.innerHTML=h;
   }catch(e){app.innerHTML='<div class="err">Failed: '+e.message+'</div>'}
 }
-load();setInterval(load,60000);
+setInterval(()=>{if(TOKEN)load()},60000);
 </script>
 </body></html>`);
 });

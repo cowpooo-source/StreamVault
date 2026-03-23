@@ -163,13 +163,48 @@ function getStats() {
   const ptRows = db.exec("SELECT type, COUNT(*) FROM portals GROUP BY type");
   if (ptRows[0]) ptRows[0].values.forEach(([t, c]) => { portalsByType[t] = c; });
 
+  // Guest/user stats
+  const totalGuests = db.exec("SELECT COUNT(*) FROM guests")[0]?.values[0][0] || 0;
+  const recentGuestRows = db.exec("SELECT guest_id, ip, created_at, last_seen, connections, favorites, history FROM guests ORDER BY last_seen DESC LIMIT 20");
+  const recentGuests = (recentGuestRows[0]?.values || []).map(([gid, ip, created, last, conn, favs, hist]) => ({
+    guest_id: gid?.substring(0, 8) + "...", ip: ip?.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '$1.$2.***.$4') || "",
+    created_at: created, last_seen: last, connections: conn || 0, favorites: favs || 0, history: hist || 0,
+  }));
+
+  // Most watched
+  const watchedRows = db.exec("SELECT name, type, plays FROM watch_log ORDER BY plays DESC LIMIT 15");
+  const mostWatched = (watchedRows[0]?.values || []).map(([name, type, plays]) => ({ name, type, plays }));
+
   return {
     cacheTotal, cacheValid, cacheSizeMB: Math.round(cacheSize / 1024 / 1024 * 100) / 100,
     cacheHits, cacheMisses, cacheHitRate: cacheHits + cacheMisses > 0 ? Math.round(cacheHits / (cacheHits + cacheMisses) * 100) : 0,
     todayReqs, daily, cacheBreakdown,
     visitors: { total: totalVisitors, active_1h: active1h, active_24h: active24h, active_7d: active7d },
     recentVisitors, portals, portalsByType,
+    guests: { total: totalGuests }, recentGuests, mostWatched,
   };
+}
+
+function trackGuest(guestId, ip) {
+  if (!db || !guestId) return;
+  const now = Math.floor(Date.now() / 1000);
+  db.run(`INSERT INTO guests (guest_id, ip, created_at, last_seen) VALUES (?, ?, ?, ?)
+    ON CONFLICT(guest_id) DO UPDATE SET last_seen = ?, ip = ?`, [guestId, ip, now, now, now, ip]);
+  dirty = true;
+}
+
+function trackGuestActivity(guestId, field) {
+  if (!db || !guestId) return;
+  db.run(`UPDATE guests SET ${field} = ${field} + 1, last_seen = ? WHERE guest_id = ?`,
+    [Math.floor(Date.now() / 1000), guestId]);
+  dirty = true;
+}
+
+function trackWatch(name, type) {
+  if (!db || !name) return;
+  db.run(`INSERT INTO watch_log (name, type, plays) VALUES (?, ?, 1)
+    ON CONFLICT(name, type) DO UPDATE SET plays = plays + 1`, [name, type || "live"]);
+  dirty = true;
 }
 
 // Cleanup expired entries every hour
@@ -184,6 +219,14 @@ const ready = init().then(() => {
   db.run(`CREATE TABLE IF NOT EXISTS visitors (
     ip TEXT PRIMARY KEY, first_seen INTEGER, last_seen INTEGER, hits INTEGER DEFAULT 0
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS guests (
+    guest_id TEXT PRIMARY KEY, ip TEXT, created_at INTEGER, last_seen INTEGER,
+    connections INTEGER DEFAULT 0, favorites INTEGER DEFAULT 0, history INTEGER DEFAULT 0
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS watch_log (
+    name TEXT NOT NULL, type TEXT NOT NULL, plays INTEGER DEFAULT 0,
+    PRIMARY KEY (name, type)
+  )`);
   db.run(`CREATE TABLE IF NOT EXISTS portals (
     key TEXT PRIMARY KEY, portal TEXT, mac TEXT, type TEXT,
     first_seen INTEGER, last_seen INTEGER, hits INTEGER DEFAULT 0
@@ -191,4 +234,4 @@ const ready = init().then(() => {
   cleanup();
 });
 
-module.exports = { get, set, del, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, getStats };
+module.exports = { get, set, del, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats };

@@ -2,6 +2,10 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
+// Guest ID for analytics tracking
+const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
+function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID }, body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
+
 // ══════════════════════════════════════════════════════════════════
 // THEMES (OTT Navigator style multi-theme)
 // ══════════════════════════════════════════════════════════════════
@@ -968,8 +972,8 @@ function Setup({ onConnect, connections = [], onReconnect }) {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
         const server = f.server.trim().replace(/\/$/,"");
         const hsBody = JSON.stringify({ portal: server, mac: f.mac.trim(), serial:f.serial?.trim()||undefined, deviceId:f.deviceId?.trim()||undefined, deviceId2:(f.deviceId2?.trim()||f.deviceId?.trim())||undefined });
-        // Try CF Worker first (always-open CORS), fall back to Koyeb
-        const hs = await fetch(`${API}/stalker/handshake`, { method:"POST", headers:{"Content-Type":"application/json"}, body: hsBody });
+        const hs = await fetch(`${API}/stalker/handshake`, { method:"POST", headers:{"Content-Type":"application/json","X-Guest-Id":GUEST_ID}, body: hsBody });
+        track("connect");
         const hsData = await hs.json();
         if (!hs.ok || hsData.error) throw new Error(hsData.error || "Stalker handshake failed");
         // Connection saved by handleConnect in App
@@ -1820,7 +1824,7 @@ export default function App() {
     const newFavs = { ...favs, [type]: { ...favs[type] } };
     const key = item.id || item.url;
     if (newFavs[type][key]) delete newFavs[type][key];
-    else newFavs[type][key] = { id:item.id, name:item.name, url:item.url, logo:item.logo, group:item.group, type };
+    else { newFavs[type][key] = { id:item.id, name:item.name, url:item.url, logo:item.logo, group:item.group, type }; track("favorite"); }
     setFavs(newFavs);
     if (activeConnId) {
       db.set(`sv-favs-${activeConnId}`, newFavs);
@@ -1848,6 +1852,8 @@ export default function App() {
       openSeriesDetail(item);
       return;
     }
+    track("play", { name: item.name, type: item.type || "live" });
+    track("history");
     if (conn?.type === "stalker" && item._stalkerCmd && !item.url) {
       const resolved = await resolveStalkerStream(item);
       if (!resolved) return;
