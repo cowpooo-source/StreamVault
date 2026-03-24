@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -2181,7 +2182,7 @@ export default function App() {
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
       </button>
-      {fbOpen && (
+      {fbOpen && createPortal(
         <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
           display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
           onClick={e => { if (e.target === e.currentTarget && !fbSending) { setFbOpen(false); setFbMsg(""); setFbDone(false); }}}>
@@ -2211,7 +2212,7 @@ export default function App() {
             )}
           </div>
         </div>
-      )}
+      , document.body)}
     </>
   );
 
@@ -3116,7 +3117,7 @@ function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
         </div>
       )}
 
-      {fbOpen && (
+      {fbOpen && createPortal(
         <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
           display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
           onClick={e => { if (e.target === e.currentTarget && !fbSending) { setFbOpen(false); setFbMsg(""); setFbDone(false); }}}>
@@ -3165,7 +3166,7 @@ function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
             )}
           </div>
         </div>
-      )}
+      , document.body)}
     </div>
   );
 }
