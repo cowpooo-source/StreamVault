@@ -576,8 +576,9 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 // PLAYER COMPONENT (TiviMate-level keyboard + OSD + PiP + quick-ch)
 // ══════════════════════════════════════════════════════════════════
 function Player({ item, channelList, epgData, onClose, onFav, isFav, connType }) {
-  const artRef     = useRef(null);
-  const containerRef = useRef(null);
+  const videoRef   = useRef(null);
+  const hlsRef     = useRef(null);
+  const mpegtsRef  = useRef(null);
   const osdTimer   = useRef(null);
   const [osd, setOsd]         = useState(true);
   const [showQCH, setShowQCH] = useState(false);
@@ -587,7 +588,6 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
     return channelList.findIndex(c => c.id === item.id || c.url === item.url);
   });
   const [current, setCurrent] = useState(item);
-  const [streamErr, setStreamErr] = useState(null);
 
   const showOSD = useCallback(() => {
     setOsd(true);
@@ -595,128 +595,174 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
     osdTimer.current = setTimeout(() => setOsd(false), 3500);
   }, []);
 
+  function destroyPlayers() {
+    if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
+    if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
+  }
+
+  const [streamErr, setStreamErr] = useState(null);
+
+  const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
+  // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
   const origin = API || location.origin;
   const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin);
   const streamProxy = (u) => (u?.startsWith('/') || u?.startsWith(origin)) ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
 
-  function resolveUrl(url) {
-    if (needsProxy(url)) return streamProxy(url);
-    return url;
-  }
-
-  function detectType(url) {
-    const fileExt = url.split(/[?#]/)[0].split(".").pop()?.toLowerCase();
-    if (["mp4", "mkv", "avi", "mov", "webm", "mp3", "aac"].includes(fileExt)) return "native";
-    if (url.includes(".m3u8") || url.includes("mpegurl")) return "hls";
-    if (url.includes("extension=ts") || /\.ts(\?|$)/.test(url)) return "ts";
-    if (current.type === "live" && !url.includes(".m3u8")) return "ts";
-    if (url.includes("/play/movie.php") || url.includes("/play/live.php") || url.includes("play_token=")) return "native";
-    if (url.includes("/live/") || url.includes("/movie/")) return "hls";
-    return "native";
-  }
-
-  // Initialize Artplayer
-  useEffect(() => {
-    if (!containerRef.current || !current.url) return;
+  function initPlayer(url) {
+    const video = videoRef.current;
+    if (!video || !url) return;
     setStreamErr(null);
+    destroyPlayers();
+    video.removeAttribute("src");
 
-    // Destroy previous instance
-    if (artRef.current) { artRef.current.destroy(false); artRef.current = null; }
-
-    const url = current.url;
-    const streamType = detectType(url);
-    const finalUrl = resolveUrl(url);
-    const isLive = current.type === "live";
-
-    const artConfig = {
-      container: containerRef.current,
-      url: finalUrl,
-      autoplay: true,
-      pip: true,
-      fullscreen: true,
-      setting: true,
-      playbackRate: !isLive,
-      aspectRatio: true,
-      hotkey: false, // We handle our own keyboard shortcuts
-      mutex: true,
-      theme: "#00d4ff",
-      volume: 1,
-      muted: false,
-      isLive,
-      controls: [
-        { position: "right", html: isFav?.(current) ? "♥" : "♡", tooltip: "Favorite",
-          click: () => { onFav?.(current); } },
-      ],
+    // Native <video> error handler (for direct src= playback)
+    video.onerror = () => {
+      // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
+      if (hlsRef.current || mpegtsRef.current) return;
+      const e = video.error;
+      const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
+      setStreamErr({ icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" });
     };
 
-    // HLS.js custom loader
-    if (streamType === "hls") {
-      artConfig.customType = {
-        m3u8: function (video, url, art) {
-          import("hls.js").then(({ default: Hls }) => {
-            if (Hls.isSupported()) {
-              const hls = new Hls({ enableWorker: false, fragLoadingMaxRetry: 2 });
-              hls.loadSource(url);
-              hls.attachMedia(video);
-              hls.on(Hls.Events.MANIFEST_PARSED, () => art.play());
-              hls.on(Hls.Events.ERROR, (_, data) => {
-                if (!data.fatal) return;
-                const code = data.response?.code;
-                setStreamErr({ icon: "⚠️", title: code ? `Stream Error (${code})` : "Playback Error",
-                  body: code === 404 ? "Stream not found. Channel may be offline." :
-                    code === 403 ? "Access denied. Check credentials." :
-                    code >= 500 ? "Server error. Try again later." : `HLS error: ${data.details}` });
-              });
-              art.on("destroy", () => hls.destroy());
-            } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-              video.src = url;
-            }
-          }).catch(() => { video.src = url; });
-        },
-      };
-      artConfig.type = "m3u8";
+    function startHls(u) {
+      if (window.Hls?.isSupported()) {
+        const opts = { enableWorker: false, fragLoadingMaxRetry: 2 };
+        // On HTTPS pages, proxy HTTP streams through proxy
+        // The proxy rewrites HLS manifests so segments also go through proxy (same IP)
+        if (needsProxy(u)) {
+          u = streamProxy(u);
+        }
+        const hls = new window.Hls(opts);
+        hlsRef.current = hls;
+        hls.loadSource(u);
+        hls.attachMedia(video);
+        hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
+        hls.on(window.Hls.Events.ERROR, (_, data) => {
+          if (!data.fatal) return;
+          const code = data.response?.code;
+          let title = "Playback Error";
+          let body;
+          if (code === 404) {
+            title = "Stream Not Found (404)";
+            body = "The stream URL returned 404. The channel may be offline, or its URL may have changed. Try reconnecting to refresh the channel list.";
+          } else if (code === 403) {
+            title = "Access Denied (403)";
+            body = "The stream server rejected the request. Your credentials may not have access to this channel.";
+          } else if (code >= 500) {
+            title = `Server Error (${code})`;
+            body = "The stream server returned an error. It may be overloaded or temporarily down.";
+          } else if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+            title = "Network Error";
+            body = "Could not reach the stream server. Check your connection or try again.";
+          } else {
+            body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
+          }
+          setStreamErr({ icon: "⚠️", title, body });
+          destroyPlayers();
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = needsProxy(u) ? streamProxy(u) : u; video.play().catch(()=>{});
+      }
     }
 
-    // mpegts.js custom loader for TS streams
-    if (streamType === "ts") {
-      artConfig.customType = {
-        ts: function (video, url, art) {
-          const script = document.createElement("script");
-          script.src = "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js";
-          const init = () => {
-            if (!window.mpegts?.isSupported()) { video.src = url; return; }
-            const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url },
-              { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
-            player.attachMediaElement(video);
-            player.load();
-            player.play().catch(() => {});
-            player.on(window.mpegts.Events.ERROR, (errType, errDetail, errInfo) => {
-              const code = errInfo?.code;
-              setStreamErr({ icon: "⚠️", title: code ? `Stream Error (${code})` : "Network Error",
-                body: code === 404 ? "Stream not found." : code === 403 ? "Access denied." :
-                  code >= 500 ? "Server error." : `${errType}: ${errInfo?.msg || errDetail || "Stream failed"}` });
-            });
-            art.on("destroy", () => player.destroy());
-          };
-          if (window.mpegts) init();
-          else { script.onload = init; document.head.appendChild(script); }
-        },
-      };
-      artConfig.type = "ts";
+    function startMpegts(u) {
+      // Proxy HTTP streams through Cloudflare Worker when on HTTPS
+      if (needsProxy(u)) u = streamProxy(u);
+      if (!window.mpegts?.isSupported()) {
+        video.src = u; video.play().catch(()=>{}); return;
+      }
+      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: u },
+        { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
+      mpegtsRef.current = player;
+      player.on(window.mpegts.Events.ERROR, (errType, errDetail, errInfo) => {
+        const code = errInfo?.code;
+        let title = "Playback Error";
+        let body;
+        if (code === 404) {
+          title = "Stream Not Found (404)";
+          body = "The stream URL returned 404. The channel may be offline or the URL has changed.";
+        } else if (code === 403) {
+          title = "Access Denied (403)";
+          body = "The stream server rejected the request. Your credentials may not have access.";
+        } else if (code >= 400 && code < 500) {
+          title = `Client Error (${code})`;
+          body = `The stream request was rejected with HTTP ${code}.`;
+        } else if (code >= 500) {
+          title = `Server Error (${code})`;
+          body = "The stream server returned an error. It may be overloaded or temporarily down.";
+        } else if (errType === "NetworkError") {
+          title = "Network Error";
+          body = `Could not load the stream. ${errInfo?.msg || "Check your connection or try again."}`;
+        } else {
+          body = `${errType}: ${errDetail || "Unknown error"}${code ? ` (HTTP ${code})` : ""}`;
+        }
+        setStreamErr({ icon: "⚠️", title, body });
+        destroyPlayers();
+      });
+      player.attachMediaElement(video);
+      player.load();
+      player.play().catch(()=>{});
     }
 
-    const Artplayer = require("artplayer").default;
-    const art = new Artplayer(artConfig);
-    artRef.current = art;
+    function loadScript(src, cb) {
+      if (document.querySelector(`script[src="${src}"]`)) { cb(); return; }
+      const s = document.createElement("script");
+      s.src = src; s.onload = cb; document.head.appendChild(s);
+    }
 
-    art.on("error", () => {
-      if (!streamErr) setStreamErr({ icon: "⚠️", title: "Playback Error", body: "Could not play this stream." });
-    });
+    // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS
+    const fileExt = url.split(/[?#]/)[0].split(".").pop()?.toLowerCase();
+    if (["mp4", "mkv", "avi", "mov", "webm", "mp3", "aac"].includes(fileExt)) {
+      video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
+      return;
+    }
 
+    // Stalker VOD/series items are direct video files served by the portal.
+    const isStalkerVod = (current.type === "vod" || current.type === "series")
+      && (url.includes("/play/movie.php") || url.includes("/play/live.php") || url.includes("play_token="));
+    if (isStalkerVod) {
+      if (url.includes(".m3u8")) {
+        if (window.Hls) startHls(url);
+        else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
+                        () => startHls(url));
+      } else {
+        video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
+      }
+      return;
+    }
+
+    const needTs  = url.includes("extension=ts") || /\.ts(\?|$)/.test(url)
+      || (current.type === "live" && !url.includes(".m3u8"));
+    const needHls = !needTs && (url.includes(".m3u8") || url.includes("/live/") || url.includes("/movie/"));
+
+    // For Xtream live streams on HTTPS, proxy raw TS through stream proxy
+    // (HLS .m3u8 has IP-bound segment tokens that break with proxied manifests)
+    if (needTs && needsProxy(url)) {
+      const proxied = streamProxy(url);
+      if (window.mpegts) startMpegts(proxied);
+      else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
+                      () => startMpegts(proxied));
+      return;
+    }
+
+    if (needTs) {
+      if (window.mpegts) startMpegts(url);
+      else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
+                      () => startMpegts(url));
+    } else if (needHls) {
+      if (window.Hls) startHls(url);
+      else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
+                      () => startHls(url));
+    } else {
+      video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
+    }
+  }
+
+  useEffect(() => {
+    initPlayer(current.url);
     showOSD();
-
     return () => {
-      if (artRef.current) { artRef.current.destroy(false); artRef.current = null; }
+      destroyPlayers();
       clearTimeout(osdTimer.current);
       clearTimeout(qchTimer.current);
     };
@@ -725,46 +771,47 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
   // Keyboard shortcuts (TiviMate + SFVIP style)
   useEffect(() => {
     function onKey(e) {
-      const art = artRef.current;
-      if (!art) return;
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      const v = videoRef.current;
+      if (!v) return;
+      if (e.target.tagName === "INPUT") return;
       switch(e.key) {
         case " ":
         case "k":
           e.preventDefault();
-          art.playing ? art.pause() : art.play();
+          v.paused ? v.play() : v.pause();
           showOSD(); break;
         case "f":
         case "F":
-          art.fullscreen = !art.fullscreen; break;
+          document.fullscreenElement ? document.exitFullscreen() : v.requestFullscreen?.();
+          break;
         case "m":
         case "M":
-          art.muted = !art.muted; showOSD(); break;
+          v.muted = !v.muted; showOSD(); break;
         case "ArrowLeft":
           e.preventDefault();
           if (current.type === "live") prevChannel();
-          else { art.currentTime = Math.max(0, art.currentTime - 10); showOSD(); }
+          else { v.currentTime = Math.max(0, v.currentTime - 10); showOSD(); }
           break;
         case "ArrowRight":
           e.preventDefault();
           if (current.type === "live") nextChannel();
-          else { art.currentTime = Math.min(art.duration||0, art.currentTime + 10); showOSD(); }
+          else { v.currentTime = Math.min(v.duration||0, v.currentTime + 10); showOSD(); }
           break;
         case "ArrowUp":
           e.preventDefault();
           if (current.type === "live") prevChannel();
-          else { art.volume = Math.min(1, art.volume + 0.1); showOSD(); }
+          else { v.volume = Math.min(1, v.volume + 0.1); showOSD(); }
           break;
         case "ArrowDown":
           e.preventDefault();
           if (current.type === "live") nextChannel();
-          else { art.volume = Math.max(0, art.volume - 0.1); showOSD(); }
+          else { v.volume = Math.max(0, v.volume - 0.1); showOSD(); }
           break;
         case "Escape":
           onClose(); break;
         case "p":
         case "P":
-          art.pip = !art.pip; break;
+          pip(); break;
         default: break;
       }
     }
@@ -793,6 +840,15 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
     showOSD();
   }
 
+  async function pip() {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await v.requestPictureInPicture?.();
+    } catch {}
+  }
+
   const epgNow = getEPGNow(epgData, current.epgId);
   const qchChannels = channelList && chIdx >= 0
     ? channelList.slice(Math.max(0, chIdx-2), Math.min(channelList.length, chIdx+3))
@@ -802,10 +858,10 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
     <div className="player-ov" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="player-wrap">
         <div style={{ position:"relative" }}>
-          <div ref={containerRef} className="player-video" style={{width:"100%",aspectRatio:"16/9"}} />
+          <video ref={videoRef} className="player-video" controls playsInline />
           {streamErr && (
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
-              background:"rgba(0,0,0,.88)",padding:"2rem",textAlign:"center",zIndex:50}}>
+              background:"rgba(0,0,0,.88)",padding:"2rem",textAlign:"center"}}>
               <div style={{maxWidth:"400px"}}>
                 <div style={{fontSize:"2.2rem",marginBottom:".75rem"}}>{streamErr.icon}</div>
                 <div style={{fontSize:".9rem",color:"var(--t1)",fontWeight:600,marginBottom:".5rem"}}>{streamErr.title}</div>
@@ -815,7 +871,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
           )}
           {/* OSD */}
           {osd && (
-            <div className="osd" onClick={showOSD} style={{zIndex:40}}>
+            <div className="osd" onClick={showOSD}>
               {current.logo
                 ? <img className="osd-logo" src={current.logo} alt="" onError={e => e.target.style.display="none"} />
                 : <div className="osd-logo-ph">{current.type==="live"?"📺":"🎬"}</div>}
@@ -828,7 +884,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
           )}
           {/* Quick channel switcher */}
           {showQCH && channelList && (
-            <div className="qch" style={{zIndex:40}}>
+            <div className="qch">
               {qchChannels.map((ch, i) => {
                 const isActive = ch.id === current.id || ch.url === current.url;
                 return (
@@ -858,7 +914,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
               <button className="player-ctrl" onClick={nextChannel}>Next ▶</button>
             </>
           )}
-          <button className="player-ctrl" onClick={() => { if (artRef.current) artRef.current.pip = !artRef.current.pip; }} title="Picture in Picture">⧉ PiP</button>
+          <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ PiP</button>
           <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title="Favorite">
             {isFav?.(current) ? "♥ Fav" : "♡ Fav"}
           </button>
