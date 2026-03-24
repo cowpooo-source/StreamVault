@@ -491,11 +491,16 @@ app.get("/stalker/play", async (req, res) => {
     if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
       try { const h = new URL(portal).host; cleanUrl = cleanUrl.replace(/localhost(:\d+)?/g, h).replace(/127\.0\.0\.1(:\d+)?/g, h); } catch {}
     }
-    // Try to pipe the stream (same IP as create_link)
-    const upstream = await fetch(cleanUrl, { headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow" });
-    if (!upstream.ok) return res.json({ url: cleanUrl });
+    // Try to pipe the stream (same IP as create_link), forward Range for seeking
+    const fetchHeaders = { "User-Agent": "StreamVault/1.0" };
+    if (req.headers.range) fetchHeaders["Range"] = req.headers.range;
+    const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow" });
+    if (!upstream.ok && upstream.status !== 206) return res.json({ url: cleanUrl });
     const ct = upstream.headers.get("content-type") || "";
-    res.set("Access-Control-Allow-Origin", "*");
+    Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
+    res.set("Accept-Ranges", "bytes");
+    if (upstream.status === 206) { res.status(206); const cr = upstream.headers.get("content-range"); if (cr) res.set("Content-Range", cr); }
+    const cl = upstream.headers.get("content-length"); if (cl) res.set("Content-Length", cl);
     if (ct.includes("mpegurl") || ct.includes("m3u") || cleanUrl.endsWith(".m3u8")) {
       const text = await upstream.text();
       const origin = new URL(cleanUrl).origin;
@@ -740,12 +745,16 @@ app.get("/stalker/epg", async (req, res) => {
   }
 });
 
-// ── /stream?url=... — streaming proxy for live IPTV streams (pipes body, preserves IP-bound tokens)
-// Handles GET (stream data), HEAD (check availability), and OPTIONS (CORS preflight)
+// ── /stream?url=... — streaming proxy with Range support for VOD seeking
+const STREAM_CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+  "Access-Control-Allow-Headers": "Range, Content-Type",
+  "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type",
+};
+
 app.options("/stream", (req, res) => {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Range, Content-Type");
+  Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
   res.set("Access-Control-Max-Age", "86400");
   res.status(204).end();
 });
@@ -754,12 +763,9 @@ app.head("/stream", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).end();
   try {
-    const upstream = await fetch(url, {
-      method: "HEAD",
-      headers: { "User-Agent": "StreamVault/1.0" },
-      redirect: "follow",
-    });
-    res.set("Access-Control-Allow-Origin", "*");
+    const upstream = await fetch(url, { method: "HEAD", headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow" });
+    Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
+    res.set("Accept-Ranges", "bytes");
     const ct = upstream.headers.get("content-type");
     if (ct) res.set("Content-Type", ct);
     const cl = upstream.headers.get("content-length");
@@ -771,29 +777,10 @@ app.head("/stream", async (req, res) => {
   }
 });
 
-// HEAD /stream — browser sends this to get content-length before seeking
-app.head("/stream", async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.status(400).end();
-  try {
-    const upstream = await fetch(url, { method: "HEAD", headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow" });
-    res.set("Access-Control-Allow-Origin", "*");
-    res.set("Access-Control-Allow-Headers", "Range, Content-Type");
-    const ct = upstream.headers.get("content-type");
-    if (ct) res.set("Content-Type", ct);
-    const cl = upstream.headers.get("content-length");
-    if (cl) res.set("Content-Length", cl);
-    const ar = upstream.headers.get("accept-ranges");
-    if (ar) res.set("Accept-Ranges", ar);
-    res.status(upstream.status).end();
-  } catch { res.status(502).end(); }
-});
-
 app.get("/stream", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "url required" });
   try {
-    // Forward Range header for seeking support in VOD
     const headers = { "User-Agent": "StreamVault/1.0" };
     if (req.headers.range) headers["Range"] = req.headers.range;
 
@@ -801,13 +788,9 @@ app.get("/stream", async (req, res) => {
     if (!upstream.ok && upstream.status !== 206) return res.status(upstream.status).end();
 
     const ct = upstream.headers.get("content-type") || "";
-    res.set("Access-Control-Allow-Origin", "*");
-    res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Range, Content-Type");
+    Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
+    res.set("Accept-Ranges", "bytes");
 
-    // Only advertise Range support if upstream actually supports it
-    const ar = upstream.headers.get("accept-ranges");
-    if (ar) res.set("Accept-Ranges", ar);
     if (upstream.status === 206) {
       res.status(206);
       const cr = upstream.headers.get("content-range");
@@ -816,7 +799,7 @@ app.get("/stream", async (req, res) => {
     const cl = upstream.headers.get("content-length");
     if (cl) res.set("Content-Length", cl);
 
-    // For HLS manifests: rewrite relative segment URLs to proxy through /stream
+    // HLS manifests: rewrite segment URLs
     if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
       const text = await upstream.text();
       const origin = new URL(url).origin;
