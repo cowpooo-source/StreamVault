@@ -475,16 +475,20 @@ app.get("/stalker/stream", async (req, res) => {
 
 // ── GET /stalker/play — resolve create_link + stream in one request (same IP)
 app.get("/stalker/play", async (req, res) => {
-  const { portal, mac, cmd, content_type, episode } = req.query;
+  const { portal, mac, cmd, content_type, episode, start, end } = req.query;
   if (!portal || !mac || !cmd) return res.status(400).json({ error: "portal, mac and cmd required" });
   const stalkerType = (content_type === "vod" || content_type === "series") ? "vod" : "itv";
   try {
     const session = await getSession(portal, mac);
-    const data = await portalFetchRetry(session, {
+    const linkParams = {
       type: stalkerType, action: "create_link", cmd,
       series: episode || 0, forced_storage: 0,
       disable_ad: 0, download: 0, force_ch_link_check: 0,
-    });
+    };
+    // Catchup/timeshift: pass start/end timestamps to portal
+    if (start) linkParams.start = start;
+    if (end) linkParams.end = end;
+    const data = await portalFetchRetry(session, linkParams);
     const streamUrl = data?.js?.cmd;
     if (!streamUrl) throw new Error("No stream URL returned");
     let cleanUrl = streamUrl.replace(/^ffmpeg\s+/, "").trim();

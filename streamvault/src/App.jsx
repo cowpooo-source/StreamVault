@@ -47,6 +47,20 @@ const THEME_NAMES = Object.keys(THEMES);
 const PROFILE_COLORS = ["#00d4ff","#ff6b35","#00e896","#ff2d55","#a78bfa","#fbbf24"];
 
 // ══════════════════════════════════════════════════════════════════
+// i18n — Multi-language support
+// ══════════════════════════════════════════════════════════════════
+const RTL_LANGS = ["ar","ur"];
+const LANG_META = {en:"English",es:"Español",fr:"Français",ar:"العربية",pt:"Português",hi:"हिन्दी",ur:"اردو"};
+const LANGS={en:{discover:"Discover",live:"Live TV",movies:"Movies",series:"Series",favorites:"Favorites",continueWatching:"Continue Watching",tvGuide:"TV Guide",globalSearch:"Global Search",directPlay:"Direct Play",watch:"Watch",tools:"Tools",savedConns:"Saved Connections",orAddNew:"or add new",connect:"Connect",connectArrow:"Connect →",disconnect:"Disconnect",feedback:"Feedback",send:"Send",cancel:"Cancel",close:"Close",refresh:"Refresh",search:"Search",prev:"Prev",next:"Next",fav:"Fav",pip:"PiP",play:"Play",go:"Go",playPause:"Play/Pause",fullscreen:"Fullscreen",mute:"Mute",channels:"Channels",volume:"Volume",portalURL:"Portal URL",macAddress:"MAC Address",serverURL:"Server URL",username:"Username",password:"Password",playlistURL:"Playlist URL",connFailed:"Connection failed",connecting:"Connecting…",import:"Import",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U Playlist",stalkerPortal:"Stalker Portal",directHLS:"Direct HLS",noChannels:"No channels found",loading:"Loading…",loadingSection:"Loading {0}…",playbackErr:"Playback Error",networkErr:"Network Error",streamNotFound:"Stream Not Found",accessDenied:"Access Denied",serverErr:"Server Error",noContent:"No content found",selectCategory:"Select a category",fetchingItems:"Fetching items from portal.",tryDifferent:"Try a different category or clear your search.",now:"Now",loadEPG:"Load EPG",noChannelsLoaded:"No channels loaded",noEPGData:"No EPG data",filterChannels:"Filter channels…",sendFeedback:"Send Feedback",thankYou:"Thank you!",feedbackReceived:"Your feedback has been received.",feedbackHint:"Bug reports, feature requests, or general comments",feedbackPlaceholder:"What's on your mind?",sending:"Sending...",noFavsYet:"No favorites yet",favHint:"Click the ♡ icon on any channel or movie to add it here.",liveTV:"Live TV",nothingStarted:"Nothing started yet",resumeHint:"Watch some content and it will appear here for easy resuming.",resumeWatching:"Resume Watching",recentlyWatched:"Recently Watched",searchEverything:"Search everything",searchHint:"Type above to search across Live TV, Movies, and Series simultaneously.",noResults:'No results for "{0}"',searchAll:"Search all content — Live, Movies, Series…",discoverTrending:"Discover Trending Content",trendingWeek:"Trending This Week",popularMovies:"Popular Movies",popularTV:"Popular TV Shows",notInLibrary:"Not in your library",matchesInLib:"{0} match(es) in your library",inLibPlay:"In your library — click to play",changeApiKey:"Change API Key",hlsDesc:"Enter any HLS (.m3u8), DASH, or direct media URL. Great for testing your own streams.",publicTests:"Public test streams",connections:"Connections",addConnection:"+ Add Connection",noSavedConns:"No saved connections",active:"Active",removeConn:"Remove connection",switchConn:"Switch",items:"items",tagline:"Your personal IPTV client · Connect your own legal service",pasteRaw:"Paste raw text, URLs, or config",detected:"Detected",clickToFill:"Click to fill →",noConnsDetected:"No connections detected in the pasted text.",advancedOpts:"Advanced options",hideAdvanced:"Hide advanced",serialNumber:"Serial Number",deviceId:"Device ID",deviceId2:"Device ID 2",showCategory:"Show category",hideCategory:"Hide category",filterToThis:"Filter to this",page:"Page",of:"of",synced:"Synced",justNow:"just now",noSeasonsFound:"No seasons found for this series.",loadingSeasons:"Loading seasons…",hlsPlayNote:"Play any HLS stream, M3U8 URL, or direct media URL instantly — no account needed.",chooseCategory:"Choose a category from the list above to load content.",stalkerHint:"Stalker portal browsing requires a backend proxy. Try Xtream Codes or M3U.",connectToPopulate:"Connect via Xtream Codes or M3U to populate TV Guide.",epgLoadHint:"Paste your XMLTV EPG URL above and click Load EPG.",loadMoviesFirst:"Load your Movies or Series first — connect via Xtream, M3U, or Stalker, then switch to the Movies/Series tab.",categories:"categories",episode:"Episode",season:"Season",language:"Language"},
+es:{discover:"Descubrir",live:"TV en Vivo",movies:"Películas",series:"Series",favorites:"Favoritos",continueWatching:"Seguir Viendo",tvGuide:"Guía TV",globalSearch:"Búsqueda Global",directPlay:"Reproducción Directa",watch:"Ver",tools:"Herramientas",savedConns:"Conexiones Guardadas",orAddNew:"o agregar nueva",connect:"Conectar",connectArrow:"Conectar →",disconnect:"Desconectar",feedback:"Comentarios",send:"Enviar",cancel:"Cancelar",close:"Cerrar",refresh:"Actualizar",search:"Buscar",prev:"Anterior",next:"Siguiente",fav:"Fav",pip:"PiP",play:"Reproducir",go:"Ir",playPause:"Reproducir/Pausa",fullscreen:"Pantalla Completa",mute:"Silenciar",channels:"Canales",volume:"Volumen",portalURL:"URL del Portal",macAddress:"Dirección MAC",serverURL:"URL del Servidor",username:"Usuario",password:"Contraseña",playlistURL:"URL de Lista",connFailed:"Conexión fallida",connecting:"Conectando…",import:"Importar",xtreamCodes:"Xtream Codes",m3uPlaylist:"Lista M3U",stalkerPortal:"Portal Stalker",directHLS:"HLS Directo",noChannels:"No se encontraron canales",loading:"Cargando…",loadingSection:"Cargando {0}…",playbackErr:"Error de Reproducción",networkErr:"Error de Red",streamNotFound:"Transmisión No Encontrada",accessDenied:"Acceso Denegado",serverErr:"Error del Servidor",noContent:"No se encontró contenido",selectCategory:"Seleccionar categoría",fetchingItems:"Obteniendo elementos del portal.",tryDifferent:"Pruebe otra categoría o borre su búsqueda.",now:"Ahora",loadEPG:"Cargar EPG",noChannelsLoaded:"No hay canales cargados",noEPGData:"Sin datos EPG",filterChannels:"Filtrar canales…",sendFeedback:"Enviar Comentarios",thankYou:"¡Gracias!",feedbackReceived:"Su comentario ha sido recibido.",feedbackHint:"Reportes de errores, solicitudes o comentarios generales",feedbackPlaceholder:"¿Qué tienes en mente?",sending:"Enviando...",noFavsYet:"Aún no hay favoritos",favHint:"Haga clic en el icono ♡ en cualquier canal o película para agregarlo aquí.",liveTV:"TV en Vivo",nothingStarted:"Nada iniciado aún",resumeHint:"Mire contenido y aparecerá aquí para continuar fácilmente.",resumeWatching:"Continuar Viendo",recentlyWatched:"Visto Recientemente",searchEverything:"Buscar todo",searchHint:"Escriba arriba para buscar en TV en Vivo, Películas y Series simultáneamente.",noResults:'Sin resultados para "{0}"',searchAll:"Buscar todo — TV en Vivo, Películas, Series…",discoverTrending:"Descubrir Contenido en Tendencia",trendingWeek:"Tendencia de la Semana",popularMovies:"Películas Populares",popularTV:"Series Populares",notInLibrary:"No está en tu biblioteca",matchesInLib:"{0} coincidencia(s) en tu biblioteca",inLibPlay:"En tu biblioteca — clic para reproducir",changeApiKey:"Cambiar Clave API",hlsDesc:"Ingrese cualquier URL de HLS (.m3u8), DASH o medio directo.",publicTests:"Transmisiones de prueba públicas",connections:"Conexiones",addConnection:"+ Agregar Conexión",noSavedConns:"Sin conexiones guardadas",active:"Activo",removeConn:"Eliminar conexión",switchConn:"Cambiar",items:"elementos",tagline:"Tu cliente IPTV personal · Conecta tu propio servicio legal",pasteRaw:"Pegar texto, URLs o configuración",detected:"Detectado",clickToFill:"Clic para llenar →",noConnsDetected:"No se detectaron conexiones en el texto pegado.",advancedOpts:"Opciones avanzadas",hideAdvanced:"Ocultar avanzadas",serialNumber:"Número de Serie",deviceId:"ID de Dispositivo",deviceId2:"ID de Dispositivo 2",showCategory:"Mostrar categoría",hideCategory:"Ocultar categoría",filterToThis:"Filtrar a esta",page:"Página",of:"de",synced:"Sincronizado",justNow:"ahora mismo",noSeasonsFound:"No se encontraron temporadas para esta serie.",loadingSeasons:"Cargando temporadas…",hlsPlayNote:"Reproduzca cualquier transmisión HLS, URL M3U8 o URL de medio directo al instante.",chooseCategory:"Elija una categoría de la lista anterior para cargar contenido.",stalkerHint:"La navegación del portal Stalker requiere un proxy backend.",connectToPopulate:"Conéctese vía Xtream Codes o M3U para llenar la Guía TV.",epgLoadHint:"Pegue su URL EPG XMLTV arriba y haga clic en Cargar EPG.",loadMoviesFirst:"Cargue sus Películas o Series primero.",categories:"categorías",episode:"Episodio",season:"Temporada",language:"Idioma"},
+fr:{discover:"Découvrir",live:"TV en Direct",movies:"Films",series:"Séries",favorites:"Favoris",continueWatching:"Continuer à Regarder",tvGuide:"Guide TV",globalSearch:"Recherche Globale",directPlay:"Lecture Directe",watch:"Regarder",tools:"Outils",savedConns:"Connexions Enregistrées",orAddNew:"ou ajouter nouvelle",connect:"Connecter",connectArrow:"Connecter →",disconnect:"Déconnecter",feedback:"Commentaires",send:"Envoyer",cancel:"Annuler",close:"Fermer",refresh:"Actualiser",search:"Rechercher",prev:"Préc.",next:"Suiv.",fav:"Fav",pip:"PiP",play:"Lecture",go:"Go",playPause:"Lecture/Pause",fullscreen:"Plein Écran",mute:"Muet",channels:"Chaînes",volume:"Volume",portalURL:"URL du Portail",macAddress:"Adresse MAC",serverURL:"URL du Serveur",username:"Identifiant",password:"Mot de passe",playlistURL:"URL de la Playlist",connFailed:"Échec de connexion",connecting:"Connexion…",import:"Importer",xtreamCodes:"Xtream Codes",m3uPlaylist:"Playlist M3U",stalkerPortal:"Portail Stalker",directHLS:"HLS Direct",noChannels:"Aucune chaîne trouvée",loading:"Chargement…",loadingSection:"Chargement de {0}…",playbackErr:"Erreur de Lecture",networkErr:"Erreur Réseau",streamNotFound:"Flux Introuvable",accessDenied:"Accès Refusé",serverErr:"Erreur Serveur",noContent:"Aucun contenu trouvé",selectCategory:"Sélectionner une catégorie",fetchingItems:"Récupération des éléments du portail.",tryDifferent:"Essayez une autre catégorie ou effacez votre recherche.",now:"Maintenant",loadEPG:"Charger EPG",noChannelsLoaded:"Aucune chaîne chargée",noEPGData:"Pas de données EPG",filterChannels:"Filtrer les chaînes…",sendFeedback:"Envoyer un Commentaire",thankYou:"Merci !",feedbackReceived:"Votre commentaire a été reçu.",feedbackHint:"Rapports de bugs, demandes de fonctionnalités ou commentaires généraux",feedbackPlaceholder:"Qu'avez-vous en tête ?",sending:"Envoi...",noFavsYet:"Pas encore de favoris",favHint:"Cliquez sur l'icône ♡ sur une chaîne ou un film pour l'ajouter ici.",liveTV:"TV en Direct",nothingStarted:"Rien commencé",resumeHint:"Regardez du contenu et il apparaîtra ici pour reprendre facilement.",resumeWatching:"Reprendre",recentlyWatched:"Vus Récemment",searchEverything:"Tout rechercher",searchHint:"Tapez ci-dessus pour rechercher dans TV en Direct, Films et Séries.",noResults:'Aucun résultat pour « {0} »',searchAll:"Rechercher tout — TV en Direct, Films, Séries…",discoverTrending:"Découvrir les Tendances",trendingWeek:"Tendances de la Semaine",popularMovies:"Films Populaires",popularTV:"Séries Populaires",notInLibrary:"Pas dans votre bibliothèque",matchesInLib:"{0} correspondance(s) dans votre bibliothèque",inLibPlay:"Dans votre bibliothèque — cliquez pour lire",changeApiKey:"Changer la Clé API",hlsDesc:"Entrez une URL HLS (.m3u8), DASH ou média direct.",publicTests:"Flux de test publics",connections:"Connexions",addConnection:"+ Ajouter Connexion",noSavedConns:"Aucune connexion enregistrée",active:"Actif",removeConn:"Supprimer la connexion",switchConn:"Changer",items:"éléments",tagline:"Votre client IPTV personnel · Connectez votre propre service légal",pasteRaw:"Collez du texte, des URLs ou une configuration",detected:"Détecté",clickToFill:"Cliquez pour remplir →",noConnsDetected:"Aucune connexion détectée dans le texte collé.",advancedOpts:"Options avancées",hideAdvanced:"Masquer avancées",serialNumber:"Numéro de Série",deviceId:"ID d'Appareil",deviceId2:"ID d'Appareil 2",showCategory:"Afficher la catégorie",hideCategory:"Masquer la catégorie",filterToThis:"Filtrer ici",page:"Page",of:"de",synced:"Synchronisé",justNow:"à l'instant",noSeasonsFound:"Aucune saison trouvée pour cette série.",loadingSeasons:"Chargement des saisons…",hlsPlayNote:"Lisez n'importe quel flux HLS, URL M3U8 ou média direct instantanément.",chooseCategory:"Choisissez une catégorie dans la liste ci-dessus.",stalkerHint:"La navigation Stalker nécessite un proxy backend.",connectToPopulate:"Connectez-vous via Xtream Codes ou M3U pour remplir le Guide TV.",epgLoadHint:"Collez votre URL EPG XMLTV ci-dessus et cliquez sur Charger EPG.",loadMoviesFirst:"Chargez d'abord vos Films ou Séries.",categories:"catégories",episode:"Épisode",season:"Saison",language:"Langue"},
+ar:{discover:"اكتشف",live:"البث المباشر",movies:"أفلام",series:"مسلسلات",favorites:"المفضلة",continueWatching:"متابعة المشاهدة",tvGuide:"دليل التلفزيون",globalSearch:"بحث شامل",directPlay:"تشغيل مباشر",watch:"مشاهدة",tools:"أدوات",savedConns:"الاتصالات المحفوظة",orAddNew:"أو أضف جديد",connect:"اتصال",connectArrow:"← اتصال",disconnect:"قطع الاتصال",feedback:"ملاحظات",send:"إرسال",cancel:"إلغاء",close:"إغلاق",refresh:"تحديث",search:"بحث",prev:"السابق",next:"التالي",fav:"مفضلة",pip:"صورة في صورة",play:"تشغيل",go:"انطلق",playPause:"تشغيل/إيقاف",fullscreen:"ملء الشاشة",mute:"كتم الصوت",channels:"القنوات",volume:"الصوت",portalURL:"رابط البوابة",macAddress:"عنوان MAC",serverURL:"رابط الخادم",username:"اسم المستخدم",password:"كلمة المرور",playlistURL:"رابط قائمة التشغيل",connFailed:"فشل الاتصال",connecting:"جارٍ الاتصال…",import:"استيراد",xtreamCodes:"Xtream Codes",m3uPlaylist:"قائمة M3U",stalkerPortal:"بوابة Stalker",directHLS:"HLS مباشر",noChannels:"لم يتم العثور على قنوات",loading:"جارٍ التحميل…",loadingSection:"جارٍ تحميل {0}…",playbackErr:"خطأ في التشغيل",networkErr:"خطأ في الشبكة",streamNotFound:"البث غير موجود",accessDenied:"الوصول مرفوض",serverErr:"خطأ في الخادم",noContent:"لم يتم العثور على محتوى",selectCategory:"اختر فئة",fetchingItems:"جارٍ جلب العناصر من البوابة.",tryDifferent:"جرّب فئة أخرى أو امسح البحث.",now:"الآن",loadEPG:"تحميل EPG",noChannelsLoaded:"لا توجد قنوات محمّلة",noEPGData:"لا توجد بيانات EPG",filterChannels:"تصفية القنوات…",sendFeedback:"إرسال ملاحظات",thankYou:"شكراً لك!",feedbackReceived:"تم استلام ملاحظاتك.",feedbackHint:"تقارير الأخطاء أو طلبات الميزات أو التعليقات العامة",feedbackPlaceholder:"ما الذي يدور في ذهنك؟",sending:"جارٍ الإرسال...",noFavsYet:"لا توجد مفضلات بعد",favHint:"اضغط على أيقونة ♡ على أي قناة أو فيلم لإضافته هنا.",liveTV:"البث المباشر",nothingStarted:"لم تبدأ شيئاً بعد",resumeHint:"شاهد بعض المحتوى وسيظهر هنا لاستئنافه بسهولة.",resumeWatching:"استئناف المشاهدة",recentlyWatched:"شوهد مؤخراً",searchEverything:"بحث في كل شيء",searchHint:"اكتب أعلاه للبحث في البث المباشر والأفلام والمسلسلات.",noResults:'لا توجد نتائج لـ "{0}"',searchAll:"بحث في كل المحتوى — مباشر، أفلام، مسلسلات…",discoverTrending:"اكتشف المحتوى الرائج",trendingWeek:"الرائج هذا الأسبوع",popularMovies:"أفلام شائعة",popularTV:"مسلسلات شائعة",notInLibrary:"غير موجود في مكتبتك",matchesInLib:"{0} تطابق(ات) في مكتبتك",inLibPlay:"في مكتبتك — اضغط للتشغيل",changeApiKey:"تغيير مفتاح API",hlsDesc:"أدخل أي رابط HLS أو DASH أو وسائط مباشرة.",publicTests:"بث تجريبي عام",connections:"الاتصالات",addConnection:"+ إضافة اتصال",noSavedConns:"لا توجد اتصالات محفوظة",active:"نشط",removeConn:"إزالة الاتصال",switchConn:"تبديل",items:"عناصر",tagline:"عميل IPTV الشخصي · اتصل بخدمتك القانونية",pasteRaw:"الصق نصاً أو روابط أو إعدادات",detected:"تم الكشف",clickToFill:"← اضغط للتعبئة",noConnsDetected:"لم يتم الكشف عن اتصالات في النص الملصق.",advancedOpts:"خيارات متقدمة",hideAdvanced:"إخفاء المتقدمة",serialNumber:"الرقم التسلسلي",deviceId:"معرّف الجهاز",deviceId2:"معرّف الجهاز 2",showCategory:"إظهار الفئة",hideCategory:"إخفاء الفئة",filterToThis:"تصفية لهذه",page:"صفحة",of:"من",synced:"مُزامَن",justNow:"الآن",noSeasonsFound:"لم يتم العثور على مواسم لهذا المسلسل.",loadingSeasons:"جارٍ تحميل المواسم…",hlsPlayNote:"شغّل أي بث HLS أو رابط M3U8 فوراً — بدون حساب.",chooseCategory:"اختر فئة من القائمة أعلاه لتحميل المحتوى.",stalkerHint:"تصفح بوابة Stalker يتطلب وكيل خلفي.",connectToPopulate:"اتصل عبر Xtream Codes أو M3U لملء دليل التلفزيون.",epgLoadHint:"الصق رابط EPG XMLTV أعلاه واضغط تحميل EPG.",loadMoviesFirst:"حمّل أفلامك أو مسلسلاتك أولاً.",categories:"فئات",episode:"حلقة",season:"موسم",language:"اللغة"},
+pt:{discover:"Descobrir",live:"TV ao Vivo",movies:"Filmes",series:"Séries",favorites:"Favoritos",continueWatching:"Continuar Assistindo",tvGuide:"Guia TV",globalSearch:"Busca Global",directPlay:"Reprodução Direta",watch:"Assistir",tools:"Ferramentas",savedConns:"Conexões Salvas",orAddNew:"ou adicionar nova",connect:"Conectar",connectArrow:"Conectar →",disconnect:"Desconectar",feedback:"Feedback",send:"Enviar",cancel:"Cancelar",close:"Fechar",refresh:"Atualizar",search:"Buscar",prev:"Anterior",next:"Próximo",fav:"Fav",pip:"PiP",play:"Reproduzir",go:"Ir",playPause:"Reproduzir/Pausar",fullscreen:"Tela Cheia",mute:"Mudo",channels:"Canais",volume:"Volume",portalURL:"URL do Portal",macAddress:"Endereço MAC",serverURL:"URL do Servidor",username:"Usuário",password:"Senha",playlistURL:"URL da Playlist",connFailed:"Falha na conexão",connecting:"Conectando…",import:"Importar",xtreamCodes:"Xtream Codes",m3uPlaylist:"Playlist M3U",stalkerPortal:"Portal Stalker",directHLS:"HLS Direto",noChannels:"Nenhum canal encontrado",loading:"Carregando…",loadingSection:"Carregando {0}…",playbackErr:"Erro de Reprodução",networkErr:"Erro de Rede",streamNotFound:"Transmissão Não Encontrada",accessDenied:"Acesso Negado",serverErr:"Erro do Servidor",noContent:"Nenhum conteúdo encontrado",selectCategory:"Selecione uma categoria",fetchingItems:"Buscando itens do portal.",tryDifferent:"Tente outra categoria ou limpe sua busca.",now:"Agora",loadEPG:"Carregar EPG",noChannelsLoaded:"Nenhum canal carregado",noEPGData:"Sem dados EPG",filterChannels:"Filtrar canais…",sendFeedback:"Enviar Feedback",thankYou:"Obrigado!",feedbackReceived:"Seu feedback foi recebido.",feedbackHint:"Relatos de bugs, solicitações de recursos ou comentários gerais",feedbackPlaceholder:"O que está em sua mente?",sending:"Enviando...",noFavsYet:"Nenhum favorito ainda",favHint:"Clique no ícone ♡ em qualquer canal ou filme para adicioná-lo aqui.",liveTV:"TV ao Vivo",nothingStarted:"Nada iniciado ainda",resumeHint:"Assista a algum conteúdo e ele aparecerá aqui para retomar facilmente.",resumeWatching:"Retomar",recentlyWatched:"Assistidos Recentemente",searchEverything:"Buscar tudo",searchHint:"Digite acima para buscar em TV ao Vivo, Filmes e Séries.",noResults:'Nenhum resultado para "{0}"',searchAll:"Buscar tudo — TV ao Vivo, Filmes, Séries…",discoverTrending:"Descobrir Tendências",trendingWeek:"Tendências da Semana",popularMovies:"Filmes Populares",popularTV:"Séries Populares",notInLibrary:"Não está na sua biblioteca",matchesInLib:"{0} correspondência(s) na sua biblioteca",inLibPlay:"Na sua biblioteca — clique para reproduzir",changeApiKey:"Alterar Chave API",hlsDesc:"Insira qualquer URL HLS (.m3u8), DASH ou mídia direta.",publicTests:"Transmissões de teste públicas",connections:"Conexões",addConnection:"+ Adicionar Conexão",noSavedConns:"Nenhuma conexão salva",active:"Ativo",removeConn:"Remover conexão",switchConn:"Trocar",items:"itens",tagline:"Seu cliente IPTV pessoal · Conecte seu próprio serviço legal",pasteRaw:"Cole texto, URLs ou configuração",detected:"Detectado",clickToFill:"Clique para preencher →",noConnsDetected:"Nenhuma conexão detectada no texto colado.",advancedOpts:"Opções avançadas",hideAdvanced:"Ocultar avançadas",serialNumber:"Número de Série",deviceId:"ID do Dispositivo",deviceId2:"ID do Dispositivo 2",showCategory:"Mostrar categoria",hideCategory:"Ocultar categoria",filterToThis:"Filtrar para esta",page:"Página",of:"de",synced:"Sincronizado",justNow:"agora",noSeasonsFound:"Nenhuma temporada encontrada para esta série.",loadingSeasons:"Carregando temporadas…",hlsPlayNote:"Reproduza qualquer transmissão HLS, URL M3U8 ou mídia direta instantaneamente.",chooseCategory:"Escolha uma categoria da lista acima para carregar o conteúdo.",stalkerHint:"A navegação Stalker requer um proxy backend.",connectToPopulate:"Conecte via Xtream Codes ou M3U para preencher o Guia TV.",epgLoadHint:"Cole sua URL EPG XMLTV acima e clique em Carregar EPG.",loadMoviesFirst:"Carregue seus Filmes ou Séries primeiro.",categories:"categorias",episode:"Episódio",season:"Temporada",language:"Idioma"},
+hi:{discover:"खोजें",live:"लाइव टीवी",movies:"फ़िल्में",series:"सीरीज़",favorites:"पसंदीदा",continueWatching:"देखना जारी रखें",tvGuide:"टीवी गाइड",globalSearch:"वैश्विक खोज",directPlay:"डायरेक्ट प्ले",watch:"देखें",tools:"उपकरण",savedConns:"सहेजे गए कनेक्शन",orAddNew:"या नया जोड़ें",connect:"कनेक्ट",connectArrow:"कनेक्ट →",disconnect:"डिस्कनेक्ट",feedback:"प्रतिक्रिया",send:"भेजें",cancel:"रद्द करें",close:"बंद करें",refresh:"रीफ़्रेश",search:"खोजें",prev:"पिछला",next:"अगला",fav:"पसंद",pip:"PiP",play:"चलाएँ",go:"जाएँ",playPause:"चलाएँ/रोकें",fullscreen:"फ़ुलस्क्रीन",mute:"म्यूट",channels:"चैनल",volume:"ध्वनि",portalURL:"पोर्टल URL",macAddress:"MAC पता",serverURL:"सर्वर URL",username:"उपयोगकर्ता",password:"पासवर्ड",playlistURL:"प्लेलिस्ट URL",connFailed:"कनेक्शन विफल",connecting:"कनेक्ट हो रहा है…",import:"आयात",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U प्लेलिस्ट",stalkerPortal:"Stalker पोर्टल",directHLS:"डायरेक्ट HLS",noChannels:"कोई चैनल नहीं मिला",loading:"लोड हो रहा है…",loadingSection:"{0} लोड हो रहा है…",playbackErr:"प्लेबैक त्रुटि",networkErr:"नेटवर्क त्रुटि",streamNotFound:"स्ट्रीम नहीं मिली",accessDenied:"पहुँच अस्वीकृत",serverErr:"सर्वर त्रुटि",noContent:"कोई सामग्री नहीं मिली",selectCategory:"एक श्रेणी चुनें",fetchingItems:"पोर्टल से आइटम प्राप्त हो रहे हैं।",tryDifferent:"कोई अन्य श्रेणी आज़माएँ या खोज साफ़ करें।",now:"अभी",loadEPG:"EPG लोड करें",noChannelsLoaded:"कोई चैनल लोड नहीं हुआ",noEPGData:"कोई EPG डेटा नहीं",filterChannels:"चैनल फ़िल्टर करें…",sendFeedback:"प्रतिक्रिया भेजें",thankYou:"धन्यवाद!",feedbackReceived:"आपकी प्रतिक्रिया प्राप्त हो गई है।",feedbackHint:"बग रिपोर्ट, फ़ीचर अनुरोध, या सामान्य टिप्पणियाँ",feedbackPlaceholder:"आपके मन में क्या है?",sending:"भेजा जा रहा है...",noFavsYet:"अभी तक कोई पसंदीदा नहीं",favHint:"किसी भी चैनल या फ़िल्म पर ♡ आइकन पर क्लिक करें।",liveTV:"लाइव टीवी",nothingStarted:"अभी तक कुछ शुरू नहीं हुआ",resumeHint:"कुछ सामग्री देखें और वह यहाँ दिखाई देगी।",resumeWatching:"फिर से देखें",recentlyWatched:"हाल ही में देखा गया",searchEverything:"सब कुछ खोजें",searchHint:"लाइव टीवी, फ़िल्मों और सीरीज़ में एक साथ खोजने के लिए ऊपर टाइप करें।",noResults:'"{0}" के लिए कोई परिणाम नहीं',searchAll:"सब खोजें — लाइव, फ़िल्में, सीरीज़…",discoverTrending:"ट्रेंडिंग सामग्री खोजें",trendingWeek:"इस सप्ताह ट्रेंडिंग",popularMovies:"लोकप्रिय फ़िल्में",popularTV:"लोकप्रिय टीवी शो",notInLibrary:"आपकी लाइब्रेरी में नहीं",matchesInLib:"आपकी लाइब्रेरी में {0} मिलान",inLibPlay:"आपकी लाइब्रेरी में — चलाने के लिए क्लिक करें",changeApiKey:"API कुंजी बदलें",hlsDesc:"कोई भी HLS, DASH या डायरेक्ट मीडिया URL दर्ज करें।",publicTests:"सार्वजनिक टेस्ट स्ट्रीम",connections:"कनेक्शन",addConnection:"+ कनेक्शन जोड़ें",noSavedConns:"कोई सहेजा गया कनेक्शन नहीं",active:"सक्रिय",removeConn:"कनेक्शन हटाएँ",switchConn:"बदलें",items:"आइटम",tagline:"आपका व्यक्तिगत IPTV क्लाइंट · अपनी कानूनी सेवा कनेक्ट करें",pasteRaw:"कच्चा टेक्स्ट, URLs, या कॉन्फ़िग पेस्ट करें",detected:"पहचाना गया",clickToFill:"भरने के लिए क्लिक करें →",noConnsDetected:"पेस्ट किए गए टेक्स्ट में कोई कनेक्शन नहीं मिला।",advancedOpts:"उन्नत विकल्प",hideAdvanced:"उन्नत छुपाएँ",serialNumber:"सीरियल नंबर",deviceId:"डिवाइस ID",deviceId2:"डिवाइस ID 2",showCategory:"श्रेणी दिखाएँ",hideCategory:"श्रेणी छुपाएँ",filterToThis:"इसमें फ़िल्टर करें",page:"पृष्ठ",of:"का",synced:"सिंक किया",justNow:"अभी",noSeasonsFound:"इस सीरीज़ के लिए कोई सीज़न नहीं मिला।",loadingSeasons:"सीज़न लोड हो रहे हैं…",hlsPlayNote:"कोई भी HLS स्ट्रीम, M3U8 URL या डायरेक्ट मीडिया URL तुरंत चलाएँ।",chooseCategory:"सामग्री लोड करने के लिए ऊपर की सूची से एक श्रेणी चुनें।",stalkerHint:"Stalker पोर्टल ब्राउज़िंग के लिए बैकएंड प्रॉक्सी चाहिए।",connectToPopulate:"टीवी गाइड भरने के लिए Xtream Codes या M3U से कनेक्ट करें।",epgLoadHint:"अपना XMLTV EPG URL ऊपर पेस्ट करें और EPG लोड करें पर क्लिक करें।",loadMoviesFirst:"पहले अपनी फ़िल्में या सीरीज़ लोड करें।",categories:"श्रेणियाँ",episode:"एपिसोड",season:"सीज़न",language:"भाषा"},
+ur:{discover:"دریافت کریں",live:"لائیو ٹی وی",movies:"فلمیں",series:"سیریز",favorites:"پسندیدہ",continueWatching:"دیکھنا جاری رکھیں",tvGuide:"ٹی وی گائیڈ",globalSearch:"عالمی تلاش",directPlay:"براہ راست چلائیں",watch:"دیکھیں",tools:"ٹولز",savedConns:"محفوظ کنکشنز",orAddNew:"یا نیا شامل کریں",connect:"جوڑیں",connectArrow:"← جوڑیں",disconnect:"منقطع کریں",feedback:"رائے",send:"بھیجیں",cancel:"منسوخ",close:"بند کریں",refresh:"تازہ کریں",search:"تلاش",prev:"پچھلا",next:"اگلا",fav:"پسند",pip:"PiP",play:"چلائیں",go:"جائیں",playPause:"چلائیں/روکیں",fullscreen:"فل سکرین",mute:"خاموش",channels:"چینلز",volume:"آواز",portalURL:"پورٹل URL",macAddress:"MAC ایڈریس",serverURL:"سرور URL",username:"صارف نام",password:"پاسورڈ",playlistURL:"پلے لسٹ URL",connFailed:"کنکشن ناکام",connecting:"جوڑ رہے ہیں…",import:"درآمد",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U پلے لسٹ",stalkerPortal:"Stalker پورٹل",directHLS:"براہ راست HLS",noChannels:"کوئی چینل نہیں ملا",loading:"لوڈ ہو رہا ہے…",loadingSection:"{0} لوڈ ہو رہا ہے…",playbackErr:"پلے بیک خرابی",networkErr:"نیٹ ورک خرابی",streamNotFound:"سٹریم نہیں ملی",accessDenied:"رسائی سے انکار",serverErr:"سرور خرابی",noContent:"کوئی مواد نہیں ملا",selectCategory:"زمرہ منتخب کریں",fetchingItems:"پورٹل سے آئٹمز حاصل ہو رہے ہیں۔",tryDifferent:"دوسرا زمرہ آزمائیں یا تلاش صاف کریں۔",now:"ابھی",loadEPG:"EPG لوڈ کریں",noChannelsLoaded:"کوئی چینل لوڈ نہیں ہوا",noEPGData:"کوئی EPG ڈیٹا نہیں",filterChannels:"چینلز فلٹر کریں…",sendFeedback:"رائے بھیجیں",thankYou:"شکریہ!",feedbackReceived:"آپ کی رائے موصول ہو گئی ہے۔",feedbackHint:"بگ رپورٹس، فیچر درخواستیں، یا عمومی تبصرے",feedbackPlaceholder:"آپ کے ذہن میں کیا ہے؟",sending:"بھیج رہے ہیں...",noFavsYet:"ابھی تک کوئی پسندیدہ نہیں",favHint:"کسی بھی چینل یا فلم پر ♡ آئیکن پر کلک کریں۔",liveTV:"لائیو ٹی وی",nothingStarted:"ابھی تک کچھ شروع نہیں ہوا",resumeHint:"کچھ مواد دیکھیں اور یہ یہاں دکھائی دے گا۔",resumeWatching:"دوبارہ دیکھیں",recentlyWatched:"حال ہی میں دیکھا گیا",searchEverything:"سب تلاش کریں",searchHint:"لائیو ٹی وی، فلمیں اور سیریز میں بیک وقت تلاش کرنے کے لیے اوپر ٹائپ کریں۔",noResults:'"{0}" کے لیے کوئی نتیجہ نہیں',searchAll:"سب تلاش کریں — لائیو، فلمیں، سیریز…",discoverTrending:"رجحان سازی دریافت کریں",trendingWeek:"اس ہفتے رجحان میں",popularMovies:"مقبول فلمیں",popularTV:"مقبول ٹی وی شوز",notInLibrary:"آپ کی لائبریری میں نہیں",matchesInLib:"آپ کی لائبریری میں {0} مماثلت",inLibPlay:"آپ کی لائبریری میں — چلانے کے لیے کلک کریں",changeApiKey:"API کلید تبدیل کریں",hlsDesc:"کوئی بھی HLS، DASH یا براہ راست میڈیا URL درج کریں۔",publicTests:"عوامی ٹیسٹ سٹریمز",connections:"الاتصالات",addConnection:"+ کنکشن شامل کریں",noSavedConns:"کوئی محفوظ کنکشن نہیں",active:"فعال",removeConn:"کنکشن ہٹائیں",switchConn:"تبدیل کریں",items:"آئٹمز",tagline:"آپ کا ذاتی IPTV کلائنٹ · اپنی قانونی سروس سے جوڑیں",pasteRaw:"خام متن، URLs، یا ترتیب پیسٹ کریں",detected:"شناخت شدہ",clickToFill:"← بھرنے کے لیے کلک کریں",noConnsDetected:"پیسٹ شدہ متن میں کوئی کنکشن نہیں ملا۔",advancedOpts:"جدید اختیارات",hideAdvanced:"جدید چھپائیں",serialNumber:"سیریل نمبر",deviceId:"ڈیوائس ID",deviceId2:"ڈیوائس ID 2",showCategory:"زمرہ دکھائیں",hideCategory:"زمرہ چھپائیں",filterToThis:"اس میں فلٹر کریں",page:"صفحہ",of:"میں سے",synced:"مطابقت شدہ",justNow:"ابھی",noSeasonsFound:"اس سیریز کے لیے کوئی سیزن نہیں ملا۔",loadingSeasons:"سیزن لوڈ ہو رہے ہیں…",hlsPlayNote:"کوئی بھی HLS سٹریم، M3U8 URL یا براہ راست میڈیا URL فوری چلائیں۔",chooseCategory:"مواد لوڈ کرنے کے لیے اوپر کی فہرست سے ایک زمرہ منتخب کریں۔",stalkerHint:"Stalker پورٹل براؤزنگ کے لیے بیک اینڈ پراکسی درکار ہے۔",connectToPopulate:"ٹی وی گائیڈ بھرنے کے لیے Xtream Codes یا M3U سے جوڑیں۔",epgLoadHint:"اوپر اپنا XMLTV EPG URL پیسٹ کریں اور EPG لوڈ کریں پر کلک کریں۔",loadMoviesFirst:"پہلے اپنی فلمیں یا سیریز لوڈ کریں۔",categories:"زمرہ جات",episode:"ایپیسوڈ",season:"سیزن",language:"زبان"}};
+function _t(lang, key, ...args) { const s = LANGS[lang]?.[key] ?? LANGS.en[key] ?? key; return args.length ? s.replace(/\{(\d+)\}/g, (_, i) => args[i] ?? "") : s; }
+
+// ══════════════════════════════════════════════════════════════════
 // STORAGE + GUEST SESSION
 // ══════════════════════════════════════════════════════════════════
 const db = {
@@ -459,8 +473,11 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .epg-prog-block:hover{background:var(--s2);border-color:var(--b2);z-index:2;transform:scaleY(1.04)}
 .epg-prog-block.now{border-color:var(--accent);border-width:2px;background:${t.accent}12}
 .epg-prog-block.now:hover{background:${t.accent}22}
+.epg-prog-block.past{opacity:.55}
+.epg-prog-block.past:hover{opacity:.85;background:var(--s2);border-color:var(--accent);border-style:dashed}
 .epg-prog-t{font-size:.68rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
 .epg-prog-s{font-size:.58rem;color:var(--t3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.epg-catchup-icon{font-size:.55rem;margin-left:.25rem;opacity:.7;flex-shrink:0}
 .epg-now-line{position:absolute;top:0;bottom:0;width:2px;background:#ff3355;z-index:10;pointer-events:none}
 .epg-now-line::before{content:"";position:absolute;top:-4px;left:-4px;width:10px;height:10px;
   background:#ff3355;border-radius:50%}
@@ -501,6 +518,22 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .theme-row{display:flex;gap:.4rem;padding:0 1rem;margin-bottom:.5rem;flex-wrap:wrap}
 .theme-swatch{width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .2s;flex-shrink:0}
 .theme-swatch.on{border-color:var(--t1);transform:scale(1.2)}
+
+/* LANGUAGE SELECTOR */
+.lang-sel{padding:0 1rem;margin-bottom:.6rem}
+.lang-sel select{width:100%;background:var(--s2);border:1px solid var(--b2);border-radius:7px;padding:.32rem .5rem;
+  color:var(--t1);font-family:'DM Sans',sans-serif;font-size:.72rem;cursor:pointer;outline:none;
+  appearance:auto;-webkit-appearance:auto}
+.lang-sel select:focus{border-color:var(--accent)}
+.lang-sel-label{font-size:.6rem;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.25rem}
+
+/* RTL adjustments */
+[dir="rtl"] .sidebar{border-right:none;border-left:1px solid var(--b1)}
+[dir="rtl"] .nav{border-left:none;border-right:2px solid transparent}
+[dir="rtl"] .nav.on{border-left-color:transparent;border-right-color:var(--accent)}
+[dir="rtl"] .nav-badge{margin-left:0;margin-right:auto}
+[dir="rtl"] .c-title{margin-right:0;margin-left:auto}
+[dir="rtl"] .conn-card{border-left:none;border-right:3px solid var(--accent)}
 
 /* STATES */
 .loading{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.875rem;color:var(--t2)}
@@ -724,7 +757,8 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 // ══════════════════════════════════════════════════════════════════
 // PLAYER COMPONENT (TiviMate-level keyboard + OSD + PiP + quick-ch)
 // ══════════════════════════════════════════════════════════════════
-function Player({ item, channelList, epgData, onClose, onFav, isFav, connType }) {
+function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t: pt }) {
+  const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
   const mpegtsRef  = useRef(null);
@@ -1059,23 +1093,23 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType })
           </div>
           {channelList && current.type === "live" && (
             <>
-              <button className="player-ctrl" onClick={prevChannel}>◀ Prev</button>
-              <button className="player-ctrl" onClick={nextChannel}>Next ▶</button>
+              <button className="player-ctrl" onClick={prevChannel}>◀ {t("prev")}</button>
+              <button className="player-ctrl" onClick={nextChannel}>{t("next")} ▶</button>
             </>
           )}
-          <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ PiP</button>
-          <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title="Favorite">
-            {isFav?.(current) ? "♥ Fav" : "♡ Fav"}
+          <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ {t("pip")}</button>
+          <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title={t("fav")}>
+            {isFav?.(current) ? `♥ ${t("fav")}` : `♡ ${t("fav")}`}
           </button>
-          <button className="player-close" onClick={onClose}>✕ Close</button>
+          <button className="player-close" onClick={onClose}>✕ {t("close")}</button>
         </div>
         <div className="kbd-hint">
-          <span><span className="kbd">Space</span>Play/Pause</span>
-          <span><span className="kbd">F</span>Fullscreen</span>
-          <span><span className="kbd">M</span>Mute</span>
-          <span><span className="kbd">←→</span>{current.type==="live"?"Channels":"±10s"}</span>
-          <span><span className="kbd">↑↓</span>{current.type==="live"?"Channels":"Volume"}</span>
-          <span><span className="kbd">P</span>PiP</span>
+          <span><span className="kbd">Space</span>{t("playPause")}</span>
+          <span><span className="kbd">F</span>{t("fullscreen")}</span>
+          <span><span className="kbd">M</span>{t("mute")}</span>
+          <span><span className="kbd">←→</span>{current.type==="live"?t("channels"):"±10s"}</span>
+          <span><span className="kbd">↑↓</span>{current.type==="live"?t("channels"):t("volume")}</span>
+          <span><span className="kbd">P</span>{t("pip")}</span>
           <span><span className="kbd">Esc</span>Close</span>
         </div>
       </div>
@@ -1484,15 +1518,15 @@ function FavBtn({ on, onClick, style={} }) {
 // MAIN APP
 // ══════════════════════════════════════════════════════════════════
 const NAV = [
-  { key:"discover",  icon:"✨", label:"Discover",          section:"Watch" },
-  { key:"live",      icon:"📺", label:"Live TV",          section:"Watch" },
-  { key:"vod",       icon:"🎬", label:"Movies",            section:"Watch" },
-  { key:"series",    icon:"📽", label:"Series",            section:"Watch" },
-  { key:"favs",      icon:"♥",  label:"Favorites",         section:"Watch" },
-  { key:"continue",  icon:"⏯",  label:"Continue Watching", section:"Watch" },
-  { key:"epg",       icon:"📋", label:"TV Guide",          section:"Tools" },
-  { key:"search",    icon:"🔍", label:"Global Search",     section:"Tools" },
-  { key:"hls",       icon:"▶",  label:"Direct Play",       section:"Tools" },
+  { key:"discover",  icon:"✨", tKey:"discover",          sKey:"watch" },
+  { key:"live",      icon:"📺", tKey:"live",              sKey:"watch" },
+  { key:"vod",       icon:"🎬", tKey:"movies",            sKey:"watch" },
+  { key:"series",    icon:"📽", tKey:"series",            sKey:"watch" },
+  { key:"favs",      icon:"♥",  tKey:"favorites",         sKey:"watch" },
+  { key:"continue",  icon:"⏯",  tKey:"continueWatching",  sKey:"watch" },
+  { key:"epg",       icon:"📋", tKey:"tvGuide",           sKey:"tools" },
+  { key:"search",    icon:"🔍", tKey:"globalSearch",      sKey:"tools" },
+  { key:"hls",       icon:"▶",  tKey:"directPlay",        sKey:"tools" },
 ];
 
 export default function App() {
@@ -1522,6 +1556,13 @@ export default function App() {
 
   // ── theme
   const [themeName, setThemeName] = useState("Dark");
+
+  // ── language (i18n)
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem("sv-lang") || "en"; } catch { return "en"; }
+  });
+  const t = useCallback((key, ...args) => _t(lang, key, ...args), [lang]);
+  const isRTL = RTL_LANGS.includes(lang);
 
   // ── connections (replaces profiles)
   const [connections, setConnections] = useState([]);
@@ -1705,6 +1746,11 @@ export default function App() {
   useEffect(() => {
     db.set("sv-theme", themeName);
   }, [themeName]);
+
+  // ── save language
+  useEffect(() => {
+    localStorage.setItem("sv-lang", lang);
+  }, [lang]);
 
   // ── load favs + history when active connection changes
   useEffect(() => {
@@ -2077,6 +2123,65 @@ export default function App() {
     }
   }
 
+  // ── catchup / timeshift playback for past EPG programs
+  async function playCatchup(channel, program) {
+    if (!program || !channel) return;
+    const startUTC = Math.floor(program.start / 1000);
+    const endUTC = Math.floor(program.stop / 1000);
+    const durationMin = Math.round((program.stop - program.start) / 60000);
+    const catchupItem = {
+      ...channel,
+      name: `${channel.name} - ${program.title}`,
+      _catchupProgram: program.title,
+      type: "vod", // treat catchup as VOD for seeking support
+    };
+    track("play", { name: catchupItem.name, type: "catchup" });
+    track("history");
+
+    try {
+      if (conn?.type === "stalker" && channel._stalkerCmd) {
+        // Stalker: use /stalker/play with start/end params
+        const playUrl = `${API}/stalker/play?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(channel._stalkerCmd)}&content_type=live&start=${startUTC}&end=${endUTC}`;
+        const res = await fetch(playUrl);
+        if (res.ok) {
+          const ct = res.headers.get("content-type") || "";
+          if (ct.includes("json")) {
+            const data = await res.json();
+            if (data.url) { catchupItem.url = `${API}/stream?url=${encodeURIComponent(data.url)}`; }
+            else if (!data.error) { catchupItem.url = playUrl; }
+            else { console.warn("Catchup stalker error:", data.error); }
+          } else {
+            catchupItem.url = playUrl;
+          }
+        }
+      } else if (conn?.type === "xtream" && channel.url) {
+        // Xtream Codes: try timeshift URL formats
+        const streamId = channel.id;
+        const base = conn.server;
+        // Format 1: /timeshift/{user}/{pass}/{duration}/{start}/{stream_id}.ts
+        const startFmt = new Date(program.start).toISOString().replace(/[-:T]/g, "").slice(0, 14); // YYYYMMDDHHmmss
+        const tsUrl = `${base}/timeshift/${conn.user}/${conn.pass}/${durationMin}/${startFmt}/${streamId}.ts`;
+        catchupItem.url = tsUrl;
+      } else if (channel.url) {
+        // M3U / generic: try appending ?utc=&lutc= params
+        const sep = channel.url.includes("?") ? "&" : "?";
+        catchupItem.url = `${channel.url}${sep}utc=${startUTC}&lutc=${endUTC}`;
+      }
+    } catch (e) {
+      console.error("Catchup URL construction failed:", e);
+    }
+
+    // Fall back to normal live playback if no catchup URL resolved
+    if (!catchupItem.url) {
+      console.warn("Catchup not available, falling back to live stream");
+      playItem(channel);
+      return;
+    }
+
+    setPlaying(catchupItem);
+    addHistory(catchupItem);
+  }
+
   // ── series detail (seasons/episodes)
   async function openSeriesDetail(item) {
     if (!item || item.type !== "series") return;
@@ -2365,7 +2470,7 @@ export default function App() {
     </>
   );
 
-  const LABEL = {discover:"Discover",live:"Live TV",vod:"Movies",series:"Series",favs:"Favorites",continue:"Continue Watching",epg:"TV Guide",search:"Global Search",hls:"Direct Play"};
+  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay")};
   const activeConnection = connections.find(c => c.id === activeConnId);
   const channelCount = channels.length + vod.length + series.length;
   const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
@@ -2374,7 +2479,7 @@ export default function App() {
   const paginatedItems = curItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <div className="app">
+    <div className="app" dir={isRTL ? "rtl" : "ltr"}>
       {/* ── SIDEBAR ── */}
       <div className="sidebar">
         <div className="s-logo">STREAMVAULT</div>
@@ -2390,7 +2495,7 @@ export default function App() {
                 <div className="conn-card-stats">{channelCount.toLocaleString()} items</div>
               </div>
             </div>
-            <div className="conn-card-switch">▼ Switch</div>
+            <div className="conn-card-switch">▼ {t("switchConn")}</div>
           </div>
         )}
 
@@ -2404,14 +2509,24 @@ export default function App() {
           ))}
         </div>
 
+        {/* Language Selector */}
+        <div className="lang-sel">
+          <div className="lang-sel-label">{t("language")}</div>
+          <select value={lang} onChange={e => setLang(e.target.value)}>
+            {Object.entries(LANG_META).map(([code, name]) => (
+              <option key={code} value={code}>{name}</option>
+            ))}
+          </select>
+        </div>
+
         {/* Nav */}
-        {["Watch","Tools"].map(sec => (
-          <div key={sec}>
-            <div className="s-sect">{sec}</div>
-            {NAV.filter(n=>n.section===sec).map(n => (
+        {["watch","tools"].map(sKey => (
+          <div key={sKey}>
+            <div className="s-sect">{t(sKey)}</div>
+            {NAV.filter(n=>n.sKey===sKey).map(n => (
               <div key={n.key} className={`nav ${section===n.key?"on":""}`} onClick={() => switchSection(n.key)}>
                 <span className="nav-icon">{n.icon}</span>
-                <span>{n.label}</span>
+                <span>{t(n.tKey)}</span>
                 {n.key==="favs" && totalFavs > 0 && <span className="nav-badge">{totalFavs}</span>}
                 {n.key==="continue" && continueItems.length > 0 && <span className="nav-badge">{continueItems.length}</span>}
               </div>
@@ -2421,8 +2536,8 @@ export default function App() {
 
         <div className="s-bottom">
           <div className="s-row">
-            <button className="btn-sm" onClick={() => setFbOpen(true)}>💬 Feedback</button>
-            <button className="btn-sm danger" onClick={disconnect}>⏏ Disconnect</button>
+            <button className="btn-sm" onClick={() => setFbOpen(true)}>💬 {t("feedback")}</button>
+            <button className="btn-sm danger" onClick={disconnect}>⏏ {t("disconnect")}</button>
           </div>
         </div>
       </div>
@@ -2453,7 +2568,7 @@ export default function App() {
                       setCat(null);
                       loadStalkerCats(section, true);
                     }
-                  }}>↺ Refresh</button>
+                  }}>↺ {t("refresh")}</button>
                   {prefetchProgress && (
                     <span style={{fontSize:".68rem",color:"var(--t3)",whiteSpace:"nowrap"}}>
                       Loading {prefetchProgress.done}/{prefetchProgress.total} categories…
@@ -2466,7 +2581,7 @@ export default function App() {
                   if (section === "live") { setChannels([]); fetchLive(true); }
                   else if (section === "vod") { setVod([]); fetchVOD(true); }
                   else if (section === "series") { setSeries([]); fetchSeries(true); }
-                }}>↺ Refresh</button>
+                }}>↺ {t("refresh")}</button>
               )}
               {conn?.type === "m3u" && section === "live" && (
                 <button className="c-btn" title="Re-fetch M3U playlist" onClick={async () => {
@@ -2483,13 +2598,13 @@ export default function App() {
                     }
                   } catch(e) { console.error("M3U refresh error:", e); }
                   finally { setLoading(false); }
-                }}>↺ Refresh</button>
+                }}>↺ {t("refresh")}</button>
               )}
               {lastSynced[section] && (
                 <span style={{fontSize:".62rem",color:"var(--t3)",whiteSpace:"nowrap"}} title={new Date(lastSynced[section]).toLocaleString()}>
-                  Synced {(() => {
+                  {t("synced")} {(() => {
                     const mins = Math.floor((Date.now() - lastSynced[section]) / 60000);
-                    if (mins < 1) return "just now";
+                    if (mins < 1) return t("justNow");
                     if (mins < 60) return `${mins}m ago`;
                     const hrs = Math.floor(mins / 60);
                     if (hrs < 24) return `${hrs}h ago`;
@@ -2499,7 +2614,7 @@ export default function App() {
               )}
               <div className="c-search-wrap">
                 <span className="c-search-icon">🔍</span>
-                <input className="c-search" placeholder={`Search ${LABEL[section]}…`}
+                <input className="c-search" placeholder={`${t("search")} ${LABEL[section]}…`}
                   value={search} onChange={e => setSearch(e.target.value)} />
               </div>
             </>
@@ -2507,7 +2622,7 @@ export default function App() {
           {section==="search" && (
             <div className="c-search-wrap" style={{flex:1}}>
               <span className="c-search-icon">🔍</span>
-              <input className="c-search" style={{width:"100%"}} placeholder="Search all content — Live, Movies, Series…"
+              <input className="c-search" style={{width:"100%"}} placeholder={t("searchAll")}
                 autoFocus
                 value={globalQ} onChange={e => setGlobalQ(e.target.value)} />
             </div>
@@ -2516,14 +2631,14 @@ export default function App() {
 
         {/* Body */}
         {loading ? (
-          <div className="loading"><div className="spinner" /><span>Loading {LABEL[section]}…</span></div>
+          <div className="loading"><div className="spinner" /><span>{t("loadingSection", LABEL[section])}</span></div>
         ) : section==="discover" ? (
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="hls" ? (
           <DirectHLSView />
         ) : section==="epg" ? (
           <EPGView channels={channels} epgData={epgData} epgURL={epgURL} setEpgURL={setEpgURL}
-            epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} />
+            epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} onPlayCatchup={playCatchup} />
         ) : section==="search" ? (
           <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} />
         ) : section==="favs" ? (
@@ -2564,21 +2679,21 @@ export default function App() {
             {cat === null && conn?.type === "stalker" && (section === "vod" || section === "series") ? (
               <div className="empty">
                 <div className="empty-icon">📂</div>
-                <div className="empty-t">Select a category</div>
-                <div className="empty-s">Choose a category from the list above to load content.</div>
+                <div className="empty-t">{t("selectCategory")}</div>
+                <div className="empty-s">{t("chooseCategory")}</div>
               </div>
             ) : catLoading && curItems.length === 0 ? (
               <div className="empty">
                 <div className="empty-icon" style={{animation:"spin 1s linear infinite"}}>⏳</div>
-                <div className="empty-t">Loading {cat}…</div>
-                <div className="empty-s">Fetching items from portal.</div>
+                <div className="empty-t">{t("loadingSection", cat)}</div>
+                <div className="empty-s">{t("fetchingItems")}</div>
               </div>
             ) : curItems.length === 0 ? (
               <div className="empty">
                 <div className="empty-icon">{section==="live"?"📺":section==="vod"?"🎬":"📽"}</div>
-                <div className="empty-t">No content found</div>
+                <div className="empty-t">{t("noContent")}</div>
                 <div className="empty-s">
-                  {conn.type==="stalker" ? "Stalker portal browsing requires a backend proxy. Try Xtream Codes or M3U." : "Try a different category or clear your search."}
+                  {conn.type==="stalker" ? t("stalkerHint") : t("tryDifferent")}
                 </div>
               </div>
             ) : (
@@ -2633,9 +2748,9 @@ export default function App() {
                 )}
                 {totalPages > 1 && (
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:".5rem",padding:".75rem 0",width:"100%",flexShrink:0}}>
-                    <button className="c-btn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}>← Prev</button>
-                    <span style={{fontSize:".75rem",color:"var(--t2)"}}>Page {page} of {totalPages}</span>
-                    <button className="c-btn" onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}>Next →</button>
+                    <button className="c-btn" onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}>← {t("prev")}</button>
+                    <span style={{fontSize:".75rem",color:"var(--t2)"}}>{t("page")} {page} {t("of")} {totalPages}</span>
+                    <button className="c-btn" onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}>{t("next")} →</button>
                   </div>
                 )}
               </div>
@@ -2654,6 +2769,7 @@ export default function App() {
           onFav={toggleFav}
           isFav={isFav}
           connType={conn?.type}
+          t={t}
         />
       )}
 
@@ -2661,10 +2777,10 @@ export default function App() {
       {ctx && (
         <div className="ctx-menu" style={{left:ctx.x, top:ctx.y}} onClick={e=>e.stopPropagation()}>
           <div className="ctx-item" onClick={() => {toggleHideCat(ctx.sec, ctx.catName);setCtx(null);}}>
-            {isCatHidden(ctx.sec, ctx.catName) ? "👁 Show category" : "🙈 Hide category"}
+            {isCatHidden(ctx.sec, ctx.catName) ? `👁 ${t("showCategory")}` : `🙈 ${t("hideCategory")}`}
           </div>
           <div className="ctx-item" onClick={() => {setCat(ctx.catName);setCtx(null);}}>
-            📌 Filter to this
+            📌 {t("filterToThis")}
           </div>
         </div>
       )}
@@ -2695,7 +2811,7 @@ export default function App() {
               {seriesLoading ? (
                 <div className="series-loading">
                   <div className="spinner" />
-                  <span>Loading seasons…</span>
+                  <span>{t("loadingSeasons")}</span>
                 </div>
               ) : seriesDetail.seasons.length === 0 ? (
                 <div style={{textAlign:"center",padding:"2rem",color:"var(--t2)",fontSize:".85rem"}}>
@@ -2892,7 +3008,7 @@ function GlobalSearch({ results, query, onPlay, toggleFav, isFav }) {
   );
 }
 
-function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay }) {
+function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup }) {
   const PX_PER_MIN = 3;
   const TOTAL_HOURS = 8;
   const TOTAL_MS = TOTAL_HOURS * 3600000;
@@ -3042,12 +3158,14 @@ function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, on
                           const widthPx = ((clampEnd - clampStart) / 60000) * PX_PER_MIN;
                           if (widthPx < 2) return null;
                           const isNow = p.start <= nowMs && p.stop > nowMs;
+                          const isPast = p.stop <= nowMs;
+                          const cls = `epg-prog-block${isNow?" now":""}${isPast?" past":""}`;
                           return (
-                            <div key={pi} className={`epg-prog-block${isNow?" now":""}`}
+                            <div key={pi} className={cls}
                               style={{left:leftPx,width:widthPx}}
-                              onClick={()=>onPlay(ch)}
-                              title={`${p.title}\n${fmtT(p.start)} \u2013 ${fmtT(p.stop)}`}>
-                              {widthPx > 50 && <div className="epg-prog-t">{p.title}</div>}
+                              onClick={()=> isPast && onPlayCatchup ? onPlayCatchup(ch, p) : onPlay(ch)}
+                              title={`${p.title}\n${fmtT(p.start)} \u2013 ${fmtT(p.stop)}${isPast ? "\nClick to play catchup" : ""}`}>
+                              {widthPx > 50 && <div className="epg-prog-t">{isPast && <span className="epg-catchup-icon">↩</span>}{p.title}</div>}
                               {widthPx > 90 && <div className="epg-prog-s">{fmtT(p.start)} \u2013 {fmtT(p.stop)}</div>}
                             </div>
                           );
