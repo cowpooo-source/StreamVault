@@ -771,22 +771,52 @@ app.head("/stream", async (req, res) => {
   }
 });
 
+// HEAD /stream — browser sends this to get content-length before seeking
+app.head("/stream", async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).end();
+  try {
+    const upstream = await fetch(url, { method: "HEAD", headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow" });
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Headers", "Range, Content-Type");
+    const ct = upstream.headers.get("content-type");
+    if (ct) res.set("Content-Type", ct);
+    const cl = upstream.headers.get("content-length");
+    if (cl) res.set("Content-Length", cl);
+    const ar = upstream.headers.get("accept-ranges");
+    if (ar) res.set("Accept-Ranges", ar);
+    res.status(upstream.status).end();
+  } catch { res.status(502).end(); }
+});
+
 app.get("/stream", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "url required" });
   try {
-    const upstream = await fetch(url, {
-      headers: { "User-Agent": "StreamVault/1.0" },
-      redirect: "follow",
-    });
-    if (!upstream.ok) return res.status(upstream.status).end();
+    // Forward Range header for seeking support in VOD
+    const headers = { "User-Agent": "StreamVault/1.0" };
+    if (req.headers.range) headers["Range"] = req.headers.range;
+
+    const upstream = await fetch(url, { headers, redirect: "follow" });
+    if (!upstream.ok && upstream.status !== 206) return res.status(upstream.status).end();
+
     const ct = upstream.headers.get("content-type") || "";
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
     res.set("Access-Control-Allow-Headers", "Range, Content-Type");
 
+    // Only advertise Range support if upstream actually supports it
+    const ar = upstream.headers.get("accept-ranges");
+    if (ar) res.set("Accept-Ranges", ar);
+    if (upstream.status === 206) {
+      res.status(206);
+      const cr = upstream.headers.get("content-range");
+      if (cr) res.set("Content-Range", cr);
+    }
+    const cl = upstream.headers.get("content-length");
+    if (cl) res.set("Content-Length", cl);
+
     // For HLS manifests: rewrite relative segment URLs to proxy through /stream
-    // This ensures segments are fetched from the same IP that got the manifest
     if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
       const text = await upstream.text();
       const origin = new URL(url).origin;
