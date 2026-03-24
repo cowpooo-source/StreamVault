@@ -2271,6 +2271,7 @@ export default function App() {
 
         <div className="s-bottom">
           <div className="s-row">
+            <button className="btn-sm" onClick={() => setFbOpen(true)}>💬 Feedback</button>
             <button className="btn-sm danger" onClick={disconnect}>⏏ Disconnect</button>
           </div>
         </div>
@@ -3114,19 +3115,6 @@ function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
           </div>
         </div>
       )}
-
-      {/* ── Feedback Widget ── */}
-      <button onClick={() => setFbOpen(true)} title="Send feedback"
-        style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
-          background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",color:"var(--accent,#00d4ff)",
-          fontSize:"1.15rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-          boxShadow:"0 2px 12px rgba(0,0,0,0.4)",transition:"transform .15s,background .15s"}}
-        onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.1)"; e.currentTarget.style.background = "var(--s3,#1d1d35)"; }}
-        onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.background = "var(--s2,#16162a)"; }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-      </button>
 
       {fbOpen && (
         <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",
