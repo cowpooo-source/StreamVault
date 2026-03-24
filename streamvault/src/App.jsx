@@ -2182,7 +2182,7 @@ export default function App() {
         </svg>
       </button>
       {fbOpen && (
-        <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",
+        <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
           display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
           onClick={e => { if (e.target === e.currentTarget && !fbSending) { setFbOpen(false); setFbMsg(""); setFbDone(false); }}}>
           <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
@@ -3117,7 +3117,7 @@ function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
       )}
 
       {fbOpen && (
-        <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.6)",
+        <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
           display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
           onClick={e => { if (e.target === e.currentTarget && !fbSending) { setFbOpen(false); setFbMsg(""); setFbDone(false); }}}>
           <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
