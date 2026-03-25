@@ -640,7 +640,9 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
     gap:.3rem;
   }
   .sidebar::-webkit-scrollbar{display:none}
-  .s-logo,.s-sect,.theme-row,.conn-card,.s-bottom,.lang-select{display:none!important}
+  .s-logo,.s-sect,.theme-row,.conn-card,.s-bottom,.lang-sel,.lang-select{display:none!important}
+  /* Flatten section wrappers so nav items flow in one row */
+  .sidebar>div{display:contents}
   .nav{
     flex:0 0 auto;flex-direction:row;align-items:center;
     gap:.25rem;padding:.35rem .65rem;border-left:none;border-radius:18px;
