@@ -624,31 +624,34 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 /* ═══════════════════════════════════════════════════════════════════
    MOBILE RESPONSIVE
    ═══════════════════════════════════════════════════════════════════ */
-@media (max-width: 767px) {
-  /* 1. Sidebar → fixed bottom horizontal nav bar */
+@media (max-width: 767px) and (orientation: portrait) {
+  /* 1. Sidebar → horizontal scrollable pill bar at top */
   .app{flex-direction:column}
   .sidebar{
     width:100%;height:auto;flex-shrink:0;
-    position:fixed;bottom:0;left:0;right:0;z-index:200;
-    border-right:none;border-top:1px solid var(--b1);
-    padding:0;
-    display:flex;flex-direction:row;align-items:stretch;
+    position:static;
+    border-right:none;border-bottom:1px solid var(--b1);
+    padding:.5rem .6rem .4rem;
+    display:flex;flex-direction:row;align-items:center;
     overflow-x:auto;overflow-y:hidden;
     -webkit-overflow-scrolling:touch;
     scrollbar-width:none;
     background:var(--s1);
+    gap:.35rem;
   }
   .sidebar::-webkit-scrollbar{display:none}
-  .s-logo,.s-sect,.theme-row,.conn-card,.s-bottom,.lang-select{display:none!important}
+  .s-logo{font-size:1rem;margin-bottom:0;padding:0;margin-right:.5rem;flex-shrink:0}
+  .s-sect,.theme-row,.conn-card,.s-bottom,.lang-select{display:none!important}
   .nav{
-    flex:0 0 auto;flex-direction:column;justify-content:center;align-items:center;
-    gap:.15rem;padding:.5rem .6rem;border-left:none;border-top:2px solid transparent;
-    font-size:.58rem;min-height:52px;min-width:60px;
+    flex:0 0 auto;flex-direction:row;align-items:center;
+    gap:.3rem;padding:.4rem .7rem;border-left:none;border-radius:20px;
+    font-size:.72rem;min-height:34px;
     white-space:nowrap;position:relative;
+    background:var(--s2);border:1px solid var(--b2);
   }
-  .nav.on{border-left-color:transparent;border-top-color:var(--accent);background:${t.accent}12}
-  .nav-icon{font-size:1.15rem;width:auto}
-  .nav-badge{margin-left:0;position:absolute;top:.15rem;right:.15rem;font-size:.5rem;padding:.05rem .25rem}
+  .nav.on{border-color:${t.accent}50;background:${t.accent}22;border-left-color:${t.accent}50}
+  .nav-icon{font-size:.85rem;width:auto}
+  .nav-badge{margin-left:.2rem;position:static;font-size:.55rem;padding:.05rem .3rem}
 
   /* 2. Categories → horizontal scrollable pills */
   .c-body{flex-direction:column;padding:.6rem .7rem;gap:.6rem}
@@ -692,8 +695,8 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   .tabs{flex-wrap:wrap}
   .tab{padding:.5rem .3rem;font-size:.72rem;min-height:40px}
 
-  /* 6. Content padding — room for bottom nav */
-  .content{padding-bottom:60px}
+  /* 6. Content padding */
+  .content{padding-bottom:0}
   .c-header{padding:.65rem .7rem;gap:.5rem}
   .c-title{font-size:1.1rem}
   .c-search{width:120px;font-size:.8rem;padding:.38rem .7rem .38rem 1.7rem}
