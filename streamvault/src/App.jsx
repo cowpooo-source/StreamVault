@@ -625,25 +625,30 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
    MOBILE RESPONSIVE
    ═══════════════════════════════════════════════════════════════════ */
 @media (max-width: 767px) {
-  /* 1. Sidebar → fixed bottom nav bar */
+  /* 1. Sidebar → fixed bottom horizontal nav bar */
   .app{flex-direction:column}
   .sidebar{
     width:100%;height:auto;flex-shrink:0;
     position:fixed;bottom:0;left:0;right:0;z-index:200;
     border-right:none;border-top:1px solid var(--b1);
-    padding:0;overflow:visible;
-    flex-direction:row;align-items:stretch;
+    padding:0;
+    display:flex;flex-direction:row;align-items:stretch;
+    overflow-x:auto;overflow-y:hidden;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
     background:var(--s1);
   }
-  .s-logo,.s-sect,.theme-row,.conn-card,.s-bottom{display:none!important}
+  .sidebar::-webkit-scrollbar{display:none}
+  .s-logo,.s-sect,.theme-row,.conn-card,.s-bottom,.lang-select{display:none!important}
   .nav{
-    flex:1;flex-direction:column;justify-content:center;align-items:center;
-    gap:.15rem;padding:.45rem .2rem;border-left:none;border-top:2px solid transparent;
-    font-size:.6rem;min-height:52px;
+    flex:0 0 auto;flex-direction:column;justify-content:center;align-items:center;
+    gap:.15rem;padding:.5rem .6rem;border-left:none;border-top:2px solid transparent;
+    font-size:.58rem;min-height:52px;min-width:60px;
+    white-space:nowrap;position:relative;
   }
   .nav.on{border-left-color:transparent;border-top-color:var(--accent);background:${t.accent}12}
-  .nav-icon{font-size:1.1rem;width:auto}
-  .nav-badge{margin-left:0;position:absolute;top:.2rem;right:.2rem;font-size:.5rem;padding:.05rem .25rem}
+  .nav-icon{font-size:1.15rem;width:auto}
+  .nav-badge{margin-left:0;position:absolute;top:.15rem;right:.15rem;font-size:.5rem;padding:.05rem .25rem}
 
   /* 2. Categories → horizontal scrollable pills */
   .c-body{flex-direction:column;padding:.6rem .7rem;gap:.6rem}
@@ -679,9 +684,9 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   .kbd-hint{display:none!important}
   .osd{top:.5rem;left:.5rem;max-width:calc(100vw - 1rem);padding:.5rem .7rem}
 
-  /* 5. Setup screen — mobile friendly */
-  .setup{padding:1rem}
-  .card{padding:1.5rem 1.2rem;border-radius:14px;max-width:100%}
+  /* 5. Setup screen — mobile friendly, scrollable */
+  .setup{padding:1rem;min-height:100dvh;overflow-y:auto;align-items:flex-start;padding-top:2rem;padding-bottom:2rem}
+  .card{padding:1.5rem 1.2rem;border-radius:14px;max-width:100%;margin:0 auto}
   .fi{padding:.7rem .8rem;font-size:1rem;min-height:44px}
   .btn-primary{padding:.85rem;font-size:1.05rem;min-height:48px}
   .tabs{flex-wrap:wrap}
@@ -1120,7 +1125,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, connections = [], onReconnect }) {
+function Setup({ onConnect, connections = [], onReconnect, t: st }) {
+  const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -1327,18 +1333,18 @@ function Setup({ onConnect, connections = [], onReconnect }) {
     return results;
   }
 
-  const TYPES = [["import","Import"],["xtream","Xtream Codes"],["m3u","M3U Playlist"],["stalker","Stalker Portal"],["hls","Direct HLS"]];
+  const TYPES = [["import",t("import")],["xtream",t("xtreamCodes")],["m3u",t("m3uPlaylist")],["stalker",t("stalkerPortal")],["hls",t("directHLS")]];
 
   return (
     <div className="setup">
       <div className="card">
         <div className="logo">STREAMVAULT</div>
-        <div className="tagline">Your personal IPTV client · Connect your own legal service</div>
+        <div className="tagline">{t("tagline")}</div>
 
         {/* Saved connections — quick reconnect */}
         {connections.length > 0 && (
           <div style={{marginBottom:"1.2rem"}}>
-            <div className="fl" style={{marginBottom:".5rem"}}>Saved Connections</div>
+            <div className="fl" style={{marginBottom:".5rem"}}>{t("savedConns")}</div>
             <div style={{display:"flex",flexDirection:"column",gap:".35rem"}}>
               {connections.map(c => (
                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .7rem",
@@ -1352,14 +1358,14 @@ function Setup({ onConnect, connections = [], onReconnect }) {
                     <div style={{fontSize:".82rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
                     <div style={{fontSize:".62rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
                   </div>
-                  <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>Connect →</span>
+                  <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>{t("connectArrow")}</span>
                 </div>
               ))}
             </div>
             <div style={{borderBottom:"1px solid var(--b2)",margin:"1rem 0 .2rem",position:"relative"}}>
               <span style={{position:"absolute",left:"50%",transform:"translate(-50%,-50%)",background:"var(--s1)",
                 padding:"0 .6rem",fontSize:".65rem",color:"var(--t3)",textTransform:"uppercase",letterSpacing:".08em",fontWeight:600}}>
-                or add new
+                {t("orAddNew")}
               </span>
             </div>
           </div>
@@ -1374,51 +1380,51 @@ function Setup({ onConnect, connections = [], onReconnect }) {
           ))}
         </div>
         {type==="xtream" && (<>
-          <div className="fg"><label className="fl">Server URL</label>
+          <div className="fg"><label className="fl">{t("serverURL")}</label>
             <input className="fi" placeholder="http://server.com:8080" value={f.server} onChange={e=>set("server",e.target.value)} /></div>
-          <div className="fg"><label className="fl">Username</label>
+          <div className="fg"><label className="fl">{t("username")}</label>
             <input className="fi" placeholder="username" value={f.user} onChange={e=>set("user",e.target.value)} /></div>
-          <div className="fg"><label className="fl">Password</label>
+          <div className="fg"><label className="fl">{t("password")}</label>
             <input className="fi" type="password" placeholder="password" value={f.pass} onChange={e=>set("pass",e.target.value)} /></div>
         </>)}
         {type==="m3u" && (
-          <div className="fg"><label className="fl">M3U Playlist URL</label>
+          <div className="fg"><label className="fl">{t("playlistURL")}</label>
             <input className="fi" placeholder="http://example.com/playlist.m3u" value={f.url} onChange={e=>set("url",e.target.value)} />
             <div className="fhint">Supports .m3u and .m3u8 playlist files</div></div>
         )}
         {type==="stalker" && (<>
-          <div className="fg"><label className="fl">Portal URL</label>
+          <div className="fg"><label className="fl">{t("portalURL")}</label>
             <input className="fi" placeholder="http://server/stalker_portal/c/" value={f.server} onChange={e=>set("server",e.target.value)} /></div>
-          <div className="fg"><label className="fl">MAC Address</label>
+          <div className="fg"><label className="fl">{t("macAddress")}</label>
             <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} />
             <div className="fhint">The MAC address registered with your IPTV provider</div></div>
           <div style={{marginTop:".5rem"}}>
             <button type="button" style={{background:"none",border:"none",color:"var(--accent)",fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"'DM Sans',sans-serif"}}
               onClick={() => setShowAdvanced(!showAdvanced)}>
-              {showAdvanced ? "▾ Hide advanced" : "▸ Advanced options"}
+              {showAdvanced ? `▾ ${t("hideAdvanced")}` : `▸ ${t("advancedOpts")}`}
             </button>
           </div>
           {showAdvanced && (<>
-            <div className="fg"><label className="fl">Serial Number</label>
+            <div className="fg"><label className="fl">{t("serialNumber")}</label>
               <input className="fi" placeholder="Optional — leave blank for auto" value={f.serial} onChange={e=>set("serial",e.target.value)} />
               <div className="fhint">Device serial number (if required by provider)</div></div>
-            <div className="fg"><label className="fl">Device ID</label>
+            <div className="fg"><label className="fl">{t("deviceId")}</label>
               <input className="fi" placeholder="Optional — used for both ID1 and ID2 if ID2 is blank" value={f.deviceId} onChange={e=>set("deviceId",e.target.value)} />
               <div className="fhint">Primary device identifier</div></div>
-            <div className="fg"><label className="fl">Device ID 2</label>
+            <div className="fg"><label className="fl">{t("deviceId2")}</label>
               <input className="fi" placeholder="Optional — defaults to Device ID above" value={f.deviceId2} onChange={e=>set("deviceId2",e.target.value)} />
               <div className="fhint">Secondary device identifier (some providers use same value for both)</div></div>
           </>)}
         </>)}
         {type==="hls" && (
           <div style={{padding:"1rem 0",color:"var(--t2)",fontSize:".86rem",lineHeight:1.7}}>
-            Play any HLS stream, M3U8 URL, or direct media URL instantly — no account needed.
+            {t("hlsPlayNote")}
           </div>
         )}
         {type==="import" && (
           <div>
             <div className="fg">
-              <label className="fl">Paste raw text, URLs, or config</label>
+              <label className="fl">{t("pasteRaw")}</label>
               <textarea className="fi" style={{minHeight:"120px",resize:"vertical",fontFamily:"monospace",fontSize:".75rem"}}
                 placeholder={"Paste any text containing:\n• Stalker portal URLs + MAC addresses\n• Xtream Codes URLs with username/password\n• M3U/M3U8 playlist URLs\n\nAuto-detects all connection types."}
                 value={rawText}
@@ -1427,7 +1433,7 @@ function Setup({ onConnect, connections = [], onReconnect }) {
             </div>
             {detected.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem"}}>
-                <div className="fl">Detected ({detected.length})</div>
+                <div className="fl">{t("detected")} ({detected.length})</div>
                 {detected.map((d, i) => (
                   <div key={i} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".45rem .65rem",
                     background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
@@ -1440,18 +1446,18 @@ function Setup({ onConnect, connections = [], onReconnect }) {
                     onMouseLeave={e=>e.currentTarget.style.borderColor="var(--b2)"}>
                     <span style={{fontSize:".7rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",minWidth:"50px"}}>{d.type}</span>
                     <span style={{fontSize:".78rem",color:"var(--t1)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.label}</span>
-                    <span style={{fontSize:".65rem",color:"var(--t3)"}}>Click to fill →</span>
+                    <span style={{fontSize:".65rem",color:"var(--t3)"}}>{t("clickToFill")}</span>
                   </div>
                 ))}
               </div>
             )}
             {rawText && detected.length === 0 && (
-              <div style={{fontSize:".78rem",color:"var(--t3)",padding:".5rem 0"}}>No connections detected in the pasted text.</div>
+              <div style={{fontSize:".78rem",color:"var(--t3)",padding:".5rem 0"}}>{t("noConnsDetected")}</div>
             )}
           </div>
         )}
         <button className="btn-primary" onClick={connect} disabled={loading || type==="import"} style={type==="import"?{display:"none"}:{}}>
-          {loading ? "Connecting…" : "Connect →"}
+          {loading ? t("connecting") : t("connectArrow")}
         </button>
       </div>
     </div>
@@ -1463,11 +1469,12 @@ function Setup({ onConnect, connections = [], onReconnect }) {
 // ══════════════════════════════════════════════════════════════════
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose }) {
+function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, t: ct }) {
+  const t = ct || ((k) => k);
   return (
     <div className="modal-ov" onClick={e => e.target===e.currentTarget && onClose()}>
       <div className="modal" style={{maxWidth:"420px"}}>
-        <div className="modal-title">Connections</div>
+        <div className="modal-title">{t("connections")}</div>
         <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem",maxHeight:"300px",overflowY:"auto"}}>
           {connections.map(c => (
             <div key={c.id} style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .7rem",
@@ -1481,21 +1488,21 @@ function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAd
                 <div style={{fontSize:".8rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
                 <div style={{fontSize:".65rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
               </div>
-              {c.id === activeConnId && <span style={{fontSize:".6rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",letterSpacing:".05em"}}>Active</span>}
+              {c.id === activeConnId && <span style={{fontSize:".6rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",letterSpacing:".05em"}}>{t("active")}</span>}
               {c.id !== activeConnId && (
                 <button style={{background:"none",border:"none",cursor:"pointer",fontSize:".75rem",color:"var(--danger)",padding:".2rem .3rem",transition:"opacity .2s"}}
-                  title="Remove connection"
+                  title={t("removeConn")}
                   onClick={e => { e.stopPropagation(); onRemove(c.id); }}>✕</button>
               )}
             </div>
           ))}
           {connections.length === 0 && (
-            <div style={{fontSize:".8rem",color:"var(--t3)",textAlign:"center",padding:"1rem"}}>No saved connections</div>
+            <div style={{fontSize:".8rem",color:"var(--t3)",textAlign:"center",padding:"1rem"}}>{t("noSavedConns")}</div>
           )}
         </div>
         <div className="modal-btns">
-          <button className="btn-cancel" onClick={onClose}>Close</button>
-          <button className="btn-confirm" onClick={onAddNew}>+ Add Connection</button>
+          <button className="btn-cancel" onClick={onClose}>{t("close")}</button>
+          <button className="btn-confirm" onClick={onAddNew}>{t("addConnection")}</button>
         </div>
       </div>
     </div>
@@ -2425,7 +2432,7 @@ export default function App() {
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} connections={connections} onReconnect={switchConnection} />
+      <Setup onConnect={handleConnect} connections={connections} onReconnect={switchConnection} t={t} />
       {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
@@ -2444,23 +2451,23 @@ export default function App() {
             borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:420,boxShadow:"0 8px 32px rgba(0,0,0,0.5)"}}>
             {fbDone ? (
               <div style={{textAlign:"center",padding:"2rem 0"}}>
-                <div style={{fontSize:"1.5rem",marginBottom:".5rem"}}>Thank you!</div>
-                <div style={{color:"var(--t2,#8080aa)",fontSize:".85rem"}}>Your feedback has been received.</div>
+                <div style={{fontSize:"1.5rem",marginBottom:".5rem"}}>{t("thankYou")}</div>
+                <div style={{color:"var(--t2,#8080aa)",fontSize:".85rem"}}>{t("feedbackReceived")}</div>
               </div>
             ) : (
               <>
-                <div style={{fontSize:"1.05rem",fontWeight:600,marginBottom:".2rem"}}>Send Feedback</div>
-                <div style={{fontSize:".75rem",color:"var(--t2,#8080aa)",marginBottom:"1rem"}}>Bug reports, feature requests, or general comments</div>
-                <textarea value={fbMsg} onChange={e => setFbMsg(e.target.value)} placeholder="What's on your mind?" maxLength={2000}
+                <div style={{fontSize:"1.05rem",fontWeight:600,marginBottom:".2rem"}}>{t("sendFeedback")}</div>
+                <div style={{fontSize:".75rem",color:"var(--t2,#8080aa)",marginBottom:"1rem"}}>{t("feedbackHint")}</div>
+                <textarea value={fbMsg} onChange={e => setFbMsg(e.target.value)} placeholder={t("feedbackPlaceholder")} maxLength={2000}
                   style={{width:"100%",minHeight:120,background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,padding:".75rem",
                     color:"var(--t1,#dde0f5)",fontSize:".85rem",resize:"vertical",fontFamily:"inherit",outline:"none"}} autoFocus />
                 <div style={{display:"flex",justifyContent:"flex-end",gap:".5rem",marginTop:".8rem"}}>
                   <button onClick={() => { setFbOpen(false); setFbMsg(""); }}
-                    style={{padding:".45rem 1rem",background:"transparent",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"var(--t2,#8080aa)",fontSize:".8rem",cursor:"pointer"}}>Cancel</button>
+                    style={{padding:".45rem 1rem",background:"transparent",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"var(--t2,#8080aa)",fontSize:".8rem",cursor:"pointer"}}>{t("cancel")}</button>
                   <button onClick={sendFeedback} disabled={!fbMsg.trim() || fbSending}
                     style={{padding:".45rem 1rem",background:!fbMsg.trim()||fbSending?"rgba(255,255,255,0.05)":"var(--accent,#00d4ff)",border:"none",borderRadius:7,
                       color:!fbMsg.trim()||fbSending?"var(--t3,#44445a)":"#fff",fontSize:".8rem",fontWeight:600,cursor:!fbMsg.trim()||fbSending?"default":"pointer"}}>
-                    {fbSending ? "Sending..." : "Send"}</button>
+                    {fbSending ? t("sending") : t("send")}</button>
                 </div>
               </>
             )}
@@ -2640,11 +2647,11 @@ export default function App() {
           <EPGView channels={channels} epgData={epgData} epgURL={epgURL} setEpgURL={setEpgURL}
             epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} onPlayCatchup={playCatchup} />
         ) : section==="search" ? (
-          <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} />
+          <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} />
         ) : section==="favs" ? (
-          <FavsView favItems={favItems} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} />
+          <FavsView favItems={favItems} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} />
         ) : section==="continue" ? (
-          <ContinueView items={continueItems} onPlay={playItem} history={history} />
+          <ContinueView items={continueItems} onPlay={playItem} history={history} t={t} />
         ) : (
           <div className="c-body">
             {/* Categories sidebar */}
@@ -2815,7 +2822,7 @@ export default function App() {
                 </div>
               ) : seriesDetail.seasons.length === 0 ? (
                 <div style={{textAlign:"center",padding:"2rem",color:"var(--t2)",fontSize:".85rem"}}>
-                  No seasons found for this series.
+                  {t("noSeasonsFound")}
                 </div>
               ) : (
                 <>
@@ -2873,6 +2880,7 @@ export default function App() {
           onRemove={removeConnection}
           onAddNew={addNewConnection}
           onClose={() => setShowConnManager(false)}
+          t={t}
         />
       )}
     </div>
@@ -2882,16 +2890,16 @@ export default function App() {
 // ══════════════════════════════════════════════════════════════════
 // SUB-VIEWS
 // ══════════════════════════════════════════════════════════════════
-function FavsView({ favItems, onPlay, toggleFav, isFav }) {
+function FavsView({ favItems, onPlay, toggleFav, isFav, t }) {
   const all = [...favItems.live, ...favItems.vod, ...favItems.series];
   if (!all.length) return (
     <div className="empty">
       <div className="empty-icon">♡</div>
-      <div className="empty-t">No favorites yet</div>
-      <div className="empty-s">Click the ♡ icon on any channel or movie to add it here.</div>
+      <div className="empty-t">{t("noFavsYet")}</div>
+      <div className="empty-s">{t("favHint")}</div>
     </div>
   );
-  const groups = [["Live TV", favItems.live], ["Movies", favItems.vod], ["Series", favItems.series]];
+  const groups = [[t("liveTV"), favItems.live], [t("movies"), favItems.vod], [t("series"), favItems.series]];
   return (
     <div style={{flex:1,overflow:"auto",padding:"1.1rem 1.4rem",display:"flex",flexDirection:"column",gap:"1.5rem"}}>
       {groups.filter(([,items]) => items.length > 0).map(([label, items]) => (
@@ -2918,20 +2926,20 @@ function FavsView({ favItems, onPlay, toggleFav, isFav }) {
   );
 }
 
-function ContinueView({ items, onPlay, history }) {
+function ContinueView({ items, onPlay, history, t }) {
   const recent = history.slice(0, 20);
   if (!recent.length) return (
     <div className="empty">
       <div className="empty-icon">⏯</div>
-      <div className="empty-t">Nothing started yet</div>
-      <div className="empty-s">Watch some content and it will appear here for easy resuming.</div>
+      <div className="empty-t">{t("nothingStarted")}</div>
+      <div className="empty-s">{t("resumeHint")}</div>
     </div>
   );
   return (
     <div style={{flex:1,overflow:"auto",padding:"1.1rem 1.4rem",display:"flex",flexDirection:"column",gap:"1.5rem"}}>
       {items.length > 0 && (
         <div className="section-block">
-          <div className="section-label">Resume Watching</div>
+          <div className="section-label">{t("resumeWatching")}</div>
           <div className="cw-row">
             {items.map((item,i) => {
               const pct = item.duration ? Math.min(100,(item.position/item.duration)*100) : 0;
@@ -2950,7 +2958,7 @@ function ContinueView({ items, onPlay, history }) {
         </div>
       )}
       <div className="section-block">
-        <div className="section-label">Recently Watched</div>
+        <div className="section-label">{t("recentlyWatched")}</div>
         <div style={{display:"flex",flexDirection:"column",gap:".4rem"}}>
           {recent.map((item,i) => (
             <div key={item.id||i} style={{display:"flex",alignItems:"center",gap:".75rem",padding:".5rem .75rem",
@@ -2972,20 +2980,20 @@ function ContinueView({ items, onPlay, history }) {
   );
 }
 
-function GlobalSearch({ results, query, onPlay, toggleFav, isFav }) {
+function GlobalSearch({ results, query, onPlay, toggleFav, isFav, t }) {
   if (!query || query.length < 2) return (
     <div className="empty">
       <div className="empty-icon">🔍</div>
-      <div className="empty-t">Search everything</div>
-      <div className="empty-s">Type above to search across Live TV, Movies, and Series simultaneously. Inspired by SFVIP's "All" category.</div>
+      <div className="empty-t">{t("searchEverything")}</div>
+      <div className="empty-s">{t("searchHint")}</div>
     </div>
   );
   if (!results.length) return (
-    <div className="empty"><div className="empty-icon">🔍</div><div className="empty-t">No results for "{query}"</div></div>
+    <div className="empty"><div className="empty-icon">🔍</div><div className="empty-t">{t("noResults", query)}</div></div>
   );
   const byType = { live:results.filter(r=>r.type==="live"), vod:results.filter(r=>r.type==="vod"), series:results.filter(r=>r.type==="series") };
   const ICONS = {live:"📺",vod:"🎬",series:"📽"};
-  const LABELS = {live:"Live TV",vod:"Movies",series:"Series"};
+  const LABELS = {live:t("liveTV"),vod:t("movies"),series:t("series")};
   return (
     <div className="gsearch">
       {Object.entries(byType).filter(([,items])=>items.length).map(([type,items]) => (
@@ -3008,7 +3016,7 @@ function GlobalSearch({ results, query, onPlay, toggleFav, isFav }) {
   );
 }
 
-function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup }) {
+function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
   const PX_PER_MIN = 3;
   const TOTAL_HOURS = 8;
   const TOTAL_MS = TOTAL_HOURS * 3600000;
@@ -3100,7 +3108,7 @@ function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, on
         <input className="fi" style={{flex:"1 1 260px",minWidth:0}} placeholder="XMLTV EPG URL (e.g. http://provider.com/epg.xml)"
           value={urlInput} onChange={e=>setUrlInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&loadEPG(urlInput)} />
         <button className="btn-go" onClick={()=>loadEPG(urlInput)} disabled={epgLoading} style={{padding:".4rem .9rem",fontSize:".82rem"}}>
-          {epgLoading ? "Loading\u2026" : "Load EPG"}
+          {epgLoading ? t("loading") : t("loadEPG")}
         </button>
         {channels.length > 0 && (
           <input className="fi" style={{width:"160px"}} placeholder="Filter channels\u2026"
