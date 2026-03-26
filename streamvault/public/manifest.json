@@ -1,0 +1,16 @@
+{
+  "name": "StreamVault",
+  "short_name": "StreamVault",
+  "description": "Browser-based IPTV client — Stalker, Xtream, M3U",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07070f",
+  "theme_color": "#00d4ff",
+  "orientation": "any",
+  "categories": ["entertainment", "video"],
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
