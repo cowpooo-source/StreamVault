@@ -347,7 +347,7 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   color:var(--t2);font-family:'DM Sans',sans-serif;font-size:.75rem;cursor:pointer;transition:all .2s;white-space:nowrap}
 .c-btn:hover{color:var(--t1);border-color:var(--b2)}
 .c-btn.active{color:var(--accent);border-color:${t.accent}40;background:${t.accent}10}
-.c-body{flex:1;overflow:hidden;padding:1.1rem 1.4rem;display:flex;gap:1.1rem;min-height:0}
+.c-body{flex:1;overflow:hidden;padding:1.1rem 1.4rem;padding-bottom:3rem;display:flex;gap:1.1rem;min-height:0}
 
 /* CATEGORIES */
 .cats{width:150px;flex-shrink:0;overflow-y:auto;overflow-x:hidden;height:0;min-height:100%}
@@ -655,7 +655,7 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   .nav-badge{margin-left:.15rem;position:static;font-size:.55rem;padding:.05rem .25rem}
 
   /* 2. Categories → horizontal scrollable pills */
-  .c-body{flex-direction:column;padding:.6rem .7rem;gap:.6rem}
+  .c-body{flex-direction:column;padding:.6rem .7rem;padding-bottom:3rem;gap:.6rem}
   .cats{
     width:100%;height:auto;min-height:auto;flex-shrink:0;
     display:flex;flex-direction:row;overflow-x:auto;overflow-y:hidden;
@@ -1263,16 +1263,16 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
       const bm = block.match(macPattern) || [];
       macPattern.lastIndex = 0;
 
-      // Extract serial: look for "serial", "sn", "s/n" labels followed by value
-      const serialMatch = block.match(/(?:serial(?:\s*(?:number|num|#))?|s\/n|sn)\s*[:=\s]\s*([A-Za-z0-9_-]+)/i);
+      // Extract serial: look for "serial", "seriel", "sn", "s/n" labels followed by value
+      const serialMatch = block.match(/(?:seri[ae]l(?:\s*(?:number|num|#))?|s\/n|sn)\s*(?:=>|[:=\s])\s*([A-Za-z0-9_-]+)/i);
       const serial = serialMatch ? serialMatch[1] : "";
 
       // Extract deviceId2: look for "device id 2", "deviceid2", "device_id_2" labels (check this BEFORE deviceId)
-      const deviceId2Match = block.match(/(?:device[\s_-]*id[\s_-]*2|deviceid2|device_id_2)\s*[:=\s]\s*([A-Za-z0-9_-]+)/i);
+      const deviceId2Match = block.match(/(?:device[\s_.-]*id[\s_.-]*2|deviceid2|device_id_2)\s*(?:=>|[:=\s])\s*([A-Za-z0-9_-]+)/i);
       let deviceId2 = deviceId2Match ? deviceId2Match[1] : "";
 
-      // Extract deviceId: look for "device id", "deviceid", "device_id" labels (excluding "device id 2" variants)
-      const deviceIdMatch = block.match(/(?:device[\s_-]*id|deviceid|device_id)(?![\s_-]*2)\s*[:=\s]\s*([A-Za-z0-9_-]+)/i);
+      // Extract deviceId: look for "device id", "deviceid", "device_id", "device.id" labels (excluding "device id 2" variants)
+      const deviceIdMatch = block.match(/(?:device[\s_.-]*id|deviceid|device_id)(?![\s_.-]*2)\s*(?:=>|[:=\s])\s*([A-Za-z0-9_-]+)/i);
       const deviceId = deviceIdMatch ? deviceIdMatch[1] : "";
 
       // If only one device ID is found, use it for both (common in decorated text where one value is shared)
