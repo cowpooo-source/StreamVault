@@ -272,9 +272,9 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .app{display:flex;height:100vh;overflow:hidden;background:var(--bg)}
 
 /* SETUP */
-.setup{min-height:100vh;display:flex;align-items:center;justify-content:center;
+.setup{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;
   background:radial-gradient(ellipse at 20% 70%,${t.accent2}22 0%,transparent 55%),
-             radial-gradient(ellipse at 80% 20%,${t.accent}18 0%,transparent 50%),var(--bg);padding:2rem}
+             radial-gradient(ellipse at 80% 20%,${t.accent}18 0%,transparent 50%),var(--bg);padding:2rem;overflow-y:auto}
 .card{background:var(--s1);border:1px solid var(--b2);border-radius:18px;padding:2.5rem;
   width:100%;max-width:500px;box-shadow:0 48px 96px var(--shadow)}
 .logo{font-family:'Rajdhani',sans-serif;font-size:2.2rem;font-weight:700;letter-spacing:.12em;
@@ -689,7 +689,7 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   .osd{top:.5rem;left:.5rem;max-width:calc(100vw - 1rem);padding:.5rem .7rem}
 
   /* 5. Setup screen — mobile friendly, scrollable */
-  .setup{padding:1rem;min-height:100dvh;overflow-y:auto;align-items:flex-start;padding-top:2rem;padding-bottom:2rem}
+  .setup{padding:1rem;min-height:auto;height:auto;overflow-y:visible;align-items:flex-start;padding-top:1.5rem;padding-bottom:3rem}
   .card{padding:1.5rem 1.2rem;border-radius:14px;max-width:100%;margin:0 auto}
   .fi{padding:.7rem .8rem;font-size:1rem;min-height:44px}
   .btn-primary{padding:.85rem;font-size:1.05rem;min-height:48px}
@@ -1393,18 +1393,18 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
           <div className="fg"><label className="fl">{t("username")}</label>
             <input className="fi" placeholder="username" value={f.user} onChange={e=>set("user",e.target.value)} /></div>
           <div className="fg"><label className="fl">{t("password")}</label>
-            <input className="fi" type="password" placeholder="password" value={f.pass} onChange={e=>set("pass",e.target.value)} /></div>
+            <input className="fi" type="password" placeholder="password" value={f.pass} onChange={e=>set("pass",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} /></div>
         </>)}
         {type==="m3u" && (
           <div className="fg"><label className="fl">{t("playlistURL")}</label>
-            <input className="fi" placeholder="http://example.com/playlist.m3u" value={f.url} onChange={e=>set("url",e.target.value)} />
+            <input className="fi" placeholder="http://example.com/playlist.m3u" value={f.url} onChange={e=>set("url",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} />
             <div className="fhint">Supports .m3u and .m3u8 playlist files</div></div>
         )}
         {type==="stalker" && (<>
           <div className="fg"><label className="fl">{t("portalURL")}</label>
             <input className="fi" placeholder="http://server/stalker_portal/c/" value={f.server} onChange={e=>set("server",e.target.value)} /></div>
           <div className="fg"><label className="fl">{t("macAddress")}</label>
-            <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} />
+            <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} />
             <div className="fhint">The MAC address registered with your IPTV provider</div></div>
           <div style={{marginTop:".5rem"}}>
             <button type="button" style={{background:"none",border:"none",color:"var(--accent)",fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"'DM Sans',sans-serif"}}
@@ -1420,7 +1420,7 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
               <input className="fi" placeholder="Optional — used for both ID1 and ID2 if ID2 is blank" value={f.deviceId} onChange={e=>set("deviceId",e.target.value)} />
               <div className="fhint">Primary device identifier</div></div>
             <div className="fg"><label className="fl">{t("deviceId2")}</label>
-              <input className="fi" placeholder="Optional — defaults to Device ID above" value={f.deviceId2} onChange={e=>set("deviceId2",e.target.value)} />
+              <input className="fi" placeholder="Optional — defaults to Device ID above" value={f.deviceId2} onChange={e=>set("deviceId2",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} />
               <div className="fhint">Secondary device identifier (some providers use same value for both)</div></div>
           </>)}
         </>)}
