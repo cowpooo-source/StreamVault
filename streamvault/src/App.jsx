@@ -1271,9 +1271,13 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
       const deviceId2Match = block.match(/(?:device[\s_.-]*id[\s_.-]*2|deviceid2|device_id_2)\s*(?:=>|[:=\s])\s*([A-Za-z0-9_-]+)/i);
       let deviceId2 = deviceId2Match ? deviceId2Match[1] : "";
 
-      // Extract deviceId: look for "device id", "deviceid", "device_id", "device.id" labels (excluding "device id 2" variants)
-      const deviceIdMatch = block.match(/(?:device[\s_.-]*id|deviceid|device_id)(?![\s_.-]*2)\s*(?:=>|[:=\s])\s*([A-Za-z0-9_-]+)/i);
-      const deviceId = deviceIdMatch ? deviceIdMatch[1] : "";
+      // Extract deviceId: look for "device id" labels, grab the longest hex/alnum token (skip short decorator remnants like "12")
+      const deviceIdLine = block.match(/(?:device[\s_.-]*id|deviceid|device_id)(?![\s_.-]*2)\s*(?:=>|[:=\s])\s*(.+)/i);
+      let deviceId = "";
+      if (deviceIdLine) {
+        const tokens = deviceIdLine[1].trim().split(/\s+/);
+        deviceId = tokens.reduce((best, t) => t.replace(/[^A-Za-z0-9]/g,"").length > best.length ? t.replace(/[^A-Za-z0-9]/g,"") : best, "");
+      }
 
       // If only one device ID is found, use it for both (common in decorated text where one value is shared)
       if (deviceId && !deviceId2) deviceId2 = deviceId;
@@ -2283,7 +2287,7 @@ export default function App() {
   // ── connection management
   function makeConnectionLabel(type, config) {
     if (type === "xtream") return `${config.user} · Xtream`;
-    if (type === "stalker") return `Stalker · ${(config.mac||"").slice(-5)}`;
+    if (type === "stalker") { try { const host = new URL(config.server).hostname.replace(/^(www|portal)\./, ""); return `${host} · ${(config.mac||"").slice(-8)}`; } catch {} return `Stalker · ${(config.mac||"").slice(-8)}`; }
     if (type === "m3u") return `M3U · ${(config.url||"").split("/").pop()?.slice(0,20)||"playlist"}`;
     return "Direct HLS";
   }
