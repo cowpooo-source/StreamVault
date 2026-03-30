@@ -16,7 +16,13 @@ async function init() {
   try {
     const buf = fs.readFileSync(DB_PATH);
     db = new SQL.Database(buf);
-  } catch {
+    // Test DB is valid
+    db.exec("SELECT 1");
+  } catch (e) {
+    console.warn("Cache DB corrupted or missing, creating fresh:", e.message);
+    // Delete corrupt file
+    try { fs.unlinkSync(DB_PATH); } catch {}
+    try { fs.unlinkSync(DB_PATH + ".tmp"); } catch {}
     db = new SQL.Database();
   }
   db.run(`CREATE TABLE IF NOT EXISTS cache (
@@ -28,7 +34,12 @@ async function init() {
 
 function save() {
   if (!db) return;
-  try { fs.writeFileSync(DB_PATH, Buffer.from(db.export())); } catch {}
+  try {
+    // Write to temp file then rename — atomic, prevents corruption on kill
+    const tmp = DB_PATH + ".tmp";
+    fs.writeFileSync(tmp, Buffer.from(db.export()));
+    fs.renameSync(tmp, DB_PATH);
+  } catch {}
 }
 
 // Save to disk periodically (every 30s) and on process exit
