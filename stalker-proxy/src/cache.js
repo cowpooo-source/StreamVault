@@ -28,6 +28,7 @@ async function init() {
   db.run(`CREATE TABLE IF NOT EXISTS cache (
     key TEXT PRIMARY KEY, value TEXT NOT NULL, expires INTEGER NOT NULL
   )`);
+  db.run("CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires)");
   save();
   return db;
 }

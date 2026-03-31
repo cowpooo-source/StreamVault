@@ -1,11 +1,18 @@
 require("dotenv").config();
-const express = require("express");
-const fetch   = require("node-fetch");
-const cors    = require("cors");
-const cache   = require("./cache");
+const express     = require("express");
+const fetch       = require("node-fetch");
+const cors        = require("cors");
+const compression = require("compression");
+const cache       = require("./cache");
 
 const helmet    = require("helmet");
 const rateLimit = require("express-rate-limit");
+
+const http  = require("http");
+const https = require("https");
+const keepAliveAgent      = new http.Agent({ keepAlive: true, maxSockets: 50 });
+const keepAliveAgentHttps = new https.Agent({ keepAlive: true, maxSockets: 50 });
+const agentFor = (url) => url.startsWith("https") ? keepAliveAgentHttps : keepAliveAgent;
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -51,6 +58,7 @@ app.use("/stalker/", rateLimit({ windowMs: 60000, max: 600, message: { error: "T
 // Fix 5: Reduce default JSON body limit
 app.use("/api/sync", express.json({ limit: "5mb" }));
 app.use(express.json({ limit: "1mb" }));
+app.use(compression());
 
 // Admin password for analytics (set in .env or defaults to "admin")
 const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
@@ -99,7 +107,7 @@ app.post("/api/feedback", express.json(), (req, res) => {
 
 // ── GET /api/feedback — admin-only, returns all feedback
 app.get("/api/feedback", (req, res) => {
-  const token = req.query.token || req.headers["x-admin-token"];
+  const token = req.headers["x-admin-token"];
   if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
   res.json({ feedback: cache.getFeedback() });
 });
@@ -140,6 +148,10 @@ app.delete("/api/sync", (req, res) => {
 
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
 const pathCache = new Map();
+function setPathCache(key, value) {
+  if (pathCache.size > 500) pathCache.clear();
+  pathCache.set(key, value);
+}
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -184,6 +196,7 @@ async function extractApiPath(portalUrl, mac) {
     const res = await fetch(url, {
       headers: stalkerHeaders(mac, "", portalUrl),
       timeout: 8000,
+      agent: agentFor(url),
     });
     if (!res.ok) return null;
     const js = await res.text();
@@ -210,7 +223,7 @@ async function tryHandshake(base, apiPath, mac, portalUrl) {
   const headers = stalkerHeaders(mac, "", portalUrl);
 
   try {
-    const res = await fetch(url, { headers, timeout: 8000 });
+    const res = await fetch(url, { headers, timeout: 8000, agent: agentFor(url) });
     if (res.status === 429) { console.log(`  ${base}${apiPath} → 429 rate limited`); throw Object.assign(new Error("rate limited"), {code:"RATE_LIMITED"}); }
     if (res.status === 404) return null;
     if (res.ok) {
@@ -258,7 +271,7 @@ async function getSession(portal, mac, opts = {}) {
       try {
         const result = await tryHandshake(base, path, mac, portal);
         if (result) {
-          pathCache.set(key, { base, apiPath: path });
+          setPathCache(key, { base, apiPath: path });
           console.log(`✓ Path resolved: ${base}${path}`);
           return {
             token: result.token, base, apiPath: path, portal, mac, opts,
@@ -293,7 +306,7 @@ async function portalFetch(session, params, timeout = 12000) {
   const url = `${session.base}${session.apiPath}?${qs}`;
 
   try {
-    const res = await fetch(url, { headers: session.headers, timeout });
+    const res = await fetch(url, { headers: session.headers, timeout, agent: agentFor(url) });
     if (res.ok) {
       const text = await res.text();
       if (text.includes("Authorization failed")) return null; // token expired, signal retry
@@ -303,7 +316,7 @@ async function portalFetch(session, params, timeout = 12000) {
 
   // Try POST as fallback
   try {
-    const res = await fetch(url, { method: "POST", headers: session.headers, body: qs, timeout });
+    const res = await fetch(url, { method: "POST", headers: session.headers, body: qs, timeout, agent: agentFor(url) });
     if (res.ok) {
       const text = await res.text();
       if (text.includes("Authorization failed")) return null;
@@ -651,7 +664,7 @@ app.get("/stalker/play", async (req, res) => {
     // Try to pipe the stream (same IP as create_link), forward Range for seeking
     const fetchHeaders = { "User-Agent": "StreamVault/1.0" };
     if (req.headers.range) fetchHeaders["Range"] = req.headers.range;
-    const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow" });
+    const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow", agent: agentFor(cleanUrl) });
     if (!upstream.ok && upstream.status !== 206) return res.json({ url: cleanUrl });
     const ct = upstream.headers.get("content-type") || "";
     Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
@@ -928,7 +941,7 @@ app.head("/stream", async (req, res) => {
   if (!url) return res.status(400).end();
   if (!isUrlAllowed(url)) return res.status(403).end();
   try {
-    const upstream = await fetch(url, { method: "HEAD", headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow" });
+    const upstream = await fetch(url, { method: "HEAD", headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow", agent: agentFor(url) });
     Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
     res.set("Accept-Ranges", "bytes");
     const ct = upstream.headers.get("content-type");
@@ -950,7 +963,7 @@ app.get("/stream", async (req, res) => {
     const headers = { "User-Agent": "StreamVault/1.0" };
     if (req.headers.range) headers["Range"] = req.headers.range;
 
-    const upstream = await fetch(url, { headers, redirect: "follow" });
+    const upstream = await fetch(url, { headers, redirect: "follow", agent: agentFor(url) });
     if (!upstream.ok && upstream.status !== 206) return res.status(upstream.status).end();
 
     const ct = upstream.headers.get("content-type") || "";
@@ -995,7 +1008,7 @@ app.get("/proxy", async (req, res) => {
   if (!isUrlAllowed(url)) return res.status(403).json({ error: "URL not allowed" });
 
   try {
-    const upstream = await fetch(url, { timeout: 30000, headers: { "User-Agent": "StreamVault/1.0" } });
+    const upstream = await fetch(url, { timeout: 30000, headers: { "User-Agent": "StreamVault/1.0" }, agent: agentFor(url) });
     const contentType = upstream.headers.get("content-type") || "";
 
     if (contentType.includes("json")) {
@@ -1047,7 +1060,7 @@ setInterval(trackDailyBandwidth, 60000); // every minute
 
 // ── GET /api/analytics — JSON stats (requires auth token)
 app.get("/api/analytics", (req, res) => {
-  const token = req.query.token || req.headers["x-admin-token"];
+  const token = req.headers["x-admin-token"];
   if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
 
   const stats = cache.getStats();
@@ -1164,7 +1177,7 @@ function barColor(p){return p>=90?'#ff4466':p>=70?'#ff6b35':p>=50?'#fbbf24':'#00
 
 async function doLogin(){
   TOKEN=document.getElementById('pass').value;
-  const r=await fetch('/api/analytics?token='+encodeURIComponent(TOKEN));
+  const r=await fetch('/api/analytics',{headers:{'X-Admin-Token':TOKEN}});
   if(r.status===401){document.getElementById('login-err').style.display='block';document.getElementById('login-err').textContent='Invalid password';return}
   sessionStorage.setItem('sv-admin',TOKEN);
   document.getElementById('login').style.display='none';
@@ -1172,12 +1185,12 @@ async function doLogin(){
   load();
 }
 
-if(TOKEN){fetch('/api/analytics?token='+encodeURIComponent(TOKEN)).then(r=>{if(r.ok){document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';load()}else{TOKEN='';sessionStorage.removeItem('sv-admin')}})}
+if(TOKEN){fetch('/api/analytics',{headers:{'X-Admin-Token':TOKEN}}).then(r=>{if(r.ok){document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';load()}else{TOKEN='';sessionStorage.removeItem('sv-admin')}})}
 
 async function load(){
   const app=document.getElementById('app');
   try{
-    const r=await fetch('/api/analytics?token='+encodeURIComponent(TOKEN));
+    const r=await fetch('/api/analytics',{headers:{'X-Admin-Token':TOKEN}});
     if(r.status===401){sessionStorage.removeItem('sv-admin');location.reload();return}
     const d=await r.json();
     let h='<button class="refresh" onclick="load()">Refresh</button>';

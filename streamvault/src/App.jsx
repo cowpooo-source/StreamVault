@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -169,7 +169,10 @@ function parseM3U(text) {
       const num    = parseInt((line.match(/tvg-chno="([^"]+)"/) || [])[1]) || null;
       cur = { name, logo, group, epgId, num, type:"live" };
     } else if (line && !line.startsWith("#") && cur) {
-      cur.url = line; cur.id = cur.url; out.push(cur); cur = null;
+      cur.url = line; cur.id = cur.url;
+      if (line.includes("/movie/")) cur.type = "vod";
+      else if (line.includes("/series/")) cur.type = "series";
+      out.push(cur); cur = null;
     }
   }
   return out;
@@ -256,7 +259,6 @@ function genCSS(t) {
   const b1 = isLight ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.06)";
   const b2 = isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.11)";
   return `
-@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:${t.bg};--s1:${t.s1};--s2:${t.s2};--s3:${t.s3};
@@ -1605,7 +1607,7 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
 // ══════════════════════════════════════════════════════════════════
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, t: ct }) {
+const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, t: ct }) {
   const t = ct || ((k) => k);
   return (
     <div className="modal-ov" onClick={e => e.target===e.currentTarget && onClose()}>
@@ -1643,7 +1645,7 @@ function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAd
       </div>
     </div>
   );
-}
+});
 
 // ══════════════════════════════════════════════════════════════════
 // CARD HELPERS
@@ -3165,7 +3167,7 @@ export default function App() {
 // ══════════════════════════════════════════════════════════════════
 // SUB-VIEWS
 // ══════════════════════════════════════════════════════════════════
-function FavsView({ favItems, onPlay, toggleFav, isFav, t }) {
+const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, isFav, t }) {
   const all = [...favItems.live, ...favItems.vod, ...favItems.series];
   if (!all.length) return (
     <div className="empty">
@@ -3199,9 +3201,9 @@ function FavsView({ favItems, onPlay, toggleFav, isFav, t }) {
       ))}
     </div>
   );
-}
+});
 
-function ContinueView({ items, onPlay, history, t }) {
+const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
   const recent = history.slice(0, 20);
   if (!recent.length) return (
     <div className="empty">
@@ -3253,9 +3255,9 @@ function ContinueView({ items, onPlay, history, t }) {
       </div>
     </div>
   );
-}
+});
 
-function GlobalSearch({ results, query, onPlay, toggleFav, isFav, t }) {
+const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggleFav, isFav, t }) {
   if (!query || query.length < 2) return (
     <div className="empty">
       <div className="empty-icon">🔍</div>
@@ -3289,9 +3291,9 @@ function GlobalSearch({ results, query, onPlay, toggleFav, isFav, t }) {
       ))}
     </div>
   );
-}
+});
 
-function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
+const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
   const PX_PER_MIN = 3;
   const TOTAL_HOURS = 8;
   const TOTAL_MS = TOTAL_HOURS * 3600000;
@@ -3476,9 +3478,9 @@ function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, on
       )}
     </div>
   );
-}
+});
 
-function DirectHLSView() {
+const DirectHLSView = memo(function DirectHLSView() {
   const [url, setUrl] = useState("");
   const [playing, setPlaying] = useState(null);
   const EXAMPLES = [
@@ -3509,7 +3511,7 @@ function DirectHLSView() {
       {playing && <Player item={playing} onClose={()=>setPlaying(null)} />}
     </div>
   );
-}
+});
 
 // ══════════════════════════════════════════════════════════════════
 // DISCOVER (TMDB)
@@ -3520,7 +3522,7 @@ function normalizeTitle(s) {
   return (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
+const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
   const [keyInput, setKeyInput]           = useState(tmdbKey);
   const [trending, setTrending]           = useState([]);
   const [popularMovies, setPopularMovies] = useState([]);
@@ -3771,4 +3773,4 @@ function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
 
     </div>
   );
-}
+});
