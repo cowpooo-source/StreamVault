@@ -277,11 +277,18 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .app{display:flex;height:100vh;overflow:hidden;background:var(--bg)}
 
 /* SETUP */
-.setup{min-height:100vh;min-height:100dvh;display:flex;align-items:safe center;justify-content:center;
+.setup{min-height:100vh;min-height:100dvh;display:flex;align-items:flex-start;justify-content:center;
   background:radial-gradient(ellipse at 20% 70%,var(--accent2-22) 0%,transparent 55%),
-             radial-gradient(ellipse at 80% 20%,var(--accent-18) 0%,transparent 50%),var(--bg);padding:2rem;overflow-y:auto}
+             radial-gradient(ellipse at 80% 20%,var(--accent-18) 0%,transparent 50%),var(--bg);
+  padding:clamp(1rem,3vh,2rem);overflow-y:auto;overflow-x:hidden}
 .card{background:var(--s1);border:1px solid var(--b2);border-radius:18px;padding:2.5rem;
-  width:100%;max-width:500px;box-shadow:0 48px 96px var(--shadow)}
+  width:100%;max-width:500px;box-shadow:0 48px 96px var(--shadow);margin:auto 0}
+.saved-conns{display:flex;flex-direction:column;gap:.35rem;max-height:min(34vh,320px);overflow:auto;
+  padding-right:.15rem;overscroll-behavior:contain}
+.saved-conns::-webkit-scrollbar{width:4px}
+.saved-conn{display:flex;align-items:center;gap:.6rem;padding:.55rem .7rem;
+  background:var(--s2);border:1px solid var(--b2);border-radius:8px;cursor:pointer;transition:all .2s}
+.saved-conn:hover{border-color:var(--accent);background:var(--s3)}
 .logo{font-family:'Rajdhani',sans-serif;font-size:2.2rem;font-weight:700;letter-spacing:.12em;
   background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;
   -webkit-text-fill-color:transparent;background-clip:text;margin-bottom:.2rem}
@@ -733,6 +740,7 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   /* 5. Setup screen — mobile friendly, scrollable */
   .setup{display:block!important;min-height:auto!important;padding:1.5rem 1rem 4rem;overflow:visible!important}
   .card{padding:1.5rem 1.2rem;border-radius:14px;max-width:100%;margin:0 auto}
+  .saved-conns{max-height:none;overflow:visible;padding-right:0}
   .fi{padding:.7rem .8rem;font-size:1rem;min-height:44px}
   .btn-primary{padding:.85rem;font-size:1.05rem;min-height:48px}
   .tabs{flex-wrap:wrap}
@@ -1454,11 +1462,9 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
         {connections.length > 0 && (
           <div style={{marginBottom:"1.2rem"}}>
             <div className="fl" style={{marginBottom:".5rem"}}>{t("savedConns")}</div>
-            <div style={{display:"flex",flexDirection:"column",gap:".35rem"}}>
+            <div className="saved-conns">
               {connections.map(c => (
-                <div key={c.id} style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .7rem",
-                  background:"var(--s2)",border:"1px solid var(--b2)",borderLeft:`3px solid ${c.color}`,
-                  borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
+                <div key={c.id} className="saved-conn" style={{borderLeft:`3px solid ${c.color}`}}
                   onClick={() => validateAndReconnect(c)}
                   onMouseEnter={e => e.currentTarget.style.borderColor="var(--accent)"}
                   onMouseLeave={e => { e.currentTarget.style.borderColor="var(--b2)"; e.currentTarget.style.borderLeftColor=c.color; }}>
