@@ -676,11 +676,20 @@ app.get("/stalker/play", async (req, res) => {
     if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
       try { const h = new URL(portal).host; cleanUrl = cleanUrl.replace(/localhost(:\d+)?/g, h).replace(/127\.0\.0\.1(:\d+)?/g, h); } catch {}
     }
-    // Try to pipe the stream (same IP as create_link), forward Range for seeking
-    const fetchHeaders = { "User-Agent": "StreamVault/1.0" };
+    // Try to pipe the stream (same IP as create_link) with Stalker session headers
+    const fetchHeaders = {
+      "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
+      "Cookie": `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe%2FParis`,
+      "Referer": portal.replace(/\/+$/, "").replace(/\/c$/, "") + "/c/",
+      "X-User-Agent": "Model: MAG250; Link: WiFi",
+    };
+    if (session.token) fetchHeaders["Authorization"] = `Bearer ${session.token}`;
     if (req.headers.range) fetchHeaders["Range"] = req.headers.range;
     const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow", agent: agentFor(cleanUrl) });
-    if (!upstream.ok && upstream.status !== 206) return res.json({ url: cleanUrl });
+    if (!upstream.ok && upstream.status !== 206) {
+      // Return error with actual status so frontend shows correct message
+      return res.status(upstream.status).json({ error: `Stream server returned ${upstream.status}`, status: upstream.status });
+    }
     const ct = upstream.headers.get("content-type") || "";
     Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
     res.set("Accept-Ranges", "bytes");
