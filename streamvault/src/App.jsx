@@ -394,18 +394,24 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   background:rgba(0,0,0,.5);border:none;color:var(--t2);font-size:.7rem;cursor:pointer;
   display:flex;align-items:center;justify-content:center;transition:all .15s;z-index:2}
 .vod-info-btn:hover{background:var(--accent);color:#fff}
-.vod-detail{padding:.6rem .7rem;font-size:.72rem;color:var(--t2);line-height:1.5;
-  border-top:1px solid var(--b1);animation:slideDown .2s ease}
-.vod-detail-row{display:flex;gap:.4rem;margin-bottom:.25rem}
-.vod-detail-label{color:var(--t3);min-width:55px;font-size:.65rem;text-transform:uppercase}
-.vod-detail-val{flex:1;color:var(--t1)}
-.vod-detail-plot{font-size:.68rem;color:var(--t2);margin-bottom:.4rem;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-.vod-detail-actions{display:flex;gap:.4rem;margin-top:.4rem}
-.vod-detail-actions button{flex:1;padding:.3rem .5rem;border-radius:6px;border:1px solid var(--b2);
-  background:var(--s2);color:var(--t1);font-size:.65rem;cursor:pointer;transition:all .15s}
-.vod-detail-actions button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
-.vod-card.expanded{grid-column:span 2;z-index:5}
-@keyframes slideDown{from{max-height:0;opacity:0}to{max-height:300px;opacity:1}}
+.detail-modal{display:flex;gap:1.2rem;max-width:560px;width:100%}
+.detail-poster{width:140px;height:200px;flex-shrink:0;border-radius:10px;object-fit:cover;background:var(--s2)}
+.detail-poster-ph{width:140px;height:200px;flex-shrink:0;border-radius:10px;background:var(--s2);
+  display:flex;align-items:center;justify-content:center;font-size:2.5rem}
+.detail-body{flex:1;overflow-y:auto;max-height:70vh}
+.detail-title{font-size:1.15rem;font-weight:600;color:var(--t1);margin-bottom:.15rem}
+.detail-meta{font-size:.75rem;color:var(--t2);margin-bottom:.6rem;display:flex;gap:.4rem;flex-wrap:wrap}
+.detail-meta span{background:var(--s2);padding:.15rem .45rem;border-radius:12px;font-size:.68rem}
+.detail-plot{font-size:.78rem;color:var(--t2);line-height:1.6;margin-bottom:.6rem}
+.detail-row{display:flex;gap:.4rem;margin-bottom:.2rem;font-size:.72rem}
+.detail-label{color:var(--t3);min-width:58px;font-size:.65rem;text-transform:uppercase}
+.detail-val{flex:1;color:var(--t1)}
+.detail-actions{display:flex;gap:.5rem;margin-top:.8rem}
+.detail-actions button{padding:.5rem 1rem;border-radius:8px;border:none;font-size:.82rem;font-weight:600;cursor:pointer;transition:all .15s}
+.detail-play{background:var(--accent);color:#fff}
+.detail-play:hover{filter:brightness(1.15)}
+.detail-fav{background:var(--s2);color:var(--t2);border:1px solid var(--b2)!important}
+.detail-fav:hover{color:var(--accent)}
 .resume-bar{position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--s3)}
 .resume-fill{height:100%;background:var(--accent);transition:width .3s}
 .badge{display:inline-block;padding:.1rem .32rem;background:${t.accent}18;border:1px solid ${t.accent}30;
@@ -2857,9 +2863,8 @@ export default function App() {
                       const faved = isFav(item);
                       const hist = historyMap.get(item.id || item.url);
                       const pct = hist?.position && hist?.duration ? Math.min(100, (hist.position/hist.duration)*100) : 0;
-                      const isExpanded = expandedItem?.id === item.id && expandedItem?.type === item.type;
                       return (
-                        <div key={item.id||i} className={`vod-card${isExpanded?" expanded":""}`} onClick={() => !isExpanded && playItem(item)} title={item.name}>
+                        <div key={item.id||i} className="vod-card" onClick={() => playItem(item)} title={item.name}>
                           {item.logo
                             ? <img className="vod-poster" src={item.logo} alt="" onError={e=>e.target.style.display="none"} />
                             : <div className="vod-ph">{section==="series"?"📽":"🎬"}</div>}
@@ -2877,25 +2882,7 @@ export default function App() {
                             {faved?"♥":"♡"}
                           </button>
                           {(item.type==="vod"||item.type==="series") && (
-                            <button className="vod-info-btn" onClick={e=>{e.stopPropagation();setExpandedItem(isExpanded?null:item);}} title="Details">
-                              {isExpanded?"✕":"ⓘ"}
-                            </button>
-                          )}
-                          {isExpanded && (
-                            <div className="vod-detail" onClick={e=>e.stopPropagation()}>
-                              {item.plot && <div className="vod-detail-plot">{item.plot}</div>}
-                              {item.genre && <div className="vod-detail-row"><span className="vod-detail-label">Genre</span><span className="vod-detail-val">{item.genre}</span></div>}
-                              {item.director && <div className="vod-detail-row"><span className="vod-detail-label">Director</span><span className="vod-detail-val">{item.director}</span></div>}
-                              {item.actors && <div className="vod-detail-row"><span className="vod-detail-label">Cast</span><span className="vod-detail-val">{item.actors}</span></div>}
-                              {item.duration && <div className="vod-detail-row"><span className="vod-detail-label">Duration</span><span className="vod-detail-val">{item.duration}</span></div>}
-                              {item.country && <div className="vod-detail-row"><span className="vod-detail-label">Country</span><span className="vod-detail-val">{item.country}</span></div>}
-                              {item.year && <div className="vod-detail-row"><span className="vod-detail-label">Year</span><span className="vod-detail-val">{item.year}</span></div>}
-                              {item.rating && <div className="vod-detail-row"><span className="vod-detail-label">Rating</span><span className="vod-detail-val">★ {parseFloat(item.rating||0).toFixed(1)}</span></div>}
-                              <div className="vod-detail-actions">
-                                <button onClick={()=>playItem(item)}>▶ Play</button>
-                                <button onClick={()=>setExpandedItem(null)}>✕ Close</button>
-                              </div>
-                            </div>
+                            <button className="vod-info-btn" onClick={e=>{e.stopPropagation();setExpandedItem(item);}} title="Details">ⓘ</button>
                           )}
                         </div>
                       );
@@ -2916,6 +2903,43 @@ export default function App() {
       </div>
 
       {/* ── PLAYER ── */}
+      {/* Detail popup modal */}
+      {expandedItem && createPortal(
+        <div style={{position:"fixed",inset:0,zIndex:99998,background:"rgba(0,0,0,0.65)",
+          display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+          onClick={e => { if (e.target === e.currentTarget) setExpandedItem(null); }}>
+          <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
+            borderRadius:16,padding:"1.5rem",boxShadow:"0 12px 48px rgba(0,0,0,0.6)",maxWidth:560,width:"100%"}}>
+            <div className="detail-modal">
+              {expandedItem.logo
+                ? <img className="detail-poster" src={expandedItem.logo} alt="" onError={e=>e.target.style.display="none"} />
+                : <div className="detail-poster-ph">{expandedItem.type==="series"?"📽":"🎬"}</div>}
+              <div className="detail-body">
+                <div className="detail-title">{expandedItem.name}</div>
+                <div className="detail-meta">
+                  {expandedItem.year && <span>{expandedItem.year}</span>}
+                  {expandedItem.rating && <span>★ {parseFloat(expandedItem.rating||0).toFixed(1)}</span>}
+                  {expandedItem.duration && <span>{expandedItem.duration}</span>}
+                  {expandedItem.age && <span>{expandedItem.age}</span>}
+                  {expandedItem.type && <span style={{textTransform:"uppercase"}}>{expandedItem.type}</span>}
+                </div>
+                {expandedItem.plot && <div className="detail-plot">{expandedItem.plot}</div>}
+                {expandedItem.genre && <div className="detail-row"><span className="detail-label">Genre</span><span className="detail-val">{expandedItem.genre}</span></div>}
+                {expandedItem.director && <div className="detail-row"><span className="detail-label">Director</span><span className="detail-val">{expandedItem.director}</span></div>}
+                {expandedItem.actors && <div className="detail-row"><span className="detail-label">Cast</span><span className="detail-val">{expandedItem.actors}</span></div>}
+                {expandedItem.country && <div className="detail-row"><span className="detail-label">Country</span><span className="detail-val">{expandedItem.country}</span></div>}
+                <div className="detail-actions">
+                  <button className="detail-play" onClick={()=>{setExpandedItem(null);playItem(expandedItem);}}>▶ Play</button>
+                  <button className="detail-fav" onClick={()=>toggleFav(expandedItem)}>
+                    {isFav(expandedItem) ? "♥ Favorited" : "♡ Favorite"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      , document.body)}
+
       {playing && (
         <Player item={playing}
           channelList={playing.type==="live" ? channels : null}
