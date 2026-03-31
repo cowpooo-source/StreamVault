@@ -334,6 +334,113 @@ app.post("/stalker/handshake", async (req, res) => {
   }
 });
 
+// ── POST /stalker/validate — comprehensive connection check
+app.post("/stalker/validate", async (req, res) => {
+  const { portal, mac, serial, deviceId, deviceId2 } = req.body;
+  if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+  const result = {
+    valid: false,
+    status: "unknown",
+    statusCode: null,
+    expiry: null,
+    daysLeft: null,
+    serial: null,
+    deviceId: null,
+    deviceId2: null,
+    maxConnections: null,
+    tariff: null,
+    phone: null,
+    portalReachable: false,
+    error: null,
+  };
+
+  try {
+    // Step 1: Handshake (validates portal is reachable + MAC is recognized)
+    const session = await getSession(portal, mac, { serial });
+    result.portalReachable = true;
+
+    // Step 2: Get Profile (extract device info)
+    try {
+      const profileParams = {
+        type: "stb", action: "get_profile",
+        auth_second_step: 1,
+        hw_version_2: "8b80dfaa8cf83485567849b7202a79360fc988e3",
+      };
+      if (serial) profileParams.sn = serial;
+      if (deviceId) profileParams.device_id = deviceId;
+      if (deviceId2 || deviceId) profileParams.device_id2 = deviceId2 || deviceId;
+      const profile = await portalFetchRetry(session, profileParams);
+      const p = profile?.js || {};
+      result.serial = p.serial_number || p.sn || serial || null;
+      result.deviceId = p.device_id || deviceId || null;
+      result.deviceId2 = p.device_id2 || deviceId2 || deviceId || null;
+    } catch {}
+
+    // Step 3: Get Account Info (status, expiry, tariff)
+    try {
+      const account = await portalFetchRetry(session, {
+        type: "account_info", action: "get_main_info",
+      });
+      const a = account?.js || {};
+
+      // Status interpretation
+      const statusVal = a.status !== undefined ? parseFloat(a.status) : 0;
+      if (statusVal === 0) result.status = "active";
+      else if (statusVal === 1) result.status = "unregistered";
+      else if (statusVal === 2) result.status = "suspended";
+      else if (statusVal === 3) result.status = "expired";
+      else if (statusVal === 4) result.status = "blocked";
+      else result.status = `status:${statusVal}`;
+      result.statusCode = statusVal;
+
+      // Expiry date parsing (try multiple fields and formats)
+      const expiryStr = a.expire_billing_date || a.expired_date || a.expire_date || null;
+      if (expiryStr && expiryStr !== "0000-00-00" && expiryStr !== "0000-00-00 00:00:00") {
+        // Try parsing various date formats
+        let expDate = null;
+        const formats = [
+          /^(\d{4})-(\d{2})-(\d{2})/, // yyyy-MM-dd
+          /^(\d{2})\/(\d{2})\/(\d{4})/, // MM/dd/yyyy or dd/MM/yyyy
+        ];
+        const m1 = expiryStr.match(formats[0]);
+        if (m1) expDate = new Date(parseInt(m1[1]), parseInt(m1[2])-1, parseInt(m1[3]));
+        if (!expDate) {
+          const m2 = expiryStr.match(formats[1]);
+          if (m2) expDate = new Date(parseInt(m2[3]), parseInt(m2[1])-1, parseInt(m2[2]));
+        }
+        if (!expDate) expDate = new Date(expiryStr); // fallback to native parser
+
+        if (expDate && !isNaN(expDate.getTime())) {
+          result.expiry = expDate.toISOString().slice(0, 10);
+          result.daysLeft = Math.ceil((expDate.getTime() - Date.now()) / 86400000);
+          if (result.daysLeft < 0) result.status = "expired";
+        }
+      }
+
+      result.tariff = a.tariff_plan || a.tariff || null;
+      result.phone = a.phone || null;
+      result.maxConnections = a.max_cur || a.max_connections || null;
+
+      // Check if account info was empty (blocked/invalid)
+      if (Object.keys(a).length === 0) {
+        result.status = "blocked";
+        result.error = "Account returned empty info — may be blocked";
+      }
+    } catch (e) {
+      result.error = "Could not fetch account info: " + e.message;
+    }
+
+    result.valid = (result.status === "active" && (result.daysLeft === null || result.daysLeft > 0));
+    res.json(result);
+  } catch (e) {
+    result.error = e.message;
+    if (e.message.includes("Handshake failed")) result.error = "Portal unreachable or MAC not recognized";
+    if (e.message.includes("rate limited") || e.message.includes("429")) result.error = "Portal rate limited — try again later";
+    res.json(result);
+  }
+});
+
 // ── GET /stalker/api (generic passthrough)
 app.get("/stalker/api", async (req, res) => {
   const { portal, mac, ...apiParams } = req.query;

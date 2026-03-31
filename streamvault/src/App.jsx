@@ -1190,13 +1190,40 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
         const server = f.server.trim().replace(/\/$/,"");
-        const hsBody = JSON.stringify({ portal: server, mac: f.mac.trim(), serial:f.serial?.trim()||undefined, deviceId:f.deviceId?.trim()||undefined, deviceId2:(f.deviceId2?.trim()||f.deviceId?.trim())||undefined });
-        const hs = await fetch(`${API}/stalker/handshake`, { method:"POST", headers:{"Content-Type":"application/json","X-Guest-Id":GUEST_ID}, body: hsBody });
+        const validateBody = JSON.stringify({
+          portal: server, mac: f.mac.trim(),
+          serial: f.serial?.trim() || undefined,
+          deviceId: f.deviceId?.trim() || undefined,
+          deviceId2: (f.deviceId2?.trim() || f.deviceId?.trim()) || undefined
+        });
+
+        const vRes = await fetch(`${API}/stalker/validate`, {
+          method: "POST",
+          headers: {"Content-Type":"application/json","X-Guest-Id":GUEST_ID},
+          body: validateBody
+        });
+        const v = await vRes.json();
+
+        if (v.error && !v.portalReachable) throw new Error(v.error);
+        if (v.status === "expired") throw new Error(`Account expired${v.expiry ? ` on ${v.expiry}` : ""}. Contact your provider.`);
+        if (v.status === "blocked") throw new Error("Account is blocked. Contact your provider.");
+        if (v.status === "suspended") throw new Error("Account is suspended. Contact your provider.");
+        if (v.status === "unregistered") throw new Error("MAC address is not registered with this portal.");
+
+        // Show warning for expiring soon but still allow connection
+        if (v.daysLeft !== null && v.daysLeft <= 7 && v.daysLeft > 0) {
+          console.warn(`Account expires in ${v.daysLeft} days (${v.expiry})`);
+        }
+
         track("connect");
-        const hsData = await hs.json();
-        if (!hs.ok || hsData.error) throw new Error(hsData.error || "Stalker handshake failed");
-        // Connection saved by handleConnect in App
-        onConnect({ type, server, mac:f.mac.trim(), serial:f.serial.trim()||undefined, deviceId:f.deviceId.trim()||undefined, deviceId2:(f.deviceId2.trim()||f.deviceId.trim())||undefined });
+        onConnect({
+          type, server, mac: f.mac.trim(),
+          serial: v.serial || f.serial?.trim() || undefined,
+          deviceId: v.deviceId || f.deviceId?.trim() || undefined,
+          deviceId2: v.deviceId2 || (f.deviceId2?.trim() || f.deviceId?.trim()) || undefined,
+          // Store validation info for display
+          accountInfo: { status: v.status, expiry: v.expiry, daysLeft: v.daysLeft, tariff: v.tariff, maxConnections: v.maxConnections }
+        });
       } else {
         // Connection saved by handleConnect in App
         onConnect({ type:"hls" });
@@ -2508,6 +2535,13 @@ export default function App() {
               <div className="conn-card-info">
                 <div className="conn-card-label">{activeConnection.label}</div>
                 <div className="conn-card-stats">{channelCount.toLocaleString()} items</div>
+                {activeConnection?.config?.accountInfo?.daysLeft !== null && activeConnection?.config?.accountInfo?.daysLeft !== undefined && (
+                  <div style={{fontSize:".62rem", color: activeConnection.config.accountInfo.daysLeft <= 7 ? "var(--danger)" : "var(--t3)", marginTop:".15rem"}}>
+                    {activeConnection.config.accountInfo.status === "active"
+                      ? `${activeConnection.config.accountInfo.daysLeft}d left${activeConnection.config.accountInfo.tariff ? ` · ${activeConnection.config.accountInfo.tariff}` : ""}`
+                      : activeConnection.config.accountInfo.status}
+                  </div>
+                )}
               </div>
             </div>
             <div className="conn-card-switch">▼ {t("switchConn")}</div>
