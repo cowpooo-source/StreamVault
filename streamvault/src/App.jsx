@@ -1129,7 +1129,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, connections = [], onReconnect, t: st }) {
+function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -1138,7 +1138,30 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
   const [detected, setDetected] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr]       = useState("");
+  const [expiredPrompt, setExpiredPrompt] = useState(null); // { conn, validation }
   const set = (k,v) => setF(p => ({...p,[k]:v}));
+
+  // Validate saved connection before reconnecting
+  async function validateAndReconnect(conn) {
+    if (conn.type !== "stalker") { onReconnect(conn.id); return; }
+    setLoading(true); setErr("");
+    try {
+      const cfg = conn.config || {};
+      const vRes = await fetch(`${API}/stalker/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ portal: cfg.server, mac: cfg.mac, serial: cfg.serial, deviceId: cfg.deviceId, deviceId2: cfg.deviceId2 }),
+      });
+      const v = await vRes.json();
+      if (!v.portalReachable) { setErr("Portal unreachable. Check your connection."); return; }
+      if (v.status === "expired" || v.status === "blocked" || v.status === "suspended" || v.status === "unregistered") {
+        setExpiredPrompt({ conn, validation: v });
+        return;
+      }
+      onReconnect(conn.id);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
 
   useEffect(() => {
     // Pre-fill from last active connection (or most recent saved connection)
@@ -1385,7 +1408,7 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .7rem",
                   background:"var(--s2)",border:"1px solid var(--b2)",borderLeft:`3px solid ${c.color}`,
                   borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
-                  onClick={() => onReconnect(c.id)}
+                  onClick={() => validateAndReconnect(c)}
                   onMouseEnter={e => e.currentTarget.style.borderColor="var(--accent)"}
                   onMouseLeave={e => { e.currentTarget.style.borderColor="var(--b2)"; e.currentTarget.style.borderLeftColor=c.color; }}>
                   <span style={{fontSize:"1.1rem"}}>{CONN_ICONS[c.type] || "📡"}</span>
@@ -1393,7 +1416,7 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
                     <div style={{fontSize:".82rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
                     <div style={{fontSize:".62rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
                   </div>
-                  <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>{t("connectArrow")}</span>
+                  <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>{loading ? "..." : t("connectArrow")}</span>
                 </div>
               ))}
             </div>
@@ -1494,6 +1517,47 @@ function Setup({ onConnect, connections = [], onReconnect, t: st }) {
         <button className="btn-primary" onClick={connect} disabled={loading || type==="import"} style={type==="import"?{display:"none"}:{}}>
           {loading ? t("connecting") : t("connectArrow")}
         </button>
+
+        {/* Expired/blocked connection prompt */}
+        {expiredPrompt && createPortal(
+          <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
+            display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+            onClick={e => { if (e.target === e.currentTarget) setExpiredPrompt(null); }}>
+            <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
+              borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:400,boxShadow:"0 8px 32px rgba(0,0,0,0.5)"}}>
+              <div style={{fontSize:"2rem",textAlign:"center",marginBottom:".75rem"}}>
+                {expiredPrompt.validation.status === "expired" ? "⏰" : "🚫"}
+              </div>
+              <div style={{fontSize:"1rem",fontWeight:600,textAlign:"center",marginBottom:".3rem",color:"var(--t1,#dde0f5)"}}>
+                {expiredPrompt.validation.status === "expired" ? "Account Expired" :
+                 expiredPrompt.validation.status === "blocked" ? "Account Blocked" :
+                 expiredPrompt.validation.status === "suspended" ? "Account Suspended" :
+                 "Account Unregistered"}
+              </div>
+              <div style={{fontSize:".78rem",color:"var(--t2,#8080aa)",textAlign:"center",marginBottom:"1rem",lineHeight:1.6}}>
+                {expiredPrompt.validation.expiry && `Expired on ${expiredPrompt.validation.expiry}. `}
+                {expiredPrompt.conn.label}
+              </div>
+              <div style={{display:"flex",gap:".5rem"}}>
+                <button onClick={() => { onRemoveConn?.(expiredPrompt.conn.id); setExpiredPrompt(null); }}
+                  style={{flex:1,padding:".55rem",background:"#ff446622",border:"1px solid #ff446650",borderRadius:8,
+                    color:"#ff4466",fontSize:".8rem",fontWeight:600,cursor:"pointer"}}>
+                  Delete
+                </button>
+                <button onClick={() => { setExpiredPrompt(null); onReconnect(expiredPrompt.conn.id); }}
+                  style={{flex:1,padding:".55rem",background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,
+                    color:"var(--t2,#8080aa)",fontSize:".8rem",cursor:"pointer"}}>
+                  Connect Anyway
+                </button>
+                <button onClick={() => setExpiredPrompt(null)}
+                  style={{flex:1,padding:".55rem",background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,
+                    color:"var(--t1,#dde0f5)",fontSize:".8rem",cursor:"pointer"}}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        , document.body)}
       </div>
     </div>
   );
@@ -2467,7 +2531,7 @@ export default function App() {
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} connections={connections} onReconnect={switchConnection} t={t} />
+      <Setup onConnect={handleConnect} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} t={t} />
       {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
