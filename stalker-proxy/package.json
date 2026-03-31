@@ -18,7 +18,7 @@
     "express-rate-limit": "^7.0.0",
     "helmet": "^8.0.0",
     "node-fetch": "^2.7.0",
-    "better-sqlite3": "^12.8.0"
+    "sql.js": "^1.14.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

@@ -1143,8 +1143,10 @@ app.get("/analytics", (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
-  console.log(`   Cache: SQLite/better-sqlite3 (7-day TTL, WAL mode)`);
+cache.ready.then(() => {
+  app.listen(PORT, () => {
+    console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
+    console.log(`   Health: http://localhost:${PORT}/health`);
+    console.log(`   Cache: SQLite (7-day TTL)`);
+  });
 });
