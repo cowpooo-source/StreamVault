@@ -4,14 +4,53 @@ const fetch   = require("node-fetch");
 const cors    = require("cors");
 const cache   = require("./cache");
 
+const helmet    = require("helmet");
+const rateLimit = require("express-rate-limit");
+
 const app  = express();
 const PORT = process.env.PORT || 3001;
+
+// Block SSRF: validate proxy URLs
+function isUrlAllowed(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    // Only allow http and https
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    // Block localhost
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return false;
+    // Block private IPs
+    const parts = host.split(".").map(Number);
+    if (parts.length === 4) {
+      if (parts[0] === 10) return false; // 10.x.x.x
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false; // 172.16-31.x.x
+      if (parts[0] === 192 && parts[1] === 168) return false; // 192.168.x.x
+      if (parts[0] === 169 && parts[1] === 254) return false; // 169.254.x.x (cloud metadata)
+      if (parts[0] === 0) return false; // 0.x.x.x
+    }
+    return true;
+  } catch { return false; }
+}
 
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
 }));
-app.use(express.json({ limit: "10mb" }));
+
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // too restrictive for our inline scripts
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Rate limiting
+app.use("/api/feedback", rateLimit({ windowMs: 60000, max: 10, message: { error: "Too many feedback submissions" } }));
+app.use("/api/", rateLimit({ windowMs: 60000, max: 60, message: { error: "Too many requests" } }));
+app.use("/stalker/", rateLimit({ windowMs: 60000, max: 120, message: { error: "Too many requests" } }));
+
+// Fix 5: Reduce default JSON body limit
+app.use("/api/sync", express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "1mb" }));
 
 // Admin password for analytics (set in .env or defaults to "admin")
 const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
@@ -766,6 +805,7 @@ app.options("/stream", (req, res) => {
 app.head("/stream", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).end();
+  if (!isUrlAllowed(url)) return res.status(403).end();
   try {
     const upstream = await fetch(url, { method: "HEAD", headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow" });
     Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
@@ -784,6 +824,7 @@ app.head("/stream", async (req, res) => {
 app.get("/stream", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "url required" });
+  if (!isUrlAllowed(url)) return res.status(403).json({ error: "URL not allowed" });
   try {
     const headers = { "User-Agent": "StreamVault/1.0" };
     if (req.headers.range) headers["Range"] = req.headers.range;
@@ -830,6 +871,7 @@ app.get("/stream", async (req, res) => {
 app.get("/proxy", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "url required" });
+  if (!isUrlAllowed(url)) return res.status(403).json({ error: "URL not allowed" });
 
   try {
     const upstream = await fetch(url, { timeout: 30000, headers: { "User-Agent": "StreamVault/1.0" } });
@@ -993,8 +1035,9 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 <div id="app" style="display:none"></div>
 <script>
 let TOKEN=sessionStorage.getItem('sv-admin')||'';
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function fmt(n){return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'K':String(n)}
-function tag(t){return'<span class="tag tag-'+t+'">'+t+'</span>'}
+function tag(t){return'<span class="tag tag-'+esc(t)+'">'+esc(t)+'</span>'}
 function ago(ts){if(!ts)return'\\u2014';const d=Date.now()-ts*1000;const m=Math.floor(d/60000);if(m<1)return'just now';if(m<60)return m+'m ago';const h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago'}
 function barColor(p){return p>=90?'#ff4466':p>=70?'#ff6b35':p>=50?'#fbbf24':'#00e896'}
 
@@ -1043,7 +1086,7 @@ async function load(){
       h+='<div class="card"><div class="card-label">Today Upload</div><div class="card-value green">'+d.bandwidth.today.tx_gb+' GB</div></div>';
       h+='<div class="card"><div class="card-label">Today Total</div><div class="card-value yellow">'+d.bandwidth.today.total_gb+' GB</div></div>';
     }
-    h+='<div class="card"><div class="card-label">Node.js</div><div class="card-value purple" style="font-size:1rem">'+d.server.node+'</div></div>';
+    h+='<div class="card"><div class="card-label">Node.js</div><div class="card-value purple" style="font-size:1rem">'+esc(d.server.node)+'</div></div>';
     h+='</div></div>';
 
     // Cache breakdown
@@ -1071,7 +1114,7 @@ async function load(){
       days.forEach(day=>{
         const vals=d.requests.daily[day];const total2=Object.values(vals).reduce((a,b)=>a+b,0);
         const hp=Math.max(3,Math.round(total2/maxDay*100));
-        h+='<div class="chart-bar" style="height:'+hp+'%;background:linear-gradient(to top,#00d4ff,#7c3aed)" data-tip="'+day+': '+fmt(total2)+'"></div>';
+        h+='<div class="chart-bar" style="height:'+hp+'%;background:linear-gradient(to top,#00d4ff,#7c3aed)" data-tip="'+esc(day)+': '+fmt(total2)+'"></div>';
       });
       h+='</div><div class="chart-labels">';days.forEach(day=>{h+='<span>'+day.slice(5)+'</span>'});h+='</div></div>';
     }
@@ -1082,7 +1125,7 @@ async function load(){
       h+='<div class="section"><div class="section-title">Recent Users</div>';
       h+='<table><tr><th>Guest ID</th><th>IP</th><th>Created</th><th>Last Active</th><th>Conn</th><th>Favs</th><th>History</th></tr>';
       guests.forEach(g=>{
-        h+='<tr><td><code>'+g.guest_id+'</code></td><td><code>'+g.ip+'</code></td><td>'+ago(g.created_at)+'</td><td>'+ago(g.last_seen)+'</td><td>'+g.connections+'</td><td>'+g.favorites+'</td><td>'+g.history+'</td></tr>';
+        h+='<tr><td><code>'+esc(g.guest_id)+'</code></td><td><code>'+esc(g.ip)+'</code></td><td>'+ago(g.created_at)+'</td><td>'+ago(g.last_seen)+'</td><td>'+g.connections+'</td><td>'+g.favorites+'</td><td>'+g.history+'</td></tr>';
       });
       h+='</table></div>';
     }
@@ -1092,7 +1135,7 @@ async function load(){
     if(watched.length){
       h+='<div class="section"><div class="section-title">Most Watched</div>';
       h+='<table><tr><th>Title</th><th>Type</th><th>Plays</th></tr>';
-      watched.forEach(w=>{h+='<tr><td>'+w.name+'</td><td>'+tag(w.type)+'</td><td>'+w.plays+'</td></tr>'});
+      watched.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td>'+tag(w.type)+'</td><td>'+w.plays+'</td></tr>'});
       h+='</table></div>';
     }
 
@@ -1101,7 +1144,7 @@ async function load(){
     if(portals.length){
       h+='<div class="section"><div class="section-title">Active Portals</div>';
       h+='<table><tr><th>Portal</th><th>MAC</th><th>Type</th><th>Hits</th><th>Last Active</th></tr>';
-      portals.forEach(p=>{h+='<tr><td style="font-size:.75rem">'+p.portal+'</td><td><code>'+p.mac+'</code></td><td>'+tag(p.type)+'</td><td>'+p.hits+'</td><td>'+ago(p.last_seen)+'</td></tr>'});
+      portals.forEach(p=>{h+='<tr><td style="font-size:.75rem">'+esc(p.portal)+'</td><td><code>'+esc(p.mac)+'</code></td><td>'+tag(p.type)+'</td><td>'+p.hits+'</td><td>'+ago(p.last_seen)+'</td></tr>'});
       h+='</table></div>';
     }
 
@@ -1110,7 +1153,7 @@ async function load(){
     if(visitors.length){
       h+='<div class="section"><div class="section-title">Recent Visitors</div>';
       h+='<table><tr><th>IP</th><th>First Seen</th><th>Last Active</th><th>Requests</th></tr>';
-      visitors.forEach(v=>{h+='<tr><td><code>'+v.ip+'</code></td><td>'+ago(v.first_seen)+'</td><td>'+ago(v.last_seen)+'</td><td>'+v.hits+'</td></tr>'});
+      visitors.forEach(v=>{h+='<tr><td><code>'+esc(v.ip)+'</code></td><td>'+ago(v.first_seen)+'</td><td>'+ago(v.last_seen)+'</td><td>'+v.hits+'</td></tr>'});
       h+='</table></div>';
     }
 
@@ -1124,14 +1167,14 @@ async function load(){
         const gid=f.guest_id?(f.guest_id.substring(0,8)+'...'):'\\u2014';
         const ip=f.ip?f.ip.replace(/(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)/,'$1.$2.***.$4'):'\\u2014';
         const msg=(f.message||'').length>200?f.message.substring(0,200)+'...':f.message||'';
-        h+='<tr><td style="white-space:nowrap">'+date+'</td><td><code>'+gid+'</code></td><td><code>'+ip+'</code></td><td>'+msg+'</td></tr>';
+        h+='<tr><td style="white-space:nowrap">'+esc(date)+'</td><td><code>'+esc(gid)+'</code></td><td><code>'+esc(ip)+'</code></td><td>'+esc(msg)+'</td></tr>';
       });
       h+='</table></div>';
     }
 
     h+='<div class="sub" style="margin-top:2rem">Generated: '+new Date(d.generated_at).toLocaleString()+'</div>';
     app.innerHTML=h;
-  }catch(e){app.innerHTML='<div class="err">Failed: '+e.message+'</div>'}
+  }catch(e){app.innerHTML='<div class="err">Failed: '+esc(e.message)+'</div>'}
 }
 setInterval(()=>{if(TOKEN)load()},60000);
 </script>
