@@ -149,6 +149,13 @@ app.delete("/api/sync", (req, res) => {
   res.json({ ok: true });
 });
 
+// ── DELETE /api/cache — delete cached data for a connection (channels, VOD, EPG, etc.)
+app.delete("/api/cache", (req, res) => {
+  const connId = req.query.connId;
+  if (connId) cache.deleteByPrefix(connId);
+  res.json({ ok: true });
+});
+
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
 const pathCache = new Map();
 function setPathCache(key, value) {

@@ -2541,14 +2541,23 @@ export default function App() {
     // Clean up localStorage
     localStorage.removeItem(`sv-favs-${id}`);
     localStorage.removeItem(`sv-history-${id}`);
-    // Clean up IDB cache
+    // Clean up IDB cache (content, categories, sync meta)
     for (const key of [`content:${id}:live`, `content:${id}:vod`, `content:${id}:series`,
       `cats:${id}:vod`, `cats:${id}:series`, `sync:${id}`]) {
       idbCache.set(key, null);
     }
-    // Clean up server-side sync data
+    // Clean up IDB category items (catitems:{connId}:{section}:{catId})
+    if (typeof indexedDB !== "undefined") {
+      idbCache.get(`cats:${id}:vod`).then(vodCats => {
+        (vodCats || []).forEach(c => idbCache.set(`catitems:${id}:vod:${c.id}`, null));
+      }).catch(() => {});
+      idbCache.get(`cats:${id}:series`).then(seriesCats => {
+        (seriesCats || []).forEach(c => idbCache.set(`catitems:${id}:series:${c.id}`, null));
+      }).catch(() => {});
+    }
+    // Clean up server-side sync + cache data
     fetch(`${API}/api/sync?connId=${encodeURIComponent(id)}`, { method: "DELETE", headers: { "X-Guest-Id": GUEST_ID } }).catch(() => {});
-    // Clean up D1 (cascades: content_items, categories, sync_meta)
+    fetch(`${API}/api/cache?connId=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
   }
 
   function addNewConnection() {

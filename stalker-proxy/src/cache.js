@@ -85,6 +85,14 @@ function del(key) {
   stmtDel.run(key);
 }
 
+function deleteByPrefix(connId) {
+  // connId format: "stalker:http://portal:port/c:00:1A:79:XX:XX:XX"
+  const match = connId.match(/^stalker:(.+):([0-9A-Fa-f:]{17})$/);
+  if (match) {
+    db.prepare("DELETE FROM cache WHERE key LIKE ?").run(`${match[1]}|${match[2]}|%`);
+  }
+}
+
 function cleanup() {
   const result = stmtCleanup.run(Date.now());
   if (result.changes > 0) {
@@ -258,4 +266,4 @@ cleanup();
 // Backward-compatible ready export (sync init, but consumers may still .then() on it)
 const ready = Promise.resolve();
 
-module.exports = { get, set, del, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };
+module.exports = { get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };
