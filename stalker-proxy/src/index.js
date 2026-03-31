@@ -46,7 +46,7 @@ app.use(helmet({
 // Rate limiting
 app.use("/api/feedback", rateLimit({ windowMs: 60000, max: 10, message: { error: "Too many feedback submissions" } }));
 app.use("/api/", rateLimit({ windowMs: 60000, max: 60, message: { error: "Too many requests" } }));
-app.use("/stalker/", rateLimit({ windowMs: 60000, max: 120, message: { error: "Too many requests" } }));
+app.use("/stalker/", rateLimit({ windowMs: 60000, max: 600, message: { error: "Too many requests" } }));
 
 // Fix 5: Reduce default JSON body limit
 app.use("/api/sync", express.json({ limit: "5mb" }));
