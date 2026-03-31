@@ -16,6 +16,7 @@ const keepAliveAgentHttps = new https.Agent({ keepAlive: true, maxSockets: 50 })
 const agentFor = (url) => url.startsWith("https") ? keepAliveAgentHttps : keepAliveAgent;
 
 const app  = express();
+app.set("trust proxy", 1); // trust nginx X-Forwarded-For
 const PORT = process.env.PORT || 3001;
 
 // Block SSRF: validate proxy URLs
@@ -315,24 +316,43 @@ async function portalFetch(session, params, timeout = 12000) {
   const qs = new URLSearchParams({ ...params, JsHttpRequest: "1-xml" }).toString();
   const url = `${session.base}${session.apiPath}?${qs}`;
 
+  function parseResponse(text, res) {
+    if (text.includes("Authorization failed")) return null; // token expired, signal retry
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Portal returned non-JSON (HTML error page, maintenance page, etc.)
+      const status = res?.status || "unknown";
+      const preview = text.replace(/<[^>]*>/g, "").trim().slice(0, 100);
+      throw new Error(`Portal returned non-JSON (HTTP ${status}): ${preview || "empty response"}`);
+    }
+  }
+
   try {
     const res = await fetch(url, { headers: session.headers, timeout, agent: agentFor(url) });
     if (res.ok) {
       const text = await res.text();
-      if (text.includes("Authorization failed")) return null; // token expired, signal retry
-      return JSON.parse(text);
+      return parseResponse(text, res);
     }
-  } catch { /* network error */ }
+    if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
+    if (res.status >= 500) throw new Error(`Portal server error (${res.status})`);
+  } catch (e) {
+    if (e.message.includes("Portal")) throw e; // re-throw our own errors
+    /* network error — fall through to POST */
+  }
 
   // Try POST as fallback
   try {
     const res = await fetch(url, { method: "POST", headers: session.headers, body: qs, timeout, agent: agentFor(url) });
     if (res.ok) {
       const text = await res.text();
-      if (text.includes("Authorization failed")) return null;
-      return JSON.parse(text);
+      return parseResponse(text, res);
     }
-  } catch { /* network error */ }
+    if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
+  } catch (e) {
+    if (e.message.includes("Portal")) throw e;
+    /* network error */
+  }
 
   throw new Error(`Portal request failed: ${params.action || "unknown"}`);
 }
