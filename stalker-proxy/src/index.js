@@ -4,6 +4,7 @@ const fetch       = require("node-fetch");
 const cors        = require("cors");
 const compression = require("compression");
 const cache       = require("./cache");
+const { Transform } = require("stream");
 
 const helmet    = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -39,8 +40,9 @@ function isUrlAllowed(urlStr) {
   } catch { return false; }
 }
 
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 app.use(cors({
-  origin: "*",
+  origin: ALLOWED_ORIGIN === "*" ? true : ALLOWED_ORIGIN.split(",").map(s => s.trim()),
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
 }));
 
@@ -61,7 +63,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use(compression());
 
 // Admin password for analytics (set in .env or defaults to "admin")
-const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
+const ADMIN_PASS = process.env.ADMIN_PASS;
 
 // Track requests, visitors, guests, and portals
 app.use((req, res, next) => {
@@ -107,6 +109,7 @@ app.post("/api/feedback", express.json(), (req, res) => {
 
 // ── GET /api/feedback — admin-only, returns all feedback
 app.get("/api/feedback", (req, res) => {
+  if (!ADMIN_PASS) return res.status(503).json({ error: "ADMIN_PASS not configured" });
   const token = req.headers["x-admin-token"];
   if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
   res.json({ feedback: cache.getFeedback() });
@@ -511,33 +514,38 @@ app.get("/stalker/channels", async (req, res) => {
 });
 
 // ── Fetch all paginated items for a given Stalker type (vod/series)
-// Fetch all pages for a specific category (sequential, safe, stops on empty page).
+// Fetches first page to get total, then remaining pages in parallel batches of 3.
 async function fetchAllPages(session, type, category, maxItems = 500) {
-  const all = [];
+  // First page to get total
+  let data;
+  try {
+    data = await portalFetchRetry(session, { type, action: "get_ordered_list", category, page: 1, p: 1 }, 20000);
+  } catch { return []; }
 
-  for (let page = 1; all.length < maxItems; page++) {
-    let data;
-    try {
-      data = await portalFetchRetry(session,
-        { type, action: "get_ordered_list", category, page, p: page }, 20000);
-    } catch (e) {
-      console.warn(`fetchAllPages ${type} cat=${category} page=${page}: ${e.message}`);
-      break;
+  const items = data?.js?.data || [];
+  if (!items.length) return [];
+
+  const all = [...items];
+  const totalPages = parseInt(data.js.total_pages || data.js.pages_count || 1);
+  const declaredTotal = parseInt(data.js.total_items || data.js.results_num || 0);
+
+  if (totalPages <= 1 || (declaredTotal > 0 && all.length >= declaredTotal)) return all.slice(0, maxItems);
+
+  // Fetch remaining pages in parallel batches of 3
+  const CONCURRENCY = 3;
+  for (let start = 2; start <= totalPages && all.length < maxItems; start += CONCURRENCY) {
+    const batch = [];
+    for (let p = start; p < start + CONCURRENCY && p <= totalPages; p++) batch.push(p);
+    const results = await Promise.all(batch.map(p =>
+      portalFetchRetry(session, { type, action: "get_ordered_list", category, page: p, p }, 20000).catch(() => null)
+    ));
+    for (const r of results) {
+      const pageItems = r?.js?.data;
+      if (pageItems?.length) all.push(...pageItems);
     }
-
-    const items = data?.js?.data;
-    if (!items || !items.length) break;
-
-    all.push(...items);
-
-    const declaredTotal = parseInt(data.js.total_items || data.js.results_num || 0);
-    if (declaredTotal > 0 && all.length >= declaredTotal) break;
-
-    const declaredPages = parseInt(data.js.total_pages || data.js.pages_count || 0);
-    if (declaredPages > 0 && page >= declaredPages) break;
   }
 
-  return all;
+  return all.slice(0, maxItems);
 }
 
 // ── GET /stalker/vod/categories  — returns category list only (fast, single request)
@@ -672,15 +680,22 @@ app.get("/stalker/play", async (req, res) => {
     if (upstream.status === 206) { res.status(206); const cr = upstream.headers.get("content-range"); if (cr) res.set("Content-Range", cr); }
     const cl = upstream.headers.get("content-length"); if (cl) res.set("Content-Length", cl);
     if (ct.includes("mpegurl") || ct.includes("m3u") || cleanUrl.endsWith(".m3u8")) {
-      const text = await upstream.text();
       const origin = new URL(cleanUrl).origin;
       const proto = req.get("x-forwarded-proto") || req.protocol;
       const selfBase = `${proto}://${req.get("host")}`;
-      const rewritten = text
-        .replace(/^(\/[^\s]+\.ts[^\s]*)$/gm, m => `${selfBase}/stream?url=${encodeURIComponent(origin + m)}`)
-        .replace(/^(\/[^\s]+\.m3u8[^\s]*)$/gm, m => `${selfBase}/stream?url=${encodeURIComponent(origin + m)}`);
       res.set("Content-Type", ct);
-      res.send(rewritten);
+      const rewriter = new Transform({
+        transform(chunk, enc, cb) {
+          const rewritten = chunk.toString().split("\n").map(line => {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("/") && (trimmed.includes(".ts") || trimmed.includes(".m3u8")))
+              return `${selfBase}/stream?url=${encodeURIComponent(origin + trimmed)}`;
+            return line;
+          }).join("\n");
+          cb(null, rewritten);
+        }
+      });
+      upstream.body.pipe(rewriter).pipe(res);
     } else {
       if (ct) res.set("Content-Type", ct);
       upstream.body.pipe(res);
@@ -978,19 +993,24 @@ app.get("/stream", async (req, res) => {
     const cl = upstream.headers.get("content-length");
     if (cl) res.set("Content-Length", cl);
 
-    // HLS manifests: rewrite segment URLs
+    // HLS manifests: rewrite segment URLs via streaming Transform
     if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
-      const text = await upstream.text();
       const origin = new URL(url).origin;
       const proto = req.get("x-forwarded-proto") || req.protocol;
       const selfBase = `${proto}://${req.get("host")}`;
-      const rewritten = text.replace(/^(\/[^\s]+\.ts[^\s]*)$/gm, (match) => {
-        return `${selfBase}/stream?url=${encodeURIComponent(origin + match)}`;
-      }).replace(/^(\/[^\s]+\.m3u8[^\s]*)$/gm, (match) => {
-        return `${selfBase}/stream?url=${encodeURIComponent(origin + match)}`;
-      });
       res.set("Content-Type", ct);
-      res.send(rewritten);
+      const rewriter = new Transform({
+        transform(chunk, enc, cb) {
+          const rewritten = chunk.toString().split("\n").map(line => {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("/") && (trimmed.includes(".ts") || trimmed.includes(".m3u8")))
+              return `${selfBase}/stream?url=${encodeURIComponent(origin + trimmed)}`;
+            return line;
+          }).join("\n");
+          cb(null, rewritten);
+        }
+      });
+      upstream.body.pipe(rewriter).pipe(res);
     } else {
       if (ct) res.set("Content-Type", ct);
       upstream.body.pipe(res);
@@ -1015,9 +1035,8 @@ app.get("/proxy", async (req, res) => {
       const data = await upstream.json();
       res.json(data);
     } else {
-      const text = await upstream.text();
       res.set("Content-Type", contentType || "text/plain");
-      res.send(text);
+      upstream.body.pipe(res);
     }
   } catch (e) {
     console.error("Proxy error:", e.message);
@@ -1060,6 +1079,7 @@ setInterval(trackDailyBandwidth, 60000); // every minute
 
 // ── GET /api/analytics — JSON stats (requires auth token)
 app.get("/api/analytics", (req, res) => {
+  if (!ADMIN_PASS) return res.status(503).json({ error: "ADMIN_PASS not configured" });
   const token = req.headers["x-admin-token"];
   if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
 
@@ -1119,200 +1139,7 @@ app.get("/api/analytics", (req, res) => {
 
 // ── GET /analytics — HTML dashboard (with login)
 app.get("/analytics", (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>StreamVault Analytics</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#07070f;color:#dde0f5;font-family:'Segoe UI',system-ui,sans-serif;padding:2rem}
-h1{font-size:1.6rem;margin-bottom:.3rem;background:linear-gradient(135deg,#00d4ff,#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.sub{color:#8080aa;font-size:.82rem;margin-bottom:2rem}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem;margin-bottom:2rem}
-.card{background:#0f0f1c;border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:1.2rem}
-.card-label{font-size:.7rem;color:#8080aa;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.4rem}
-.card-value{font-size:1.8rem;font-weight:700;color:#00d4ff}
-.card-value.green{color:#00e896}.card-value.orange{color:#ff6b35}.card-value.purple{color:#a78bfa}.card-value.yellow{color:#fbbf24}.card-value.red{color:#ff4466}
-.section{margin-bottom:2rem}
-.section-title{font-size:1rem;font-weight:600;margin-bottom:.8rem;color:#dde0f5;border-bottom:1px solid rgba(255,255,255,0.06);padding-bottom:.4rem}
-table{width:100%;border-collapse:collapse;font-size:.82rem}
-th{text-align:left;color:#8080aa;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;padding:.5rem .6rem;border-bottom:1px solid rgba(255,255,255,0.1)}
-td{padding:.5rem .6rem;border-bottom:1px solid rgba(255,255,255,0.04);color:#dde0f5}
-tr:hover td{background:rgba(255,255,255,0.02)}
-.tag{display:inline-block;padding:.15rem .4rem;border-radius:4px;font-size:.65rem;font-weight:600;text-transform:uppercase}
-.tag-stalker{background:#ff6b3522;color:#ff6b35}.tag-stream{background:#00d4ff22;color:#00d4ff}.tag-proxy{background:#00e89622;color:#00e896}
-.tag-live{background:#ff2d5522;color:#ff2d55}.tag-vod{background:#a78bfa22;color:#a78bfa}.tag-series{background:#fbbf2422;color:#fbbf24}.tag-epg{background:#00d4ff22;color:#00d4ff}
-.loading{text-align:center;padding:3rem;color:#8080aa}
-.err{color:#ff4466;padding:1rem;background:#ff446612;border-radius:8px}
-.refresh{background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);color:#00d4ff;padding:.4rem .8rem;border-radius:6px;cursor:pointer;font-size:.75rem;float:right}
-.refresh:hover{background:#16162a}
-.bar{height:8px;background:#16162a;border-radius:4px;overflow:hidden;margin-top:.4rem}
-.bar-fill{height:100%;border-radius:4px;transition:width .3s}
-.chart{display:flex;align-items:flex-end;gap:3px;height:80px;margin-top:.5rem}
-.chart-bar{flex:1;border-radius:2px 2px 0 0;min-width:12px;position:relative;cursor:pointer}
-.chart-bar:hover::after{content:attr(data-tip);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);padding:.2rem .4rem;border-radius:4px;font-size:.6rem;white-space:nowrap;color:#dde0f5;z-index:1}
-.chart-labels{display:flex;gap:3px;margin-top:.3rem}
-.chart-labels span{flex:1;text-align:center;font-size:.55rem;color:#44445a;min-width:12px}
-</style>
-</head><body>
-<button class="refresh" onclick="load()">Refresh</button>
-<h1>STREAMVAULT</h1>
-<div class="sub">VPS Analytics Dashboard</div>
-<div id="login" style="display:flex;justify-content:center;padding:4rem 0">
-  <div style="background:#0f0f1c;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:2rem;width:320px">
-    <div style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;color:#dde0f5">Admin Login</div>
-    <input id="pass" type="password" placeholder="Password" style="width:100%;padding:.6rem;background:#16162a;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#dde0f5;font-size:.9rem;margin-bottom:.8rem" onkeydown="if(event.key==='Enter')doLogin()">
-    <button onclick="doLogin()" style="width:100%;padding:.6rem;background:linear-gradient(135deg,#00d4ff,#7c3aed);border:none;border-radius:6px;color:white;font-weight:600;cursor:pointer;font-size:.9rem">Login</button>
-    <div id="login-err" style="color:#ff4466;font-size:.8rem;margin-top:.5rem;display:none"></div>
-  </div>
-</div>
-<div id="app" style="display:none"></div>
-<script>
-let TOKEN=sessionStorage.getItem('sv-admin')||'';
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
-function fmt(n){return n>=1000000?(n/1000000).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'K':String(n)}
-function tag(t){return'<span class="tag tag-'+esc(t)+'">'+esc(t)+'</span>'}
-function ago(ts){if(!ts)return'\\u2014';const d=Date.now()-ts*1000;const m=Math.floor(d/60000);if(m<1)return'just now';if(m<60)return m+'m ago';const h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago'}
-function barColor(p){return p>=90?'#ff4466':p>=70?'#ff6b35':p>=50?'#fbbf24':'#00e896'}
-
-async function doLogin(){
-  TOKEN=document.getElementById('pass').value;
-  const r=await fetch('/api/analytics',{headers:{'X-Admin-Token':TOKEN}});
-  if(r.status===401){document.getElementById('login-err').style.display='block';document.getElementById('login-err').textContent='Invalid password';return}
-  sessionStorage.setItem('sv-admin',TOKEN);
-  document.getElementById('login').style.display='none';
-  document.getElementById('app').style.display='block';
-  load();
-}
-
-if(TOKEN){fetch('/api/analytics',{headers:{'X-Admin-Token':TOKEN}}).then(r=>{if(r.ok){document.getElementById('login').style.display='none';document.getElementById('app').style.display='block';load()}else{TOKEN='';sessionStorage.removeItem('sv-admin')}})}
-
-async function load(){
-  const app=document.getElementById('app');
-  try{
-    const r=await fetch('/api/analytics',{headers:{'X-Admin-Token':TOKEN}});
-    if(r.status===401){sessionStorage.removeItem('sv-admin');location.reload();return}
-    const d=await r.json();
-    let h='<button class="refresh" onclick="load()">Refresh</button>';
-    h+='<button class="refresh" style="margin-right:.5rem" onclick="sessionStorage.removeItem(\\'sv-admin\\');location.reload()">Logout</button>';
-
-    // Visitors + Guests
-    h+='<div class="section"><div class="section-title">Users &amp; Visitors</div><div class="grid">';
-    h+='<div class="card"><div class="card-label">Total Visitors</div><div class="card-value">'+d.visitors.total+'</div></div>';
-    h+='<div class="card"><div class="card-label">Active (1h)</div><div class="card-value green">'+d.visitors.active_1h+'</div></div>';
-    h+='<div class="card"><div class="card-label">Active (24h)</div><div class="card-value green">'+d.visitors.active_24h+'</div></div>';
-    h+='<div class="card"><div class="card-label">Active (7d)</div><div class="card-value">'+d.visitors.active_7d+'</div></div>';
-    h+='<div class="card"><div class="card-label">Total Guests</div><div class="card-value purple">'+d.guests.total+'</div></div>';
-    h+='</div></div>';
-
-    // Server + Cache
-    h+='<div class="section"><div class="section-title">Server</div><div class="grid">';
-    h+='<div class="card"><div class="card-label">Uptime</div><div class="card-value green">'+d.server.uptime_hours+'h</div></div>';
-    h+='<div class="card"><div class="card-label">Memory</div><div class="card-value">'+d.server.memory_mb+' MB</div></div>';
-    h+='<div class="card"><div class="card-label">Cache Entries</div><div class="card-value orange">'+d.cache.valid_entries+'</div></div>';
-    h+='<div class="card"><div class="card-label">Cache Hit Rate</div><div class="card-value '+(d.cache.hit_rate>=80?'green':d.cache.hit_rate>=50?'yellow':'red')+'">'+d.cache.hit_rate+'%</div></div>';
-    if(d.bandwidth?.total){
-      h+='<div class="card"><div class="card-label">Total Download</div><div class="card-value">'+d.bandwidth.total.rx_gb+' GB</div></div>';
-      h+='<div class="card"><div class="card-label">Total Upload</div><div class="card-value">'+d.bandwidth.total.tx_gb+' GB</div></div>';
-    }
-    if(d.bandwidth?.today){
-      h+='<div class="card"><div class="card-label">Today Download</div><div class="card-value green">'+d.bandwidth.today.rx_gb+' GB</div></div>';
-      h+='<div class="card"><div class="card-label">Today Upload</div><div class="card-value green">'+d.bandwidth.today.tx_gb+' GB</div></div>';
-      h+='<div class="card"><div class="card-label">Today Total</div><div class="card-value yellow">'+d.bandwidth.today.total_gb+' GB</div></div>';
-    }
-    h+='<div class="card"><div class="card-label">Node.js</div><div class="card-value purple" style="font-size:1rem">'+esc(d.server.node)+'</div></div>';
-    h+='</div></div>';
-
-    // Cache breakdown
-    const bk=d.cache.breakdown||{};
-    if(Object.keys(bk).length){
-      h+='<div class="section"><div class="section-title">Cache Breakdown</div><div class="grid">';
-      Object.entries(bk).forEach(([k,v])=>{h+='<div class="card"><div class="card-label">'+tag(k)+'</div><div class="card-value" style="font-size:1.3rem">'+v+'</div></div>'});
-      h+='</div></div>';
-    }
-
-    // Requests today
-    const t=d.requests.today||{};
-    const total=Object.values(t).reduce((a,b)=>a+b,0);
-    h+='<div class="section"><div class="section-title">Requests Today</div><div class="grid">';
-    h+='<div class="card"><div class="card-label">Total</div><div class="card-value">'+fmt(total)+'</div></div>';
-    Object.entries(t).forEach(([k,v])=>{h+='<div class="card"><div class="card-label">'+tag(k)+'</div><div class="card-value" style="font-size:1.3rem">'+fmt(v)+'</div></div>'});
-    h+='</div></div>';
-
-    // 7-day chart
-    const days=Object.keys(d.requests.daily||{}).sort();
-    if(days.length>0){
-      const types=[...new Set(days.flatMap(d2=>Object.keys(d.requests.daily[d2])))];
-      const maxDay=Math.max(...days.map(d2=>Object.values(d.requests.daily[d2]).reduce((a,b)=>a+b,0)),1);
-      h+='<div class="section"><div class="section-title">Last 7 Days</div><div class="chart">';
-      days.forEach(day=>{
-        const vals=d.requests.daily[day];const total2=Object.values(vals).reduce((a,b)=>a+b,0);
-        const hp=Math.max(3,Math.round(total2/maxDay*100));
-        h+='<div class="chart-bar" style="height:'+hp+'%;background:linear-gradient(to top,#00d4ff,#7c3aed)" data-tip="'+esc(day)+': '+fmt(total2)+'"></div>';
-      });
-      h+='</div><div class="chart-labels">';days.forEach(day=>{h+='<span>'+day.slice(5)+'</span>'});h+='</div></div>';
-    }
-
-    // Recent Guests
-    const guests=d.recent_guests||[];
-    if(guests.length){
-      h+='<div class="section"><div class="section-title">Recent Users</div>';
-      h+='<table><tr><th>Guest ID</th><th>IP</th><th>Created</th><th>Last Active</th><th>Conn</th><th>Favs</th><th>History</th></tr>';
-      guests.forEach(g=>{
-        h+='<tr><td><code>'+esc(g.guest_id)+'</code></td><td><code>'+esc(g.ip)+'</code></td><td>'+ago(g.created_at)+'</td><td>'+ago(g.last_seen)+'</td><td>'+g.connections+'</td><td>'+g.favorites+'</td><td>'+g.history+'</td></tr>';
-      });
-      h+='</table></div>';
-    }
-
-    // Most Watched
-    const watched=d.most_watched||[];
-    if(watched.length){
-      h+='<div class="section"><div class="section-title">Most Watched</div>';
-      h+='<table><tr><th>Title</th><th>Type</th><th>Plays</th></tr>';
-      watched.forEach(w=>{h+='<tr><td>'+esc(w.name)+'</td><td>'+tag(w.type)+'</td><td>'+w.plays+'</td></tr>'});
-      h+='</table></div>';
-    }
-
-    // Active Portals
-    const portals=d.portals?.connections||[];
-    if(portals.length){
-      h+='<div class="section"><div class="section-title">Active Portals</div>';
-      h+='<table><tr><th>Portal</th><th>MAC</th><th>Type</th><th>Hits</th><th>Last Active</th></tr>';
-      portals.forEach(p=>{h+='<tr><td style="font-size:.75rem">'+esc(p.portal)+'</td><td><code>'+esc(p.mac)+'</code></td><td>'+tag(p.type)+'</td><td>'+p.hits+'</td><td>'+ago(p.last_seen)+'</td></tr>'});
-      h+='</table></div>';
-    }
-
-    // Recent Visitors
-    const visitors=d.recent_visitors||[];
-    if(visitors.length){
-      h+='<div class="section"><div class="section-title">Recent Visitors</div>';
-      h+='<table><tr><th>IP</th><th>First Seen</th><th>Last Active</th><th>Requests</th></tr>';
-      visitors.forEach(v=>{h+='<tr><td><code>'+esc(v.ip)+'</code></td><td>'+ago(v.first_seen)+'</td><td>'+ago(v.last_seen)+'</td><td>'+v.hits+'</td></tr>'});
-      h+='</table></div>';
-    }
-
-    // Feedback
-    const feedback=d.feedback||[];
-    if(feedback.length){
-      h+='<div class="section"><div class="section-title">Feedback ('+feedback.length+')</div>';
-      h+='<table><tr><th>Date</th><th>Guest ID</th><th>IP</th><th>Message</th></tr>';
-      feedback.forEach(f=>{
-        const date=f.created_at?new Date(f.created_at*1000).toLocaleString():'\\u2014';
-        const gid=f.guest_id?(f.guest_id.substring(0,8)+'...'):'\\u2014';
-        const ip=f.ip?f.ip.replace(/(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)/,'$1.$2.***.$4'):'\\u2014';
-        const msg=(f.message||'').length>200?f.message.substring(0,200)+'...':f.message||'';
-        h+='<tr><td style="white-space:nowrap">'+esc(date)+'</td><td><code>'+esc(gid)+'</code></td><td><code>'+esc(ip)+'</code></td><td>'+esc(msg)+'</td></tr>';
-      });
-      h+='</table></div>';
-    }
-
-    h+='<div class="sub" style="margin-top:2rem">Generated: '+new Date(d.generated_at).toLocaleString()+'</div>';
-    app.innerHTML=h;
-  }catch(e){app.innerHTML='<div class="err">Failed: '+esc(e.message)+'</div>'}
-}
-setInterval(()=>{if(TOKEN)load()},60000);
-</script>
-</body></html>`);
+  res.sendFile(require("path").join(__dirname, "analytics.html"));
 });
 
 // ─────────────────────────────────────────────────────────────────

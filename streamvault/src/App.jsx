@@ -944,7 +944,10 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
     function loadScript(src, cb) {
       if (document.querySelector(`script[src="${src}"]`)) { cb(); return; }
       const s = document.createElement("script");
-      s.src = src; s.onload = cb; document.head.appendChild(s);
+      s.src = src;
+      s.crossOrigin = "anonymous";
+      s.onload = cb;
+      document.head.appendChild(s);
     }
 
     // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS

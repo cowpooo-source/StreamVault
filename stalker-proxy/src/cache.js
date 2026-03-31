@@ -145,13 +145,20 @@ function getStats() {
     daily[date][type] = count;
   });
 
-  // Cache breakdown
+  // Cache breakdown using SQL instead of JS loop
+  const bkSql = `SELECT
+    CASE
+      WHEN key LIKE '%|channels%' THEN 'channels'
+      WHEN key LIKE '%|vod%' THEN 'vod'
+      WHEN key LIKE '%|series%' THEN 'series'
+      WHEN key LIKE '%|epg%' THEN 'epg'
+      WHEN key LIKE '%|seasons%' THEN 'seasons'
+      ELSE 'other'
+    END as endpoint, COUNT(*) as cnt
+    FROM cache WHERE expires > ${now} GROUP BY endpoint`;
+  const bkRows = db.exec(bkSql);
   const cacheBreakdown = {};
-  const bkRows = db.exec("SELECT key FROM cache WHERE expires > " + now);
-  if (bkRows[0]) bkRows[0].values.forEach(([key]) => {
-    const endpoint = key.split("|")[2] || "other";
-    cacheBreakdown[endpoint] = (cacheBreakdown[endpoint] || 0) + 1;
-  });
+  if (bkRows[0]) bkRows[0].values.forEach(([ep, cnt]) => { cacheBreakdown[ep] = cnt; });
 
   // Visitor stats
   const totalVisitors = db.exec("SELECT COUNT(*) FROM visitors")[0]?.values[0][0] || 0;
