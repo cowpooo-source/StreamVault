@@ -412,6 +412,21 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .detail-play:hover{filter:brightness(1.15)}
 .detail-fav{background:var(--s2);color:var(--t2);border:1px solid var(--b2)!important}
 .detail-fav:hover{color:var(--accent)}
+.detail-tagline{font-size:.75rem;color:var(--accent);font-style:italic;margin-bottom:.4rem}
+.detail-genres{display:flex;gap:.3rem;flex-wrap:wrap;margin-bottom:.5rem}
+.detail-genres span{background:${t.accent}15;color:var(--accent);padding:.15rem .4rem;border-radius:10px;font-size:.62rem;font-weight:500}
+.detail-cast{display:flex;gap:.6rem;overflow-x:auto;padding:.3rem 0;scrollbar-width:none;margin-bottom:.5rem}
+.detail-cast::-webkit-scrollbar{display:none}
+.detail-cast-item{flex:0 0 auto;text-align:center;width:52px}
+.detail-cast-photo{width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--s2)}
+.detail-cast-photo-ph{width:44px;height:44px;border-radius:50%;background:var(--s2);display:flex;align-items:center;justify-content:center;font-size:.8rem}
+.detail-cast-name{font-size:.55rem;color:var(--t2);margin-top:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.detail-cast-char{font-size:.5rem;color:var(--t3)}
+.detail-trailer{width:100%;aspect-ratio:16/9;border:none;border-radius:8px;margin-top:.6rem}
+.detail-trailer-btn{background:transparent;color:#ff0000;border:1px solid #ff000040;font-weight:600}
+.detail-trailer-btn:hover{background:#ff000015}
+.detail-loading{font-size:.7rem;color:var(--t3);padding:.3rem 0}
+.detail-tmdb-rating{display:inline-flex;align-items:center;gap:.2rem;background:${t.accent}18;padding:.15rem .45rem;border-radius:12px;font-size:.68rem;color:var(--accent)}
 .resume-bar{position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--s3)}
 .resume-fill{height:100%;background:var(--accent);transition:width .3s}
 .badge{display:inline-block;padding:.1rem .32rem;background:${t.accent}18;border:1px solid ${t.accent}30;
@@ -1670,6 +1685,8 @@ export default function App() {
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [episodeLoading, setEpisodeLoading] = useState(null); // episode number being loaded
   const [expandedItem, setExpandedItem] = useState(null); // inline detail expansion for vod/series card
+  const [tmdbData, setTmdbData] = useState(null);
+  const [showTrailer, setShowTrailer] = useState(false);
 
   // ── ui state
   const [section, setSection] = useState(() => {
@@ -1753,6 +1770,59 @@ export default function App() {
     const el = document.getElementById("sv-css") || (() => { const s = document.createElement("style"); s.id="sv-css"; document.head.appendChild(s); return s; })();
     el.textContent = genCSS(THEMES[themeName]);
   }, [themeName]);
+
+  // ── TMDB enrichment for detail modal
+  useEffect(() => {
+    if (!expandedItem || !tmdbKey) { setTmdbData(null); setShowTrailer(false); return; }
+    setTmdbData(null);
+    setShowTrailer(false);
+    const isMovie = expandedItem.type === "vod";
+    const type = isMovie ? "movie" : "tv";
+    const query = encodeURIComponent(expandedItem.name?.replace(/\s*\(\d{4}\)\s*$/, "").trim());
+    const year = expandedItem.year ? `&year=${expandedItem.year}` : "";
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const searchUrl = `https://api.themoviedb.org/3/search/${type}?api_key=${tmdbKey}&query=${query}${year}&language=en-US`;
+        const sr = await fetch(searchUrl).then(r => r.json());
+        const match = sr.results?.[0];
+        if (!match || cancelled) return;
+
+        const base = `https://api.themoviedb.org/3/${type}/${match.id}`;
+        const [details, credits, videos] = await Promise.all([
+          fetch(`${base}?api_key=${tmdbKey}&language=en-US`).then(r => r.json()),
+          fetch(`${base}/credits?api_key=${tmdbKey}`).then(r => r.json()).catch(() => null),
+          fetch(`${base}/videos?api_key=${tmdbKey}&language=en-US`).then(r => r.json()).catch(() => null),
+        ]);
+        if (cancelled) return;
+
+        const trailer = videos?.results?.find(v => v.type === "Trailer" && v.site === "YouTube")
+          || videos?.results?.find(v => v.site === "YouTube");
+
+        setTmdbData({
+          id: match.id,
+          overview: details.overview || match.overview,
+          poster: match.poster_path ? `https://image.tmdb.org/t/p/w342${match.poster_path}` : null,
+          backdrop: match.backdrop_path ? `https://image.tmdb.org/t/p/w780${match.backdrop_path}` : null,
+          genres: details.genres?.map(g => g.name) || [],
+          runtime: details.runtime || (details.episode_run_time?.[0]) || null,
+          tagline: details.tagline || null,
+          voteAverage: details.vote_average || null,
+          releaseDate: details.release_date || details.first_air_date || null,
+          cast: credits?.cast?.slice(0, 6).map(c => ({
+            name: c.name,
+            character: c.character,
+            photo: c.profile_path ? `https://image.tmdb.org/t/p/w185${c.profile_path}` : null,
+          })) || [],
+          director: credits?.crew?.find(c => c.job === "Director")?.name || null,
+          trailer: trailer ? `https://www.youtube.com/embed/${trailer.key}` : null,
+          trailerKey: trailer?.key || null,
+        });
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [expandedItem, tmdbKey]);
 
   // ── load persisted data + auto-connect from IDB
   useEffect(() => {
@@ -2907,33 +2977,65 @@ export default function App() {
       {expandedItem && createPortal(
         <div style={{position:"fixed",inset:0,zIndex:99998,background:"rgba(0,0,0,0.65)",
           display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
-          onClick={e => { if (e.target === e.currentTarget) setExpandedItem(null); }}>
+          onClick={e => { if (e.target === e.currentTarget) { setExpandedItem(null); setShowTrailer(false); } }}>
           <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
-            borderRadius:16,padding:"1.5rem",boxShadow:"0 12px 48px rgba(0,0,0,0.6)",maxWidth:560,width:"100%"}}>
+            borderRadius:16,padding:"1.5rem",boxShadow:"0 12px 48px rgba(0,0,0,0.6)",maxWidth:560,width:"100%",
+            maxHeight:"90vh",overflowY:"auto"}}>
             <div className="detail-modal">
-              {expandedItem.logo
-                ? <img className="detail-poster" src={expandedItem.logo} alt="" onError={e=>e.target.style.display="none"} />
+              {(tmdbData?.poster || expandedItem.logo)
+                ? <img className="detail-poster" src={tmdbData?.poster || expandedItem.logo} alt="" onError={e=>e.target.style.display="none"} />
                 : <div className="detail-poster-ph">{expandedItem.type==="series"?"📽":"🎬"}</div>}
               <div className="detail-body">
                 <div className="detail-title">{expandedItem.name}</div>
                 <div className="detail-meta">
                   {expandedItem.year && <span>{expandedItem.year}</span>}
                   {expandedItem.rating && <span>★ {parseFloat(expandedItem.rating||0).toFixed(1)}</span>}
+                  {tmdbData?.voteAverage && !expandedItem.rating && <span className="detail-tmdb-rating">★ {tmdbData.voteAverage.toFixed(1)}</span>}
+                  {tmdbData?.voteAverage && expandedItem.rating && <span className="detail-tmdb-rating">TMDB ★ {tmdbData.voteAverage.toFixed(1)}</span>}
                   {expandedItem.duration && <span>{expandedItem.duration}</span>}
+                  {!expandedItem.duration && tmdbData?.runtime && <span>{tmdbData.runtime} min</span>}
                   {expandedItem.age && <span>{expandedItem.age}</span>}
                   {expandedItem.type && <span style={{textTransform:"uppercase"}}>{expandedItem.type}</span>}
                 </div>
-                {expandedItem.plot && <div className="detail-plot">{expandedItem.plot}</div>}
-                {expandedItem.genre && <div className="detail-row"><span className="detail-label">Genre</span><span className="detail-val">{expandedItem.genre}</span></div>}
-                {expandedItem.director && <div className="detail-row"><span className="detail-label">Director</span><span className="detail-val">{expandedItem.director}</span></div>}
-                {expandedItem.actors && <div className="detail-row"><span className="detail-label">Cast</span><span className="detail-val">{expandedItem.actors}</span></div>}
+                {tmdbData?.tagline && <div className="detail-tagline">{tmdbData.tagline}</div>}
+                {(expandedItem.plot || tmdbData?.overview) && <div className="detail-plot">{expandedItem.plot || tmdbData.overview}</div>}
+                {tmdbData?.genres?.length > 0 && (
+                  <div className="detail-genres">{tmdbData.genres.map(g => <span key={g}>{g}</span>)}</div>
+                )}
+                {!tmdbData?.genres?.length && expandedItem.genre && <div className="detail-row"><span className="detail-label">Genre</span><span className="detail-val">{expandedItem.genre}</span></div>}
+                {(expandedItem.director || tmdbData?.director) && <div className="detail-row"><span className="detail-label">Director</span><span className="detail-val">{expandedItem.director || tmdbData.director}</span></div>}
+                {!tmdbData?.cast?.length && expandedItem.actors && <div className="detail-row"><span className="detail-label">Cast</span><span className="detail-val">{expandedItem.actors}</span></div>}
                 {expandedItem.country && <div className="detail-row"><span className="detail-label">Country</span><span className="detail-val">{expandedItem.country}</span></div>}
+                {tmdbData?.cast?.length > 0 && (
+                  <div className="detail-cast">
+                    {tmdbData.cast.map((c, i) => (
+                      <div className="detail-cast-item" key={i}>
+                        {c.photo
+                          ? <img className="detail-cast-photo" src={c.photo} alt={c.name} />
+                          : <div className="detail-cast-photo-ph">👤</div>}
+                        <div className="detail-cast-name">{c.name}</div>
+                        {c.character && <div className="detail-cast-char">{c.character}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!tmdbData && tmdbKey && <div className="detail-loading">Loading TMDB...</div>}
                 <div className="detail-actions">
-                  <button className="detail-play" onClick={()=>{setExpandedItem(null);playItem(expandedItem);}}>▶ Play</button>
+                  <button className="detail-play" onClick={()=>{setExpandedItem(null);setShowTrailer(false);playItem(expandedItem);}}>▶ Play</button>
                   <button className="detail-fav" onClick={()=>toggleFav(expandedItem)}>
                     {isFav(expandedItem) ? "♥ Favorited" : "♡ Favorite"}
                   </button>
+                  {tmdbData?.trailer && (
+                    <button className="detail-trailer-btn" style={{padding:".5rem 1rem",borderRadius:8,fontSize:".82rem",cursor:"pointer",transition:"all .15s"}}
+                      onClick={() => setShowTrailer(v => !v)}>
+                      {showTrailer ? "✕ Close Trailer" : "▶ Trailer"}
+                    </button>
+                  )}
                 </div>
+                {showTrailer && tmdbData?.trailer && (
+                  <iframe className="detail-trailer" src={`${tmdbData.trailer}?autoplay=1`}
+                    allow="autoplay; encrypted-media" allowFullScreen title="Trailer" />
+                )}
               </div>
             </div>
           </div>
