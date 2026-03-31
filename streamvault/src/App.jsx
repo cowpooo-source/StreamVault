@@ -390,6 +390,22 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   cursor:pointer;font-size:.72rem;opacity:.7;transition:all .2s;color:#8890b0}
 .vod-fav:hover{opacity:1;transform:scale(1.15);color:#ff4466}
 .vod-fav.on{opacity:1;color:#ff4466}
+.vod-info-btn{position:absolute;bottom:.3rem;right:.3rem;width:22px;height:22px;border-radius:50%;
+  background:rgba(0,0,0,.5);border:none;color:var(--t2);font-size:.7rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;z-index:2}
+.vod-info-btn:hover{background:var(--accent);color:#fff}
+.vod-detail{padding:.6rem .7rem;font-size:.72rem;color:var(--t2);line-height:1.5;
+  border-top:1px solid var(--b1);animation:slideDown .2s ease}
+.vod-detail-row{display:flex;gap:.4rem;margin-bottom:.25rem}
+.vod-detail-label{color:var(--t3);min-width:55px;font-size:.65rem;text-transform:uppercase}
+.vod-detail-val{flex:1;color:var(--t1)}
+.vod-detail-plot{font-size:.68rem;color:var(--t2);margin-bottom:.4rem;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.vod-detail-actions{display:flex;gap:.4rem;margin-top:.4rem}
+.vod-detail-actions button{flex:1;padding:.3rem .5rem;border-radius:6px;border:1px solid var(--b2);
+  background:var(--s2);color:var(--t1);font-size:.65rem;cursor:pointer;transition:all .15s}
+.vod-detail-actions button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.vod-card.expanded{grid-column:span 2;z-index:5}
+@keyframes slideDown{from{max-height:0;opacity:0}to{max-height:300px;opacity:1}}
 .resume-bar{position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--s3)}
 .resume-fill{height:100%;background:var(--accent);transition:width .3s}
 .badge{display:inline-block;padding:.1rem .32rem;background:${t.accent}18;border:1px solid ${t.accent}30;
@@ -1647,6 +1663,7 @@ export default function App() {
   const [seriesDetail, setSeriesDetail] = useState(null); // {item, seasons, activeSeason}
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [episodeLoading, setEpisodeLoading] = useState(null); // episode number being loaded
+  const [expandedItem, setExpandedItem] = useState(null); // inline detail expansion for vod/series card
 
   // ── ui state
   const [section, setSection] = useState(() => {
@@ -1952,7 +1969,9 @@ export default function App() {
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
       const items = sd.map(s => ({ id:String(s.stream_id), name:s.name, logo:s.stream_icon,
         group:cm[s.category_id]||"Other", url:api.vodURL(s.stream_id, s.container_extension||"mp4"),
-        year:s.year, rating:s.rating, type:"vod" }));
+        year:s.year, rating:s.rating, type:"vod",
+        plot:s.plot||s.description||null, genre:s.genre||null, director:s.director||null,
+        actors:s.actors||s.cast||null, duration:s.duration||null, country:s.country||null }));
       setVod(items);
       if (cId) {
         idbCache.set(`content:${cId}:vod`, items);
@@ -1977,7 +1996,9 @@ export default function App() {
       const [catData, sd] = await Promise.all([api.getSeriesCategories(), api.getSeries()]);
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
       const items = sd.map(s => ({ id:String(s.series_id), name:s.name, logo:s.cover,
-        group:cm[s.category_id]||"Other", year:s.releaseDate?.slice(0,4), rating:s.rating, type:"series" }));
+        group:cm[s.category_id]||"Other", year:s.releaseDate?.slice(0,4), rating:s.rating, type:"series",
+        plot:s.plot||s.description||null, genre:s.genre||null, director:s.director||null,
+        actors:s.actors||s.cast||null, country:s.country||null }));
       setSeries(items);
       if (cId) {
         idbCache.set(`content:${cId}:series`, items);
@@ -2167,7 +2188,7 @@ export default function App() {
   }
 
   function switchSection(s) {
-    setSection(s); setSearch(""); setPage(1);
+    setSection(s); setSearch(""); setPage(1); setExpandedItem(null);
     if (s === "vod") {
       if (conn?.type === "stalker") { setCat(null); loadStalkerCats("vod"); }
       else { setCat("All"); fetchVOD(); }
@@ -2836,8 +2857,9 @@ export default function App() {
                       const faved = isFav(item);
                       const hist = historyMap.get(item.id || item.url);
                       const pct = hist?.position && hist?.duration ? Math.min(100, (hist.position/hist.duration)*100) : 0;
+                      const isExpanded = expandedItem?.id === item.id && expandedItem?.type === item.type;
                       return (
-                        <div key={item.id||i} className="vod-card" onClick={() => playItem(item)} title={item.name}>
+                        <div key={item.id||i} className={`vod-card${isExpanded?" expanded":""}`} onClick={() => !isExpanded && playItem(item)} title={item.name}>
                           {item.logo
                             ? <img className="vod-poster" src={item.logo} alt="" onError={e=>e.target.style.display="none"} />
                             : <div className="vod-ph">{section==="series"?"📽":"🎬"}</div>}
@@ -2854,6 +2876,27 @@ export default function App() {
                             onClick={e=>{e.stopPropagation();toggleFav(item);}}>
                             {faved?"♥":"♡"}
                           </button>
+                          {(item.type==="vod"||item.type==="series") && (
+                            <button className="vod-info-btn" onClick={e=>{e.stopPropagation();setExpandedItem(isExpanded?null:item);}} title="Details">
+                              {isExpanded?"✕":"ⓘ"}
+                            </button>
+                          )}
+                          {isExpanded && (
+                            <div className="vod-detail" onClick={e=>e.stopPropagation()}>
+                              {item.plot && <div className="vod-detail-plot">{item.plot}</div>}
+                              {item.genre && <div className="vod-detail-row"><span className="vod-detail-label">Genre</span><span className="vod-detail-val">{item.genre}</span></div>}
+                              {item.director && <div className="vod-detail-row"><span className="vod-detail-label">Director</span><span className="vod-detail-val">{item.director}</span></div>}
+                              {item.actors && <div className="vod-detail-row"><span className="vod-detail-label">Cast</span><span className="vod-detail-val">{item.actors}</span></div>}
+                              {item.duration && <div className="vod-detail-row"><span className="vod-detail-label">Duration</span><span className="vod-detail-val">{item.duration}</span></div>}
+                              {item.country && <div className="vod-detail-row"><span className="vod-detail-label">Country</span><span className="vod-detail-val">{item.country}</span></div>}
+                              {item.year && <div className="vod-detail-row"><span className="vod-detail-label">Year</span><span className="vod-detail-val">{item.year}</span></div>}
+                              {item.rating && <div className="vod-detail-row"><span className="vod-detail-label">Rating</span><span className="vod-detail-val">★ {parseFloat(item.rating||0).toFixed(1)}</span></div>}
+                              <div className="vod-detail-actions">
+                                <button onClick={()=>playItem(item)}>▶ Play</button>
+                                <button onClick={()=>setExpandedItem(null)}>✕ Close</button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}

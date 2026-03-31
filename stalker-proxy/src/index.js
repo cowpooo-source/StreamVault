@@ -573,6 +573,13 @@ app.get("/stalker/vod", async (req, res) => {
       rating: v.rating_imdb || v.rating || null,
       url:    v.cmd || null,
       type:   "vod",
+      plot:   v.description || v.plot || null,
+      genre:  v.genre_str || v.genres_str || null,
+      director: v.director || null,
+      actors: v.actors || v.cast || null,
+      duration: v.duration || v.time || null,
+      age:    v.age || v.age_group || null,
+      country: v.country || null,
     }));
 
     const data = { items, total: items.length };
@@ -746,6 +753,13 @@ app.get("/stalker/series", async (req, res) => {
       year:   s.year,
       rating: s.rating_imdb || s.rating || null,
       type:   "series",
+      plot:   s.description || s.plot || null,
+      genre:  s.genre_str || s.genres_str || null,
+      director: s.director || null,
+      actors: s.actors || s.cast || null,
+      duration: s.duration || s.time || null,
+      age:    s.age || s.age_group || null,
+      country: s.country || null,
     }));
 
     const data = { items, total: items.length };
