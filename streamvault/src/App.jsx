@@ -879,6 +879,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
           } else if (code === 403) {
             title = "Access Denied (403)";
             body = "The stream server rejected the request. Your credentials may not have access to this channel.";
+          } else if (code === 459 || code === 462) {
+            title = `Token Expired (${code})`;
+            body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
           } else if (code >= 500) {
             title = `Server Error (${code})`;
             body = "The stream server returned an error. It may be overloaded or temporarily down.";
@@ -915,6 +918,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         } else if (code === 403) {
           title = "Access Denied (403)";
           body = "The stream server rejected the request. Your credentials may not have access.";
+        } else if (code === 459 || code === 462) {
+          title = `Token Expired (${code})`;
+          body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
         } else if (code >= 400 && code < 500) {
           title = `Client Error (${code})`;
           body = `The stream request was rejected with HTTP ${code}.`;
