@@ -3065,6 +3065,37 @@ export default function App() {
         </div>
       , document.body)}
 
+      {/* Feedback modal (connected view) */}
+      {fbOpen && createPortal(
+        <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
+          display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+          onClick={e => { if (e.target === e.currentTarget && !fbSending) { setFbOpen(false); setFbMsg(""); setFbDone(false); }}}>
+          <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
+            borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:420,boxShadow:"0 8px 32px rgba(0,0,0,0.5)"}}>
+            {fbDone ? (
+              <div style={{textAlign:"center",padding:"2rem 0"}}>
+                <div style={{fontSize:"1.5rem",marginBottom:".5rem"}}>{t("thankYou")}</div>
+                <div style={{color:"var(--t2,#8080aa)",fontSize:".85rem"}}>{t("feedbackReceived")}</div>
+              </div>
+            ) : (<>
+              <div style={{fontSize:"1.05rem",fontWeight:600,marginBottom:".2rem"}}>{t("sendFeedback")}</div>
+              <div style={{fontSize:".75rem",color:"var(--t2,#8080aa)",marginBottom:"1rem"}}>{t("feedbackHint")}</div>
+              <textarea value={fbMsg} onChange={e => setFbMsg(e.target.value)} placeholder={t("feedbackPlaceholder")} maxLength={2000}
+                style={{width:"100%",minHeight:120,background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,padding:".75rem",
+                  color:"var(--t1,#dde0f5)",fontSize:".85rem",resize:"vertical",fontFamily:"inherit",outline:"none"}} autoFocus />
+              <div style={{display:"flex",justifyContent:"flex-end",gap:".5rem",marginTop:".8rem"}}>
+                <button onClick={() => { setFbOpen(false); setFbMsg(""); }}
+                  style={{padding:".45rem 1rem",background:"transparent",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"var(--t2,#8080aa)",fontSize:".8rem",cursor:"pointer"}}>{t("cancel")}</button>
+                <button onClick={sendFeedback} disabled={!fbMsg.trim() || fbSending}
+                  style={{padding:".45rem 1rem",background:!fbMsg.trim()||fbSending?"rgba(255,255,255,0.05)":"var(--accent,#00d4ff)",border:"none",borderRadius:7,
+                    color:!fbMsg.trim()||fbSending?"var(--t3,#44445a)":"#fff",fontSize:".8rem",fontWeight:600,cursor:!fbMsg.trim()||fbSending?"default":"pointer"}}>
+                  {fbSending ? t("sending") : t("send")}</button>
+              </div>
+            </>)}
+          </div>
+        </div>
+      , document.body)}
+
       {playing && (
         <Player item={playing}
           channelList={playing.type==="live" ? channels : null}
