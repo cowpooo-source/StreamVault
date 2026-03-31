@@ -272,7 +272,7 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
 .app{display:flex;height:100vh;overflow:hidden;background:var(--bg)}
 
 /* SETUP */
-.setup{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;
+.setup{min-height:100vh;min-height:100dvh;display:flex;align-items:safe center;justify-content:center;
   background:radial-gradient(ellipse at 20% 70%,${t.accent2}22 0%,transparent 55%),
              radial-gradient(ellipse at 80% 20%,${t.accent}18 0%,transparent 50%),var(--bg);padding:2rem;overflow-y:auto}
 .card{background:var(--s1);border:1px solid var(--b2);border-radius:18px;padding:2.5rem;
@@ -689,7 +689,7 @@ body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overf
   .osd{top:.5rem;left:.5rem;max-width:calc(100vw - 1rem);padding:.5rem .7rem}
 
   /* 5. Setup screen — mobile friendly, scrollable */
-  .setup{padding:1rem;min-height:auto;height:auto;overflow-y:visible;align-items:flex-start;padding-top:1.5rem;padding-bottom:3rem}
+  .setup{display:block!important;min-height:auto!important;padding:1.5rem 1rem 4rem;overflow:visible!important}
   .card{padding:1.5rem 1.2rem;border-radius:14px;max-width:100%;margin:0 auto}
   .fi{padding:.7rem .8rem;font-size:1rem;min-height:44px}
   .btn-primary{padding:.85rem;font-size:1.05rem;min-height:48px}
