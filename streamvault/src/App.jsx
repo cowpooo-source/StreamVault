@@ -2239,7 +2239,16 @@ export default function App() {
   }, [vod, series, conn]);
 
   function stalkerPlayUrl(cmd, contentType = "live", episode = null) {
-    let url = `${API}/stalker/play?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(cmd)}&content_type=${encodeURIComponent(contentType)}`;
+    const params = new URLSearchParams({
+      portal: conn.server,
+      mac: conn.mac,
+      cmd,
+      content_type: contentType,
+    });
+    if (conn.serial) params.set("serial", conn.serial);
+    if (conn.deviceId) params.set("deviceId", conn.deviceId);
+    if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
+    let url = `${API}/stalker/play?${params.toString()}`;
     if (episode) url += `&episode=${episode}`;
     return url;
   }
@@ -2357,7 +2366,7 @@ export default function App() {
     try {
       if (conn?.type === "stalker" && channel._stalkerCmd) {
         // Stalker: use /stalker/play with start/end params
-        const playUrl = `${API}/stalker/play?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cmd=${encodeURIComponent(channel._stalkerCmd)}&content_type=live&start=${startUTC}&end=${endUTC}`;
+        const playUrl = `${stalkerPlayUrl(channel._stalkerCmd, "live")}&start=${startUTC}&end=${endUTC}`;
         const res = await fetch(playUrl);
         if (res.ok) {
           const ct = res.headers.get("content-type") || "";

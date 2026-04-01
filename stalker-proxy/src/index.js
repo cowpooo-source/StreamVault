@@ -172,6 +172,28 @@ function cacheKey(portal, mac) {
   return `${portal.replace(/\/+$/, "")}|${mac}`;
 }
 
+function buildStalkerStreamHeaders(session, reqHeaders = {}) {
+  const headers = {
+    ...session.headers,
+    "Accept": "*/*",
+    "Connection": "keep-alive",
+  };
+  delete headers["Content-Type"];
+  if (reqHeaders.range) headers["Range"] = reqHeaders.range;
+  return headers;
+}
+
+function summarizeUpstreamHeaders(headers) {
+  return {
+    contentType: headers.get("content-type") || null,
+    contentLength: headers.get("content-length") || null,
+    location: headers.get("location") || null,
+    wwwAuthenticate: headers.get("www-authenticate") || null,
+    proxyAuthenticate: headers.get("proxy-authenticate") || null,
+    server: headers.get("server") || null,
+  };
+}
+
 // Fallback API paths to try (from extractstb PortalValidator)
 const API_PATHS = [
   "server/load.php",
@@ -676,11 +698,11 @@ app.get("/stalker/stream", async (req, res) => {
 
 // ── GET /stalker/play — resolve create_link + stream in one request (same IP)
 app.get("/stalker/play", async (req, res) => {
-  const { portal, mac, cmd, content_type, episode, start, end } = req.query;
+  const { portal, mac, cmd, content_type, episode, start, end, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac || !cmd) return res.status(400).json({ error: "portal, mac and cmd required" });
   const stalkerType = (content_type === "vod" || content_type === "series") ? "vod" : "itv";
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const linkParams = {
       type: stalkerType, action: "create_link", cmd,
       series: episode || 0, forced_storage: 0,
@@ -700,20 +722,31 @@ app.get("/stalker/play", async (req, res) => {
     if (req.query.resolve === "1") {
       return res.json({ url: cleanUrl });
     }
-    // Try to pipe the stream (same IP as create_link) with Stalker session headers
-    const fetchHeaders = {
-      "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
-      "Cookie": `mac=${encodeURIComponent(mac)}; stb_lang=en; timezone=Europe%2FParis`,
-      "Referer": portal.replace(/\/+$/, "").replace(/\/c$/, "") + "/c/",
-      "X-User-Agent": "Model: MAG250; Link: WiFi",
-    };
-    if (session.token) fetchHeaders["Authorization"] = `Bearer ${session.token}`;
-    if (req.headers.range) fetchHeaders["Range"] = req.headers.range;
+    // Try to pipe the stream (same IP as create_link) with the same Stalker session context
+    const fetchHeaders = buildStalkerStreamHeaders(session, req.headers);
     const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow", agent: agentFor(cleanUrl) });
+    const upstreamSummary = summarizeUpstreamHeaders(upstream.headers);
     if (!upstream.ok && upstream.status !== 206) {
-      // Return error with actual status so frontend shows correct message
-      return res.status(upstream.status).json({ error: `Stream server returned ${upstream.status}`, status: upstream.status });
+      console.warn("Stalker play upstream rejected stream", {
+        portal,
+        mac,
+        cleanUrl,
+        status: upstream.status,
+        headers: upstreamSummary,
+      });
+      return res.status(upstream.status).json({
+        error: `Stream server returned ${upstream.status}`,
+        status: upstream.status,
+        upstreamHeaders: upstreamSummary,
+      });
     }
+    console.log("Stalker play upstream stream ok", {
+      portal,
+      mac,
+      cleanUrl,
+      status: upstream.status,
+      headers: upstreamSummary,
+    });
     const ct = upstream.headers.get("content-type") || "";
     Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
     res.set("Accept-Ranges", "bytes");
