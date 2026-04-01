@@ -2244,26 +2244,12 @@ export default function App() {
     return url;
   }
 
-  async function resolveStalkerStream(item) {
+  function resolveStalkerStream(item) {
     const contentType = item.type || "live";
     const cmd = item._stalkerCmd;
-    try {
-      const playUrl = stalkerPlayUrl(cmd, contentType);
-      // Use HEAD to check content-type without consuming the one-time stream token
-      const res = await fetch(playUrl, { method: "HEAD" });
-      if (res.ok) {
-        const ct = res.headers.get("content-type") || "";
-        if (ct.includes("json")) {
-          // Re-fetch with GET only for JSON responses (error messages)
-          const fullRes = await fetch(playUrl);
-          const data = await fullRes.json();
-          if (data.url) return `${API}/stream?url=${encodeURIComponent(data.url)}`;
-          if (data.error) { console.warn("Stalker play error:", data.error); return null; }
-        }
-      }
-      return playUrl;
-    } catch(e) { console.error("Stalker stream resolve failed:", e); }
-    return null;
+    // Return the play URL directly — the backend proxies the stream.
+    // No pre-fetch needed; avoids consuming one-time portal tokens.
+    return stalkerPlayUrl(cmd, contentType);
   }
 
   async function loadEPG(url) {
