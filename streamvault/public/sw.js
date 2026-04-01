@@ -21,6 +21,7 @@ self.addEventListener("fetch", e => {
   if (url.pathname.startsWith("/stalker") ||
       url.pathname.startsWith("/stream") ||
       url.pathname.startsWith("/proxy") ||
+      url.pathname.startsWith("/img") ||
       url.pathname.startsWith("/api") ||
       url.pathname.startsWith("/health") ||
       url.pathname.startsWith("/analytics")) return;

@@ -9,6 +9,7 @@ export default defineConfig({
       '/stalker': { target: 'http://localhost:3001', changeOrigin: true },
       '/stream': { target: 'http://localhost:3001', changeOrigin: true },
       '/proxy': { target: 'http://localhost:3001', changeOrigin: true },
+      '/img': { target: 'http://localhost:3001', changeOrigin: true },
       '/health': { target: 'http://localhost:3001', changeOrigin: true },
       '/api': { target: 'http://localhost:3001', changeOrigin: true },
     },

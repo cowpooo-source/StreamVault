@@ -1057,6 +1057,28 @@ app.get("/stream", async (req, res) => {
   }
 });
 
+// ── GET /img?url=... — image proxy (fixes mixed-content + broken SSL certs on portal image servers)
+app.get("/img", async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).end();
+  if (!isUrlAllowed(url)) return res.status(403).end();
+  try {
+    // Force HTTP for portals with broken HTTPS certs
+    const fetchUrl = url.replace(/^https:/, "http:");
+    const upstream = await fetch(fetchUrl, {
+      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" },
+      agent: agentFor(fetchUrl),
+    });
+    if (!upstream.ok) return res.status(upstream.status).end();
+    const ct = upstream.headers.get("content-type") || "image/jpeg";
+    res.set("Content-Type", ct);
+    res.set("Cache-Control", "public, max-age=86400"); // cache 24h
+    upstream.body.pipe(res);
+  } catch {
+    res.status(502).end();
+  }
+});
+
 // ── GET /proxy?url=... — generic CORS proxy for Xtream API and M3U fetches
 app.get("/proxy", async (req, res) => {
   const { url } = req.query;

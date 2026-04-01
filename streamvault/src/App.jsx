@@ -3,6 +3,9 @@ import { createPortal } from "react-dom";
 
 const API = import.meta.env.VITE_API_URL || "";
 
+// Proxy external images to avoid mixed-content / broken SSL cert issues
+function imgSrc(url) { return url ? `${API}/img?url=${encodeURIComponent(url)}` : null; }
+
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
 function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID }, body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
@@ -1126,7 +1129,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
           {osd && (
             <div className="osd" onClick={showOSD}>
               {current.logo
-                ? <img className="osd-logo" src={current.logo} alt="" onError={e => e.target.style.display="none"} />
+                ? <img className="osd-logo" src={imgSrc(current.logo)} alt="" onError={e => e.target.style.display="none"} />
                 : <div className="osd-logo-ph">{current.type==="live"?"📺":"🎬"}</div>}
               <div>
                 {current.num && <div className="osd-num">CH {current.num}</div>}
@@ -1143,7 +1146,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
                 return (
                   <div key={ch.id||i} className={`qch-item ${isActive?"active":""}`}>
                     {ch.logo
-                      ? <img className="qch-thumb" src={ch.logo} alt="" onError={e => e.target.style.display="none"} />
+                      ? <img className="qch-thumb" src={imgSrc(ch.logo)} alt="" onError={e => e.target.style.display="none"} />
                       : <div className="qch-thumb-ph">📺</div>}
                     <div className="qch-n">{ch.name}</div>
                     {ch.num && <div className="qch-num">{ch.num}</div>}
@@ -2948,7 +2951,7 @@ export default function App() {
                         <div key={ch.id||i} className={`ch-card ${playing?.id===ch.id?"playing":""}`}
                           onClick={() => playItem(ch)}>
                           {ch.logo
-                            ? <img className="ch-logo" src={ch.logo} alt="" onError={e=>e.target.style.display="none"} />
+                            ? <img className="ch-logo" src={imgSrc(ch.logo)} alt="" onError={e=>e.target.style.display="none"} />
                             : <div className="ch-logo-ph">📺</div>}
                           <div className="ch-name">{ch.name}</div>
                           {ch.num && <div className="ch-num">CH {ch.num}</div>}
@@ -2967,7 +2970,7 @@ export default function App() {
                       return (
                         <div key={item.id||i} className="vod-card" onClick={() => playItem(item)} title={item.name}>
                           {item.logo
-                            ? <img className="vod-poster" src={item.logo} alt="" onError={e=>e.target.style.display="none"} />
+                            ? <img className="vod-poster" src={imgSrc(item.logo)} alt="" onError={e=>e.target.style.display="none"} />
                             : <div className="vod-ph">{section==="series"?"📽":"🎬"}</div>}
                           {pct > 2 && (
                             <div className="resume-bar"><div className="resume-fill" style={{width:`${pct}%`}} /></div>
@@ -3014,7 +3017,7 @@ export default function App() {
             maxHeight:"90vh",overflowY:"auto"}}>
             <div className="detail-modal">
               {(tmdbData?.poster || expandedItem.logo)
-                ? <img className="detail-poster" src={tmdbData?.poster || expandedItem.logo} alt="" onError={e=>e.target.style.display="none"} />
+                ? <img className="detail-poster" src={tmdbData?.poster || imgSrc(expandedItem.logo)} alt="" onError={e=>e.target.style.display="none"} />
                 : <div className="detail-poster-ph">{expandedItem.type==="series"?"📽":"🎬"}</div>}
               <div className="detail-body">
                 <div className="detail-title">{expandedItem.name}</div>
@@ -3136,7 +3139,7 @@ export default function App() {
             {/* Header */}
             <div className="series-modal-header">
               {seriesDetail.item.logo
-                ? <img className="series-modal-poster" src={seriesDetail.item.logo} alt="" onError={e => e.target.style.display="none"} />
+                ? <img className="series-modal-poster" src={imgSrc(seriesDetail.item.logo)} alt="" onError={e => e.target.style.display="none"} />
                 : <div className="series-modal-poster-ph">📽</div>}
               <div className="series-modal-info">
                 <div className="series-modal-title">{seriesDetail.item.name}</div>
@@ -3245,13 +3248,13 @@ const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, isFav, t 
           <div className={label==="Live TV" ? "ch-grid" : "vod-grid"}>
             {items.map((item,i) => label==="Live TV" ? (
               <div key={item.id||i} className="ch-card" onClick={() => onPlay(item)}>
-                {item.logo ? <img className="ch-logo" src={item.logo} alt="" /> : <div className="ch-logo-ph">📺</div>}
+                {item.logo ? <img className="ch-logo" src={imgSrc(item.logo)} alt="" /> : <div className="ch-logo-ph">📺</div>}
                 <div className="ch-name">{item.name}</div>
                 <FavBtn on={true} onClick={() => toggleFav(item)} />
               </div>
             ) : (
               <div key={item.id||i} className="vod-card" onClick={() => onPlay(item)}>
-                {item.logo ? <img className="vod-poster" src={item.logo} alt="" /> : <div className="vod-ph">🎬</div>}
+                {item.logo ? <img className="vod-poster" src={imgSrc(item.logo)} alt="" /> : <div className="vod-ph">🎬</div>}
                 <div className="vod-info"><div className="vod-title">{item.name}</div></div>
                 <button className="vod-fav on" onClick={e=>{e.stopPropagation();toggleFav(item);}}>♥</button>
               </div>
@@ -3282,7 +3285,7 @@ const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
               const pct = item.duration ? Math.min(100,(item.position/item.duration)*100) : 0;
               return (
                 <div key={item.id||i} className="cw-item" onClick={()=>onPlay(item)}>
-                  {item.logo ? <img className="cw-poster" src={item.logo} alt="" style={{width:"100%",aspectRatio:"16/9",objectFit:"cover"}} /> : <div className="cw-poster">🎬</div>}
+                  {item.logo ? <img className="cw-poster" src={imgSrc(item.logo)} alt="" style={{width:"100%",aspectRatio:"16/9",objectFit:"cover"}} /> : <div className="cw-poster">🎬</div>}
                   <div className="cw-prog-bar"><div className="cw-prog-fill" style={{width:`${pct}%`}} /></div>
                   <div className="cw-info">
                     <div className="cw-name">{item.name}</div>
@@ -3303,7 +3306,7 @@ const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
               onClick={()=>onPlay(item)}
               onMouseEnter={e=>e.currentTarget.style.borderColor="var(--b2)"}
               onMouseLeave={e=>e.currentTarget.style.borderColor="var(--b1)"}>
-              {item.logo ? <img style={{width:"30px",height:"30px",objectFit:"contain",borderRadius:"4px",background:"var(--s2)",flexShrink:0}} src={item.logo} alt="" /> : <div style={{width:"30px",height:"30px",background:"var(--s2)",borderRadius:"4px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:".75rem",flexShrink:0}}>{item.type==="live"?"📺":"🎬"}</div>}
+              {item.logo ? <img style={{width:"30px",height:"30px",objectFit:"contain",borderRadius:"4px",background:"var(--s2)",flexShrink:0}} src={imgSrc(item.logo)} alt="" /> : <div style={{width:"30px",height:"30px",background:"var(--s2)",borderRadius:"4px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:".75rem",flexShrink:0}}>{item.type==="live"?"📺":"🎬"}</div>}
               <div style={{flex:1,overflow:"hidden"}}>
                 <div style={{fontSize:".8rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
                 <div style={{fontSize:".65rem",color:"var(--t3)"}}>{item.group} · {new Date(item.timestamp).toLocaleDateString()}</div>
@@ -3338,7 +3341,7 @@ const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggle
           <div className="section-label">{LABELS[type]} <span style={{fontFamily:"'DM Sans'",fontWeight:400,color:"var(--t3)",textTransform:"none",letterSpacing:0}}>({items.length})</span></div>
           {items.map((item,i) => (
             <div key={item.id||i} className="gsearch-row" onClick={()=>onPlay(item)}>
-              {item.logo ? <img className="gsearch-logo" src={item.logo} alt="" onError={e=>e.target.style.display="none"} /> : <div className="gsearch-logo-ph">{ICONS[type]}</div>}
+              {item.logo ? <img className="gsearch-logo" src={imgSrc(item.logo)} alt="" onError={e=>e.target.style.display="none"} /> : <div className="gsearch-logo-ph">{ICONS[type]}</div>}
               <div className="gsearch-name">{item.name}</div>
               <div className="gsearch-group">{item.group}</div>
               <button style={{background:"none",border:"none",cursor:"pointer",fontSize:".9rem",color:isFav(item)?"var(--accent)":"var(--t3)",padding:".1rem .2rem",transition:"color .2s"}}
@@ -3483,7 +3486,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
                 <div className="epg-ch-col">
                   {filteredChannels.map((ch,i) => (
                     <div key={ch.id||i} className="epg-ch-cell" onClick={()=>onPlay(ch)} title={ch.name}>
-                      {ch.logo && <img className="epg-ch-logo" src={ch.logo} alt="" onError={e=>{e.target.style.display="none";}} />}
+                      {ch.logo && <img className="epg-ch-logo" src={imgSrc(ch.logo)} alt="" onError={e=>{e.target.style.display="none";}} />}
                       <span className="epg-ch-name">{ch.name}</span>
                     </div>
                   ))}
@@ -3803,7 +3806,7 @@ const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, seri
                       onMouseEnter={e => e.currentTarget.style.borderColor="var(--accent)"}
                       onMouseLeave={e => e.currentTarget.style.borderColor="var(--b2)"}>
                       {item.logo
-                        ? <img src={item.logo} style={{width:38,height:38,objectFit:"contain",
+                        ? <img src={imgSrc(item.logo)} style={{width:38,height:38,objectFit:"contain",
                             borderRadius:5,background:"var(--s3)",flexShrink:0}} alt="" />
                         : <div style={{width:38,height:38,background:"var(--s3)",borderRadius:5,
                             display:"flex",alignItems:"center",justifyContent:"center",
