@@ -1067,13 +1067,20 @@ app.get("/img", async (req, res) => {
   if (!url) return res.status(400).end();
   if (!isUrlAllowed(url)) return res.status(403).end();
   try {
-    // Force HTTP for portals with broken HTTPS certs
-    const fetchUrl = url.replace(/^https:/, "http:");
-    const upstream = await fetch(fetchUrl, {
+    // Try original URL first, fallback to HTTP for portals with broken HTTPS certs
+    let fetchUrl = url;
+    let upstream = await fetch(fetchUrl, {
       timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" },
       agent: agentFor(fetchUrl),
-    });
-    if (!upstream.ok) return res.status(upstream.status).end();
+    }).catch(() => null);
+    if (!upstream && url.startsWith("https:")) {
+      fetchUrl = url.replace(/^https:/, "http:");
+      upstream = await fetch(fetchUrl, {
+        timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" },
+        agent: agentFor(fetchUrl),
+      });
+    }
+    if (!upstream || !upstream.ok) return res.status(upstream?.status || 502).end();
     const ct = upstream.headers.get("content-type") || "image/jpeg";
     res.set("Content-Type", ct);
     res.set("Cache-Control", "public, max-age=86400"); // cache 24h
