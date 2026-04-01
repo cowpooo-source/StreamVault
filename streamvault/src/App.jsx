@@ -2244,11 +2244,18 @@ export default function App() {
     return url;
   }
 
-  function resolveStalkerStream(item) {
+  async function resolveStalkerStream(item) {
     const contentType = item.type || "live";
     const cmd = item._stalkerCmd;
-    // Return the play URL directly — the backend proxies the stream.
-    // No pre-fetch needed; avoids consuming one-time portal tokens.
+    try {
+      // resolve=1 makes backend do create_link and return the stream URL as JSON (fast)
+      // Then we play via /stream proxy which just pipes the data (no create_link delay)
+      const res = await fetch(stalkerPlayUrl(cmd, contentType) + "&resolve=1");
+      const data = await res.json();
+      if (data.error) { console.warn("Stalker play error:", data.error); return null; }
+      if (data.url) return `${API}/stream?url=${encodeURIComponent(data.url)}`;
+    } catch(e) { console.error("Stalker stream resolve failed:", e); }
+    // Fallback: use play endpoint directly (pipes stream but slower)
     return stalkerPlayUrl(cmd, contentType);
   }
 

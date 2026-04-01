@@ -696,6 +696,10 @@ app.get("/stalker/play", async (req, res) => {
     if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
       try { const h = new URL(portal).host; cleanUrl = cleanUrl.replace(/localhost(:\d+)?/g, h).replace(/127\.0\.0\.1(:\d+)?/g, h); } catch {}
     }
+    // resolve=1 → return the resolved stream URL as JSON (frontend will use /stream to play)
+    if (req.query.resolve === "1") {
+      return res.json({ url: cleanUrl });
+    }
     // Try to pipe the stream (same IP as create_link) with Stalker session headers
     const fetchHeaders = {
       "User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3",
