@@ -678,35 +678,71 @@ html{height:100%}
 /* ═══════════════════════════════════════════════════════════════════
    MOBILE RESPONSIVE
    ═══════════════════════════════════════════════════════════════════ */
+/* Mobile hamburger menu button — hidden on desktop */
+.mob-topbar{display:none}
+.mob-overlay{display:none}
+.mob-drawer{display:none}
+
 @media (max-width: 767px) {
-  /* 1. Sidebar → horizontal scrollable pill bar at top */
+  /* 1. Hide desktop sidebar, show mobile top bar + hamburger */
   .app{flex-direction:column}
-  .sidebar{
-    width:100%;height:auto;flex-shrink:0;
+  .sidebar{display:none!important}
+
+  .mob-topbar{
+    display:flex;align-items:center;gap:.6rem;
     position:sticky;top:0;z-index:200;
-    border-right:none;border-bottom:1px solid var(--b1);
-    padding:.45rem .5rem;
-    display:flex;flex-direction:row;align-items:center;
-    overflow-x:auto;overflow-y:hidden;
-    -webkit-overflow-scrolling:touch;
-    scrollbar-width:none;
-    background:var(--s1);
-    gap:.3rem;
+    background:var(--s1);border-bottom:1px solid var(--b1);
+    padding:.5rem .7rem;
   }
-  .sidebar::-webkit-scrollbar{display:none}
-  .s-logo,.s-sect,.theme-row,.conn-card,.s-bottom,.lang-sel,.lang-select{display:none!important}
-  /* Flatten section wrappers so nav items flow in one row */
-  .sidebar>div{display:contents}
-  .nav{
-    flex:0 0 auto;flex-direction:row;align-items:center;
-    gap:.25rem;padding:.35rem .65rem;border-left:none;border-radius:18px;
-    font-size:.72rem;min-height:32px;
-    white-space:nowrap;position:relative;
-    background:var(--s2);border:1px solid var(--b1);
+  .mob-hamburger{
+    background:none;border:none;color:var(--t1);font-size:1.4rem;
+    cursor:pointer;padding:4px;line-height:1;flex-shrink:0;
   }
-  .nav.on{border-color:var(--accent);background:var(--accent-18);color:var(--accent)}
-  .nav-icon{font-size:.8rem;width:auto}
-  .nav-badge{margin-left:.15rem;position:static;font-size:.55rem;padding:.05rem .25rem}
+  .mob-topbar-title{font-family:'Rajdhani',sans-serif;font-size:1.1rem;font-weight:700;
+    letter-spacing:.1em;color:var(--accent);flex:1}
+  .mob-topbar-section{font-size:.82rem;font-weight:600;color:var(--t2)}
+
+  /* Slide-out drawer overlay */
+  .mob-overlay{
+    display:block;position:fixed;inset:0;z-index:299;
+    background:rgba(0,0,0,.5);opacity:0;pointer-events:none;
+    transition:opacity .25s;
+  }
+  .mob-overlay.open{opacity:1;pointer-events:auto}
+
+  /* Slide-out drawer */
+  .mob-drawer{
+    display:flex;flex-direction:column;
+    position:fixed;top:0;left:0;bottom:0;z-index:300;
+    width:260px;max-width:80vw;
+    background:var(--s1);border-right:1px solid var(--b1);
+    transform:translateX(-100%);transition:transform .25s ease;
+    overflow-y:auto;padding:.8rem 0;
+  }
+  .mob-drawer.open{transform:translateX(0)}
+  .mob-drawer .s-logo{
+    font-family:'Rajdhani',sans-serif;font-size:1.6rem;font-weight:700;
+    letter-spacing:.12em;color:var(--accent);padding:0 1rem .6rem;
+    border-bottom:1px solid var(--b1);margin-bottom:.5rem;
+  }
+  .mob-drawer .s-sect{font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;
+    color:var(--t3);padding:.6rem 1rem .25rem;font-weight:600}
+  .mob-drawer .nav{
+    display:flex;align-items:center;gap:.6rem;
+    padding:.6rem 1rem;font-size:.85rem;cursor:pointer;
+    border-left:3px solid transparent;transition:all .15s;
+  }
+  .mob-drawer .nav:hover{background:var(--s2)}
+  .mob-drawer .nav.on{border-left-color:var(--accent);background:var(--accent-18);color:var(--accent)}
+  .mob-drawer .nav-icon{font-size:1rem;width:20px;text-align:center}
+  .mob-drawer .nav-badge{font-size:.55rem;padding:.1rem .3rem;background:var(--accent);
+    color:#fff;border-radius:8px;margin-left:auto}
+  .mob-drawer .theme-row{padding:.5rem 1rem;display:flex;gap:.4rem;flex-wrap:wrap}
+  .mob-drawer .conn-card{margin:.4rem .8rem;padding:.5rem .6rem}
+  .mob-drawer .s-bottom{padding:.5rem .8rem;margin-top:auto;border-top:1px solid var(--b1)}
+  .mob-drawer .s-bottom .s-row{display:flex;gap:.4rem}
+  .mob-drawer .lang-sel{padding:.4rem 1rem}
+  .mob-drawer .lang-sel select{width:100%}
 
   /* 2. Categories → horizontal scrollable pills */
   .c-body{flex-direction:column;padding:.6rem .7rem;padding-bottom:3rem;gap:.6rem}
@@ -1759,6 +1795,7 @@ export default function App() {
   const [connections, setConnections] = useState([]);
   const [activeConnId, setActiveConnId] = useState(null);
   const [showConnManager, setShowConnManager] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // ── favorites {live:{}, vod:{}, series:{}}
   const [favs, setFavs] = useState({live:{}, vod:{}, series:{}});
@@ -2734,7 +2771,57 @@ export default function App() {
 
   return (
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
-      {/* ── SIDEBAR ── */}
+      {/* ── MOBILE TOP BAR + DRAWER ── */}
+      <div className="mob-topbar">
+        <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>☰</button>
+        <span className="mob-topbar-title">STREAMVAULT</span>
+        <span className="mob-topbar-section">{LABEL[section]}</span>
+      </div>
+      <div className={`mob-overlay ${mobileMenuOpen?"open":""}`} onClick={() => setMobileMenuOpen(false)} />
+      <div className={`mob-drawer ${mobileMenuOpen?"open":""}`}>
+        <div className="s-logo">STREAMVAULT</div>
+        {activeConnection && (
+          <div className="conn-card" style={{borderLeftColor: activeConnection.color}}
+            onClick={() => { setShowConnManager(true); setMobileMenuOpen(false); }}>
+            <div className="conn-card-row">
+              <span className="conn-card-icon">{CONN_ICONS[activeConnection.type] || "📡"}</span>
+              <div className="conn-card-info">
+                <div className="conn-card-label">{activeConnection.label}</div>
+                <div className="conn-card-stats">{channelCount.toLocaleString()} items</div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="theme-row">
+          {THEME_NAMES.map(tn => (
+            <div key={tn} className={`theme-swatch ${themeName===tn?"on":""}`}
+              style={{background:THEMES[tn].accent}} title={tn}
+              onClick={() => setThemeName(tn)} />
+          ))}
+        </div>
+        {["watch","tools"].map(sKey => (
+          <div key={sKey}>
+            <div className="s-sect">{t(sKey)}</div>
+            {NAV.filter(n=>n.sKey===sKey).map(n => (
+              <div key={n.key} className={`nav ${section===n.key?"on":""}`}
+                onClick={() => { switchSection(n.key); setMobileMenuOpen(false); }}>
+                <span className="nav-icon">{n.icon}</span>
+                <span>{t(n.tKey)}</span>
+                {n.key==="favs" && totalFavs > 0 && <span className="nav-badge">{totalFavs}</span>}
+                {n.key==="continue" && continueItems.length > 0 && <span className="nav-badge">{continueItems.length}</span>}
+              </div>
+            ))}
+          </div>
+        ))}
+        <div className="s-bottom">
+          <div className="s-row">
+            <button className="btn-sm" onClick={() => { setFbOpen(true); setMobileMenuOpen(false); }}>💬 {t("feedback")}</button>
+            <button className="btn-sm danger" onClick={() => { disconnect(); setMobileMenuOpen(false); }}>⏏ {t("disconnect")}</button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SIDEBAR (desktop only) ── */}
       <div className="sidebar">
         <div className="s-logo">STREAMVAULT</div>
 
