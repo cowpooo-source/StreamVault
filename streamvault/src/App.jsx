@@ -1203,6 +1203,7 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
   const [loading, setLoading] = useState(false);
   const [err, setErr]       = useState("");
   const [expiredPrompt, setExpiredPrompt] = useState(null); // { conn, validation }
+  const [skipValidation, setSkipValidation] = useState(false);
   const set = (k,v) => setF(p => ({...p,[k]:v}));
 
   // Validate saved connection before reconnecting
@@ -1277,40 +1278,48 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
         const server = f.server.trim().replace(/\/$/,"");
-        const validateBody = JSON.stringify({
-          portal: server, mac: f.mac.trim(),
-          serial: f.serial?.trim() || undefined,
-          deviceId: f.deviceId?.trim() || undefined,
-          deviceId2: (f.deviceId2?.trim() || f.deviceId?.trim()) || undefined
-        });
+        const macTrimmed = f.mac.trim();
+        const serialTrimmed = f.serial?.trim() || undefined;
+        const deviceIdTrimmed = f.deviceId?.trim() || undefined;
+        const deviceId2Trimmed = (f.deviceId2?.trim() || f.deviceId?.trim()) || undefined;
 
-        const vRes = await fetch(`${API}/stalker/validate`, {
-          method: "POST",
-          headers: {"Content-Type":"application/json","X-Guest-Id":GUEST_ID},
-          body: validateBody
-        });
-        const v = await vRes.json();
+        if (skipValidation) {
+          track("connect");
+          onConnect({
+            type, server, mac: macTrimmed,
+            serial: serialTrimmed, deviceId: deviceIdTrimmed, deviceId2: deviceId2Trimmed,
+          });
+        } else {
+          const validateBody = JSON.stringify({
+            portal: server, mac: macTrimmed,
+            serial: serialTrimmed, deviceId: deviceIdTrimmed, deviceId2: deviceId2Trimmed
+          });
 
-        if (v.error && !v.portalReachable) throw new Error(v.error);
-        if (v.status === "expired") throw new Error(`Account expired${v.expiry ? ` on ${v.expiry}` : ""}. Contact your provider.`);
-        if (v.status === "blocked") throw new Error("Account is blocked. Contact your provider.");
-        if (v.status === "suspended") throw new Error("Account is suspended. Contact your provider.");
-        if (v.status === "unregistered") throw new Error("MAC address is not registered with this portal.");
+          const vRes = await fetch(`${API}/stalker/validate`, {
+            method: "POST",
+            headers: {"Content-Type":"application/json","X-Guest-Id":GUEST_ID},
+            body: validateBody
+          });
+          const v = await vRes.json();
 
-        // Show warning for expiring soon but still allow connection
-        if (v.daysLeft !== null && v.daysLeft <= 7 && v.daysLeft > 0) {
-          console.warn(`Account expires in ${v.daysLeft} days (${v.expiry})`);
+          if (v.error && !v.portalReachable) throw new Error(v.error);
+          if (v.status === "expired") throw new Error(`Account expired${v.expiry ? ` on ${v.expiry}` : ""}. Contact your provider.`);
+          if (v.status === "blocked") throw new Error("Account is blocked. Contact your provider.");
+          if (v.status === "suspended") throw new Error("Account is suspended. Contact your provider.");
+          if (v.status === "unregistered") throw new Error("MAC address is not registered with this portal.");
+
+          if (v.daysLeft !== null && v.daysLeft <= 7 && v.daysLeft > 0) {
+            console.warn(`Account expires in ${v.daysLeft} days (${v.expiry})`);
+          }
+
+          track("connect");
+          onConnect({
+            type, server, mac: macTrimmed,
+            serial: v.serial || serialTrimmed, deviceId: v.deviceId || deviceIdTrimmed,
+            deviceId2: v.deviceId2 || deviceId2Trimmed,
+            accountInfo: { status: v.status, expiry: v.expiry, daysLeft: v.daysLeft, tariff: v.tariff, maxConnections: v.maxConnections }
+          });
         }
-
-        track("connect");
-        onConnect({
-          type, server, mac: f.mac.trim(),
-          serial: v.serial || f.serial?.trim() || undefined,
-          deviceId: v.deviceId || f.deviceId?.trim() || undefined,
-          deviceId2: v.deviceId2 || (f.deviceId2?.trim() || f.deviceId?.trim()) || undefined,
-          // Store validation info for display
-          accountInfo: { status: v.status, expiry: v.expiry, daysLeft: v.daysLeft, tariff: v.tariff, maxConnections: v.maxConnections }
-        });
       } else {
         // Connection saved by handleConnect in App
         onConnect({ type:"hls" });
@@ -1479,6 +1488,12 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
                     <div style={{fontSize:".62rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
                   </div>
                   <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>{loading ? "..." : t("connectArrow")}</span>
+                  <button onClick={e => { e.stopPropagation(); if(confirm(`Delete "${c.label}"?`)) onRemoveConn?.(c.id); }}
+                    style={{background:"none",border:"none",color:"var(--t3)",cursor:"pointer",fontSize:".85rem",padding:"2px 6px",
+                      borderRadius:"4px",lineHeight:1,flexShrink:0}}
+                    onMouseEnter={e => e.currentTarget.style.color="#e74c3c"}
+                    onMouseLeave={e => e.currentTarget.style.color="var(--t3)"}
+                    title="Delete connection">✕</button>
                 </div>
               ))}
             </div>
@@ -1518,6 +1533,11 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
           <div className="fg"><label className="fl">{t("macAddress")}</label>
             <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} />
             <div className="fhint">The MAC address registered with your IPTV provider</div></div>
+          <label style={{display:"flex",alignItems:"center",gap:".4rem",marginTop:".5rem",cursor:"pointer",fontSize:".72rem",color:"var(--t2)"}}>
+            <input type="checkbox" checked={skipValidation} onChange={e => setSkipValidation(e.target.checked)}
+              style={{accentColor:"var(--accent)",cursor:"pointer"}} />
+            Skip validation (connect without checking account status)
+          </label>
           <div style={{marginTop:".5rem"}}>
             <button type="button" style={{background:"none",border:"none",color:"var(--accent)",fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"'DM Sans',sans-serif"}}
               onClick={() => setShowAdvanced(!showAdvanced)}>
