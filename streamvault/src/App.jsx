@@ -1840,6 +1840,7 @@ const NAV = [
   { key:"epg",       icon:"📋", tKey:"tvGuide",           sKey:"tools" },
   { key:"search",    icon:"🔍", tKey:"globalSearch",      sKey:"tools" },
   { key:"hls",       icon:"▶",  tKey:"directPlay",        sKey:"tools" },
+  { key:"settings",  icon:"⚙",  tKey:"settings",          sKey:"tools" },
 ];
 
 export default function App() {
@@ -2902,7 +2903,7 @@ export default function App() {
     </>
   );
 
-  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay")};
+  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:"Settings"};
   const activeConnection = connections.find(c => c.id === activeConnId);
   const channelCount = channels.length + vod.length + series.length;
   const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
@@ -3154,6 +3155,9 @@ export default function App() {
           <div className="loading"><div className="spinner" /><span>{t("loadingSection", LABEL[section])}</span></div>
         ) : section==="discover" ? (
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
+        ) : section==="settings" ? (
+          <SettingsView connections={connections} favs={favs} history={history}
+            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId} t={t} />
         ) : section==="hls" ? (
           <DirectHLSView />
         ) : section==="epg" ? (
@@ -3818,6 +3822,160 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
     </div>
   );
 });
+
+// ── Settings View — Import/Export ──
+function SettingsView({ connections, favs, history, authUser, isGuest, activeConnId, t: st }) {
+  const t = st || (k => k);
+  const [importErr, setImportErr] = useState("");
+  const [importOk, setImportOk] = useState("");
+  const fileRef = useRef(null);
+
+  async function exportData() {
+    const data = {
+      _streamvault_export: true,
+      version: 1,
+      exported_at: new Date().toISOString(),
+      user: authUser ? { username: authUser.username, role: authUser.role } : { guest: true },
+      connections: await db.get("sv-connections", []),
+      theme: await db.get("sv-theme", "Dark"),
+      language: localStorage.getItem("sv-lang") || "en",
+      hiddenCats: await db.get("sv-hiddenCats", {}),
+      epgURL: await db.get("sv-epgURL", ""),
+      favorites: {},
+      history: {},
+    };
+    // Export per-connection favorites and history
+    for (const conn of data.connections) {
+      const fv = await db.get(`sv-favs-${conn.id}`, null);
+      const hi = await db.get(`sv-history-${conn.id}`, null);
+      if (fv) data.favorites[conn.id] = fv;
+      if (hi) data.history[conn.id] = hi;
+    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `streamvault-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importData(e) {
+    setImportErr(""); setImportOk("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data._streamvault_export) throw new Error("Not a valid StreamVault export file");
+
+        // Import connections
+        if (data.connections?.length) {
+          const existing = await db.get("sv-connections", []);
+          const existingIds = new Set(existing.map(c => c.id));
+          const newConns = data.connections.filter(c => !existingIds.has(c.id));
+          if (newConns.length) {
+            const merged = [...existing, ...newConns];
+            db.set("sv-connections", merged);
+            if (authUser) syncConnectionsToServer(merged);
+          }
+        }
+
+        // Import preferences
+        if (data.theme) db.set("sv-theme", data.theme);
+        if (data.language) localStorage.setItem("sv-lang", data.language);
+        if (data.hiddenCats) db.set("sv-hiddenCats", data.hiddenCats);
+        if (data.epgURL) db.set("sv-epgURL", data.epgURL);
+
+        // Import per-connection favorites and history
+        let favCount = 0, histCount = 0;
+        if (data.favorites) {
+          for (const [connId, fv] of Object.entries(data.favorites)) {
+            const existing = await db.get(`sv-favs-${connId}`, null);
+            if (!existing || (Object.keys(existing.live||{}).length === 0 && Object.keys(existing.vod||{}).length === 0)) {
+              db.set(`sv-favs-${connId}`, fv);
+              if (authUser) syncToServer("favorites", connId, fv);
+              favCount++;
+            }
+          }
+        }
+        if (data.history) {
+          for (const [connId, hi] of Object.entries(data.history)) {
+            const existing = await db.get(`sv-history-${connId}`, null);
+            if (!existing || existing.length === 0) {
+              db.set(`sv-history-${connId}`, hi);
+              if (authUser) syncToServer("history", connId, hi);
+              histCount++;
+            }
+          }
+        }
+
+        const parts = [];
+        if (data.connections?.length) parts.push(`${data.connections.length} connections`);
+        if (favCount) parts.push(`${favCount} favorite sets`);
+        if (histCount) parts.push(`${histCount} history sets`);
+        if (data.theme) parts.push("theme");
+        setImportOk(`Imported: ${parts.join(", ") || "preferences"}. Refresh to apply.`);
+      } catch (err) {
+        setImportErr(err.message || "Import failed");
+      }
+      if (fileRef.current) fileRef.current.value = "";
+    };
+    reader.readAsText(file);
+  }
+
+  return (
+    <div className="c-body" style={{padding:"1.5rem",maxWidth:600}}>
+      <h3 style={{margin:"0 0 1.2rem",fontSize:"1.1rem",fontWeight:600}}>Settings</h3>
+
+      {/* Account info */}
+      <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem",marginBottom:"1.2rem"}}>
+        <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Account</div>
+        {authUser ? (
+          <div style={{display:"flex",alignItems:"center",gap:".6rem"}}>
+            <span style={{fontSize:"1.2rem"}}>👤</span>
+            <div>
+              <div style={{fontWeight:600,fontSize:".9rem"}}>{authUser.username}</div>
+              <div style={{fontSize:".7rem",color:"var(--t3)",textTransform:"capitalize"}}>{authUser.role} account</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{fontSize:".85rem",color:"var(--t3)"}}>Guest mode — login to sync across devices</div>
+        )}
+      </div>
+
+      {/* Export */}
+      <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem",marginBottom:"1.2rem"}}>
+        <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Export Data</div>
+        <div style={{fontSize:".78rem",color:"var(--t2)",marginBottom:".7rem"}}>
+          Download all your data: connections, favorites, watch history, preferences.
+        </div>
+        <button className="btn-primary" style={{padding:".5rem 1.2rem",fontSize:".82rem"}} onClick={exportData}>
+          Download Backup (.json)
+        </button>
+      </div>
+
+      {/* Import */}
+      <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem",marginBottom:"1.2rem"}}>
+        <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Import Data</div>
+        <div style={{fontSize:".78rem",color:"var(--t2)",marginBottom:".7rem"}}>
+          Restore from a previous backup. Existing data is preserved — only missing items are added.
+        </div>
+        <input ref={fileRef} type="file" accept=".json" onChange={importData}
+          style={{fontSize:".8rem",color:"var(--t2)"}} />
+        {importErr && <div className="err" style={{marginTop:".5rem",fontSize:".78rem"}}>⚠ {importErr}</div>}
+        {importOk && <div style={{marginTop:".5rem",fontSize:".78rem",color:"var(--accent)"}}>{importOk}</div>}
+      </div>
+
+      {/* Info */}
+      <div style={{fontSize:".68rem",color:"var(--t3)",lineHeight:1.6}}>
+        <div>Connections: {connections?.length || 0}</div>
+        <div>Export includes: connections, favorites, watch history, theme, language, EPG URL, hidden categories</div>
+      </div>
+    </div>
+  );
+}
 
 const DirectHLSView = memo(function DirectHLSView() {
   const [url, setUrl] = useState("");
