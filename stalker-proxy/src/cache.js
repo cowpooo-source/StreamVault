@@ -266,4 +266,4 @@ cleanup();
 // Backward-compatible ready export (sync init, but consumers may still .then() on it)
 const ready = Promise.resolve();
 
-module.exports = { get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };
+module.exports = { db, get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };

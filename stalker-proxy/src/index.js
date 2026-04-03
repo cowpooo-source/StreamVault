@@ -4,6 +4,7 @@ const fetch       = require("node-fetch");
 const cors        = require("cors");
 const compression = require("compression");
 const cache       = require("./cache");
+const auth        = require("./auth");
 const { Transform } = require("stream");
 
 const helmet    = require("helmet");
@@ -1243,6 +1244,99 @@ app.get("/api/analytics", (req, res) => {
 app.get("/analytics", (req, res) => {
   res.sendFile(require("path").join(__dirname, "analytics.html"));
 });
+
+// ── AUTH: Initialize ──
+auth.init(cache.db);
+
+// ── Auth rate limiting ──
+app.use("/api/auth/login", rateLimit({ windowMs: 900000, max: 15, message: { error: "Too many login attempts, try again later" } }));
+app.use("/api/auth/register", rateLimit({ windowMs: 3600000, max: 10, message: { error: "Too many registrations, try again later" } }));
+
+// ── POST /api/auth/register ──
+app.post("/api/auth/register", express.json(), (req, res) => {
+  const open = process.env.REGISTRATION_OPEN !== "false";
+  if (!open) return res.status(403).json({ error: "Registration is currently closed" });
+  try {
+    const { username, password } = req.body;
+    const user = auth.createUser(username, password);
+    const session = auth.authenticate(username, password);
+    res.json(session);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── POST /api/auth/login ──
+app.post("/api/auth/login", express.json(), (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Username and password required" });
+    const session = auth.authenticate(username, password);
+    res.json(session);
+  } catch (e) {
+    res.status(401).json({ error: e.message });
+  }
+});
+
+// ── POST /api/auth/logout ──
+app.post("/api/auth/logout", auth.requireAuth, (req, res) => {
+  const token = req.headers.authorization.slice(7);
+  auth.revokeToken(token);
+  res.json({ ok: true });
+});
+
+// ── GET /api/auth/me ──
+app.get("/api/auth/me", auth.requireAuth, (req, res) => {
+  const limits = auth.ROLE_LIMITS[req.user.role] || auth.ROLE_LIMITS.free;
+  res.json({
+    id: req.user.id, username: req.user.username, role: req.user.role,
+    maxConnections: req.user.max_connections, limits,
+  });
+});
+
+// ── PUT /api/auth/password ──
+app.put("/api/auth/password", auth.requireAuth, express.json(), (req, res) => {
+  try {
+    auth.changePassword(req.user.id, req.body.password);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Admin: user management ──
+app.get("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
+  res.json(auth.listUsers());
+});
+
+app.post("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), express.json(), (req, res) => {
+  try {
+    const { username, password, role } = req.body;
+    const user = auth.createUser(username, password, role || "regular");
+    res.json(user);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put("/api/admin/users/:id", auth.requireAuth, auth.requireRole("admin"), express.json(), (req, res) => {
+  try {
+    const user = auth.updateUser(parseInt(req.params.id), req.body);
+    res.json(user);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete("/api/admin/users/:id", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
+  const id = parseInt(req.params.id);
+  if (id === req.user.id) return res.status(400).json({ error: "Cannot delete yourself" });
+  auth.deleteUser(id);
+  res.json({ ok: true });
+});
+
+// ── Cleanup expired sessions alongside cache cleanup ──
+setInterval(() => auth.cleanupSessions(), 60 * 60 * 1000);
 
 // ─────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {

@@ -8,7 +8,77 @@ function imgSrc(url) { return url ? `${API}/img?url=${encodeURIComponent(url)}` 
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
-function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID }, body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
+function getAuthToken() { return localStorage.getItem("sv-auth-token"); }
+function authHeaders(extra = {}) { const t = getAuthToken(); return { ...extra, ...(t ? { "Authorization": `Bearer ${t}` } : {}), "X-Guest-Id": GUEST_ID }; }
+function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); return fetch(url, opts); }
+function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
+
+// ── Auth Screen ──
+function AuthScreen({ onAuth, onGuest }) {
+  const [mode, setMode] = useState("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function submit(e) {
+    e?.preventDefault();
+    setErr(""); setLoading(true);
+    try {
+      const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
+      const res = await fetch(`${API}${endpoint}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      localStorage.setItem("sv-auth-token", data.token);
+      onAuth(data.user);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="setup">
+      <div className="card" style={{maxWidth:380}}>
+        <div style={{textAlign:"center",marginBottom:"1.5rem"}}>
+          <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"2rem",fontWeight:700,letterSpacing:".12em",color:"var(--accent)"}}>STREAMVAULT</div>
+          <div style={{fontSize:".78rem",color:"var(--t3)"}}>Your personal IPTV client</div>
+        </div>
+        <div className="tabs" style={{marginBottom:"1rem"}}>
+          <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("")}}>Login</button>
+          <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("")}}>Register</button>
+        </div>
+        {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
+        <form onSubmit={submit}>
+          <div className="fg">
+            <label className="fl">Username</label>
+            <input className="fi" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} autoFocus />
+          </div>
+          <div className="fg">
+            <label className="fl">Password</label>
+            <input className="fi" type="password" placeholder="Password" value={password}
+              onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && submit()} />
+          </div>
+          <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%",marginTop:".8rem"}}>
+            {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
+          </button>
+        </form>
+        <div style={{textAlign:"center",marginTop:"1rem"}}>
+          <button onClick={onGuest} style={{background:"none",border:"none",color:"var(--t3)",cursor:"pointer",
+            fontSize:".75rem",textDecoration:"underline",fontFamily:"'DM Sans',sans-serif"}}>
+            Continue as Guest
+          </button>
+          {mode === "register" && (
+            <div style={{fontSize:".65rem",color:"var(--accent)",marginTop:".5rem"}}>
+              New accounts get Regular access (promo)
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Server sync — fire-and-forget with debounce
 const _syncTimers = {};
@@ -1754,6 +1824,36 @@ const NAV = [
 ];
 
 export default function App() {
+  // ── auth state
+  const [authUser, setAuthUser] = useState(null); // { id, username, role, limits }
+  const [authLoading, setAuthLoading] = useState(true);
+  const [isGuest, setIsGuest] = useState(false);
+
+  // Check stored token on mount
+  useEffect(() => {
+    const token = getAuthToken();
+    const wasGuest = localStorage.getItem("sv-guest-mode") === "1";
+    if (wasGuest && !token) { setIsGuest(true); setAuthLoading(false); return; }
+    if (!token) { setAuthLoading(false); return; }
+    fetch(`${API}/api/auth/me`, { headers: { "Authorization": `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(u => setAuthUser(u))
+      .catch(() => { localStorage.removeItem("sv-auth-token"); })
+      .finally(() => setAuthLoading(false));
+  }, []);
+
+  function handleAuth(user) { setAuthUser(user); setIsGuest(false); localStorage.removeItem("sv-guest-mode"); }
+  function handleGuest() { setIsGuest(true); localStorage.setItem("sv-guest-mode", "1"); }
+  function handleLogout() {
+    const token = getAuthToken();
+    if (token) authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
+    localStorage.removeItem("sv-auth-token");
+    localStorage.removeItem("sv-guest-mode");
+    setAuthUser(null); setIsGuest(false);
+  }
+  const userRole = authUser?.role || (isGuest ? "guest" : null);
+  const userLimits = authUser?.limits || (isGuest ? { maxConnections: 2, maxVod: 500, epg: true, sync: false } : null);
+
   // ── connection & data
   const [conn, setConn]       = useState(null);
   const [channels, setChannels] = useState([]);
@@ -2713,6 +2813,10 @@ export default function App() {
     setConn(connConfig);
   }
 
+  // Auth gate: show login/register before anything else
+  if (authLoading) return (<><style>{genCSS(THEMES[themeName])}</style><div className="setup"><div className="card" style={{textAlign:"center",padding:"3rem"}}><div className="spinner" /></div></div></>);
+  if (!authUser && !isGuest) return (<><style>{genCSS(THEMES[themeName])}</style><AuthScreen onAuth={handleAuth} onGuest={handleGuest} /></>);
+
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
@@ -2814,10 +2918,22 @@ export default function App() {
           </div>
         ))}
         <div className="s-bottom">
+          {authUser && (
+            <div style={{fontSize:".72rem",color:"var(--t3)",padding:"0 0 .4rem",display:"flex",alignItems:"center",gap:".3rem"}}>
+              <span style={{color:"var(--accent)"}}>●</span> {authUser.username} <span style={{textTransform:"capitalize",opacity:.7}}>({authUser.role})</span>
+            </div>
+          )}
           <div className="s-row">
             <button className="btn-sm" onClick={() => { setFbOpen(true); setMobileMenuOpen(false); }}>💬 {t("feedback")}</button>
             <button className="btn-sm danger" onClick={() => { disconnect(); setMobileMenuOpen(false); }}>⏏ {t("disconnect")}</button>
           </div>
+          {(authUser || isGuest) && (
+            <div style={{marginTop:".4rem"}}>
+              <button className="btn-sm" style={{width:"100%",fontSize:".72rem"}} onClick={() => { disconnect(); handleLogout(); setMobileMenuOpen(false); }}>
+                {authUser ? "🚪 Logout" : "🔑 Login"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2883,10 +2999,29 @@ export default function App() {
         ))}
 
         <div className="s-bottom">
+          {authUser && (
+            <div style={{fontSize:".68rem",color:"var(--t3)",padding:"0 0 .4rem",display:"flex",alignItems:"center",gap:".3rem"}}>
+              <span style={{color:"var(--accent)"}}>●</span> {authUser.username} <span style={{textTransform:"capitalize",opacity:.7}}>({authUser.role})</span>
+            </div>
+          )}
+          {isGuest && (
+            <div style={{fontSize:".68rem",color:"var(--t3)",padding:"0 0 .4rem"}}>
+              <span style={{color:"var(--t3)"}}>●</span> Guest — <button onClick={() => { disconnect(); handleLogout(); }}
+                style={{background:"none",border:"none",color:"var(--accent)",cursor:"pointer",fontSize:".68rem",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>
+                Login for more features</button>
+            </div>
+          )}
           <div className="s-row">
             <button className="btn-sm" onClick={() => setFbOpen(true)}>💬 {t("feedback")}</button>
             <button className="btn-sm danger" onClick={disconnect}>⏏ {t("disconnect")}</button>
           </div>
+          {(authUser || isGuest) && (
+            <div style={{marginTop:".4rem"}}>
+              <button className="btn-sm" style={{width:"100%",fontSize:".68rem"}} onClick={() => { disconnect(); handleLogout(); }}>
+                {authUser ? "🚪 Logout" : "🔑 Login"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
