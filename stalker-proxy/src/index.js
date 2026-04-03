@@ -10,6 +10,9 @@ const { Transform } = require("stream");
 const helmet    = require("helmet");
 const rateLimit = require("express-rate-limit");
 
+const dns   = require("dns");
+const { promisify } = require("util");
+const dnsLookup = promisify(dns.lookup);
 const http  = require("http");
 const https = require("https");
 const keepAliveAgent      = new http.Agent({ keepAlive: true, maxSockets: 50 });
@@ -20,24 +23,44 @@ const app  = express();
 app.set("trust proxy", 1); // trust nginx X-Forwarded-For
 const PORT = process.env.PORT || 3001;
 
-// Block SSRF: validate proxy URLs
-function isUrlAllowed(urlStr) {
+// Block SSRF: validate proxy URLs with DNS resolution to prevent rebinding
+function isPrivateIP(ip) {
+  if (!ip) return true;
+  // IPv6 loopback/link-local
+  if (ip === "::1" || ip === "[::1]" || ip.startsWith("fe80") || ip.startsWith("fc00") || ip.startsWith("fd")) return true;
+  // IPv4-mapped IPv6 (::ffff:127.0.0.1)
+  const v4match = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  const v4 = v4match ? v4match[1] : ip;
+  const parts = v4.split(".").map(Number);
+  if (parts.length !== 4 || parts.some(p => isNaN(p))) return !v4match; // non-IPv4 without ffff prefix = allow
+  if (parts[0] === 127) return true; // 127.x.x.x
+  if (parts[0] === 10) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 169 && parts[1] === 254) return true; // cloud metadata
+  if (parts[0] === 0) return true;
+  return false;
+}
+
+function isUrlAllowedSync(urlStr) {
   try {
     const u = new URL(urlStr);
-    // Only allow http and https
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
     const host = u.hostname.toLowerCase();
-    // Block localhost
-    if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return false;
-    // Block private IPs
-    const parts = host.split(".").map(Number);
-    if (parts.length === 4) {
-      if (parts[0] === 10) return false; // 10.x.x.x
-      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false; // 172.16-31.x.x
-      if (parts[0] === 192 && parts[1] === 168) return false; // 192.168.x.x
-      if (parts[0] === 169 && parts[1] === 254) return false; // 169.254.x.x (cloud metadata)
-      if (parts[0] === 0) return false; // 0.x.x.x
-    }
+    if (host === "localhost" || host === "[::1]") return false;
+    if (isPrivateIP(host)) return false;
+    return true;
+  } catch { return false; }
+}
+
+async function isUrlAllowed(urlStr) {
+  if (!isUrlAllowedSync(urlStr)) return false;
+  try {
+    const u = new URL(urlStr);
+    const host = u.hostname.replace(/^\[|\]$/g, "");
+    // Resolve DNS to catch rebinding (hostname pointing to private IP)
+    const { address } = await dnsLookup(host);
+    if (isPrivateIP(address)) return false;
     return true;
   } catch { return false; }
 }
@@ -64,8 +87,16 @@ app.use("/api/sync", express.json({ limit: "5mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(compression());
 
-// Admin password for analytics (set in .env or defaults to "admin")
+// Admin password for analytics (set in .env)
+const crypto = require("crypto");
 const ADMIN_PASS = process.env.ADMIN_PASS;
+function safeCompare(a, b) {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 // Track requests, visitors, guests, and portals
 app.use((req, res, next) => {
@@ -113,7 +144,7 @@ app.post("/api/feedback", express.json(), (req, res) => {
 app.get("/api/feedback", (req, res) => {
   if (!ADMIN_PASS) return res.status(503).json({ error: "ADMIN_PASS not configured" });
   const token = req.headers["x-admin-token"];
-  if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
+  if (!safeCompare(token, ADMIN_PASS)) return res.status(401).json({ error: "Unauthorized" });
   res.json({ feedback: cache.getFeedback() });
 });
 
@@ -156,6 +187,8 @@ app.get("/api/sync/:type", auth.optionalAuth, (req, res) => {
 app.post("/api/sync/migrate-guest", auth.requireAuth, express.json(), (req, res) => {
   const { guestId } = req.body;
   if (!guestId) return res.status(400).json({ error: "guestId required" });
+  // Ownership: only allow migration if the request includes the matching guest ID header
+  if (req.headers["x-guest-id"] !== guestId) return res.status(403).json({ error: "Guest ID mismatch" });
   const userId = `user:${req.user.id}`;
   const guestKey = `guest:${guestId}`;
   // Copy all guest data rows to user
@@ -173,13 +206,17 @@ app.post("/api/sync/migrate-guest", auth.requireAuth, express.json(), (req, res)
 // ── DELETE /api/sync — delete all data for a connection
 app.delete("/api/sync", auth.optionalAuth, (req, res) => {
   const sid = syncId(req);
+  if (!sid) return res.status(401).json({ error: "Authentication or X-Guest-Id required" });
   const connId = req.query.connId;
-  if (sid && connId) cache.deleteGuestData(sid, connId);
+  if (!connId) return res.status(400).json({ error: "connId required" });
+  cache.deleteGuestData(sid, connId);
   res.json({ ok: true });
 });
 
 // ── DELETE /api/cache — delete cached data for a connection (channels, VOD, EPG, etc.)
-app.delete("/api/cache", (req, res) => {
+app.delete("/api/cache", auth.optionalAuth, (req, res) => {
+  const sid = syncId(req);
+  if (!sid) return res.status(401).json({ error: "Authentication or X-Guest-Id required" });
   const connId = req.query.connId;
   if (connId) cache.deleteByPrefix(connId);
   res.json({ ok: true });
@@ -187,14 +224,28 @@ app.delete("/api/cache", (req, res) => {
 
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
 const pathCache = new Map();
+const PATH_CACHE_MAX = 500;
 function setPathCache(key, value) {
-  if (pathCache.size > 500) pathCache.clear();
+  if (pathCache.size >= PATH_CACHE_MAX) {
+    // Evict oldest entry (first inserted) instead of clearing all
+    const oldest = pathCache.keys().next().value;
+    pathCache.delete(oldest);
+  }
   pathCache.set(key, value);
 }
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────
+
+// Safe error messages: only expose portal/user-facing errors, not internal stack details
+const SAFE_PREFIXES = ["Portal", "No stream", "Stream server", "Invalid", "portal and mac"];
+function safeError(e) {
+  const msg = e?.message || "Unknown error";
+  if (SAFE_PREFIXES.some(p => msg.startsWith(p))) return msg;
+  console.error("Internal error:", msg);
+  return "Request failed";
+}
 
 function cacheKey(portal, mac) {
   return `${portal.replace(/\/+$/, "")}|${mac}`;
@@ -413,6 +464,16 @@ async function portalFetch(session, params, timeout = 12000) {
 
 app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 
+// ── SSRF: validate portal URL + MAC format on all stalker routes
+const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
+app.use("/stalker", async (req, res, next) => {
+  const portal = req.body?.portal || req.query?.portal;
+  const mac = req.body?.mac || req.query?.mac;
+  if (portal && !(await isUrlAllowed(portal))) return res.status(403).json({ error: "Portal URL not allowed" });
+  if (mac && !MAC_RE.test(mac)) return res.status(400).json({ error: "Invalid MAC format" });
+  next();
+});
+
 // ── POST /stalker/handshake
 app.post("/stalker/handshake", async (req, res) => {
   const { portal, mac, serial, deviceId, deviceId2 } = req.body;
@@ -423,7 +484,7 @@ app.post("/stalker/handshake", async (req, res) => {
     res.json({ token: session.token });
   } catch (e) {
     console.error("Handshake error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -545,7 +606,7 @@ app.get("/stalker/api", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("API proxy error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -586,7 +647,7 @@ app.get("/stalker/channels", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("Channels error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -646,7 +707,7 @@ app.get("/stalker/vod/categories", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("VOD categories error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -685,7 +746,7 @@ app.get("/stalker/vod", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("VOD error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -717,10 +778,11 @@ app.get("/stalker/stream", async (req, res) => {
         cleanUrl = cleanUrl.replace(/localhost(:\d+)?/g, portalHost).replace(/127\.0\.0\.1(:\d+)?/g, portalHost);
       } catch {}
     }
+    if (!(await isUrlAllowed(cleanUrl))) return res.status(403).json({ error: "Stream URL not allowed" });
     res.json({ url: cleanUrl });
   } catch (e) {
     console.error("Stream resolve error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -746,6 +808,8 @@ app.get("/stalker/play", async (req, res) => {
     if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
       try { const h = new URL(portal).host; cleanUrl = cleanUrl.replace(/localhost(:\d+)?/g, h).replace(/127\.0\.0\.1(:\d+)?/g, h); } catch {}
     }
+    // SSRF: validate the stream URL returned by the portal
+    if (!(await isUrlAllowed(cleanUrl))) return res.status(403).json({ error: "Stream URL not allowed" });
     // resolve=1 → return the resolved stream URL as JSON (frontend will use /stream to play)
     if (req.query.resolve === "1") {
       return res.json({ url: cleanUrl });
@@ -781,19 +845,40 @@ app.get("/stalker/play", async (req, res) => {
     if (upstream.status === 206) { res.status(206); const cr = upstream.headers.get("content-range"); if (cr) res.set("Content-Range", cr); }
     const cl = upstream.headers.get("content-length"); if (cl) res.set("Content-Length", cl);
     if (ct.includes("mpegurl") || ct.includes("m3u") || cleanUrl.endsWith(".m3u8")) {
-      const origin = new URL(cleanUrl).origin;
+      const parsedCleanUrl = new URL(cleanUrl);
+      const playOrigin = parsedCleanUrl.origin;
+      const playBaseDir = cleanUrl.substring(0, cleanUrl.lastIndexOf("/") + 1);
       const proto = req.get("x-forwarded-proto") || req.protocol;
       const selfBase = `${proto}://${req.get("host")}`;
       res.set("Content-Type", ct);
+      let leftover = "";
       const rewriter = new Transform({
         transform(chunk, enc, cb) {
-          const rewritten = chunk.toString().split("\n").map(line => {
+          const text = leftover + chunk.toString();
+          const lines = text.split("\n");
+          leftover = lines.pop();
+          const rewritten = lines.map(line => {
             const trimmed = line.trim();
-            if (trimmed.startsWith("/") && (trimmed.includes(".ts") || trimmed.includes(".m3u8")))
-              return `${selfBase}/stream?url=${encodeURIComponent(origin + trimmed)}`;
-            return line;
-          }).join("\n");
+            if (!trimmed || trimmed.startsWith("#")) return line;
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://"))
+              return `${selfBase}/stream?url=${encodeURIComponent(trimmed)}`;
+            if (trimmed.startsWith("/"))
+              return `${selfBase}/stream?url=${encodeURIComponent(playOrigin + trimmed)}`;
+            return `${selfBase}/stream?url=${encodeURIComponent(playBaseDir + trimmed)}`;
+          }).join("\n") + "\n";
           cb(null, rewritten);
+        },
+        flush(cb) {
+          if (leftover.trim()) {
+            const t = leftover.trim();
+            if (t.startsWith("http://") || t.startsWith("https://"))
+              cb(null, `${selfBase}/stream?url=${encodeURIComponent(t)}`);
+            else if (t.startsWith("/"))
+              cb(null, `${selfBase}/stream?url=${encodeURIComponent(playOrigin + t)}`);
+            else if (!t.startsWith("#"))
+              cb(null, `${selfBase}/stream?url=${encodeURIComponent(playBaseDir + t)}`);
+            else cb(null, leftover);
+          } else cb();
         }
       });
       upstream.body.pipe(rewriter).pipe(res);
@@ -803,7 +888,7 @@ app.get("/stalker/play", async (req, res) => {
     }
   } catch (e) {
     console.error("Play error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -833,7 +918,7 @@ app.get("/stalker/series/seasons", async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error("Series seasons error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -858,7 +943,7 @@ app.get("/stalker/series/categories", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("Series categories error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -896,7 +981,7 @@ app.get("/stalker/series", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("Series error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -924,7 +1009,7 @@ app.get("/stalker/series/episode/stream", async (req, res) => {
     res.json({ url: cleanUrl });
   } catch (e) {
     console.error("Series episode stream error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -957,7 +1042,7 @@ app.get("/stalker/series/:seriesId/seasons", async (req, res) => {
     res.json({ seasons });
   } catch (e) {
     console.error("Series seasons error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -980,7 +1065,7 @@ app.get("/stalker/profile", async (req, res) => {
     res.json(data?.js || {});
   } catch (e) {
     console.error("Profile error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -997,7 +1082,7 @@ app.get("/stalker/account", async (req, res) => {
     res.json(data?.js || {});
   } catch (e) {
     console.error("Account error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -1034,7 +1119,7 @@ app.get("/stalker/epg", async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error("EPG error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: safeError(e) });
   }
 });
 
@@ -1055,7 +1140,7 @@ app.options("/stream", (req, res) => {
 app.head("/stream", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).end();
-  if (!isUrlAllowed(url)) return res.status(403).end();
+  if (!(await isUrlAllowed(url))) return res.status(403).end();
   try {
     const upstream = await fetch(url, { method: "HEAD", headers: { "User-Agent": "StreamVault/1.0" }, redirect: "follow", agent: agentFor(url) });
     Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
@@ -1074,7 +1159,7 @@ app.head("/stream", async (req, res) => {
 app.get("/stream", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "url required" });
-  if (!isUrlAllowed(url)) return res.status(403).json({ error: "URL not allowed" });
+  if (!(await isUrlAllowed(url))) return res.status(403).json({ error: "URL not allowed" });
   try {
     const headers = { "User-Agent": "StreamVault/1.0" };
     if (req.headers.range) headers["Range"] = req.headers.range;
@@ -1096,19 +1181,43 @@ app.get("/stream", async (req, res) => {
 
     // HLS manifests: rewrite segment URLs via streaming Transform
     if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
-      const origin = new URL(url).origin;
+      const parsedUrl = new URL(url);
+      const origin = parsedUrl.origin;
+      const baseDir = url.substring(0, url.lastIndexOf("/") + 1); // for relative URLs
       const proto = req.get("x-forwarded-proto") || req.protocol;
       const selfBase = `${proto}://${req.get("host")}`;
       res.set("Content-Type", ct);
+      let leftover = ""; // buffer incomplete lines across chunks
       const rewriter = new Transform({
         transform(chunk, enc, cb) {
-          const rewritten = chunk.toString().split("\n").map(line => {
+          const text = leftover + chunk.toString();
+          const lines = text.split("\n");
+          leftover = lines.pop(); // last element may be incomplete
+          const rewritten = lines.map(line => {
             const trimmed = line.trim();
-            if (trimmed.startsWith("/") && (trimmed.includes(".ts") || trimmed.includes(".m3u8")))
+            if (!trimmed || trimmed.startsWith("#")) return line;
+            // Absolute http(s) URLs
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://"))
+              return `${selfBase}/stream?url=${encodeURIComponent(trimmed)}`;
+            // Root-relative URLs
+            if (trimmed.startsWith("/"))
               return `${selfBase}/stream?url=${encodeURIComponent(origin + trimmed)}`;
-            return line;
-          }).join("\n");
+            // Relative URLs (e.g. "segment001.ts")
+            return `${selfBase}/stream?url=${encodeURIComponent(baseDir + trimmed)}`;
+          }).join("\n") + "\n";
           cb(null, rewritten);
+        },
+        flush(cb) {
+          if (leftover.trim()) {
+            const trimmed = leftover.trim();
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://"))
+              cb(null, `${selfBase}/stream?url=${encodeURIComponent(trimmed)}`);
+            else if (trimmed.startsWith("/"))
+              cb(null, `${selfBase}/stream?url=${encodeURIComponent(origin + trimmed)}`);
+            else if (!trimmed.startsWith("#"))
+              cb(null, `${selfBase}/stream?url=${encodeURIComponent(baseDir + trimmed)}`);
+            else cb(null, leftover);
+          } else cb();
         }
       });
       upstream.body.pipe(rewriter).pipe(res);
@@ -1118,7 +1227,7 @@ app.get("/stream", async (req, res) => {
     }
   } catch (e) {
     console.error("Stream proxy error:", e.message);
-    if (!res.headersSent) res.status(502).json({ error: e.message });
+    if (!res.headersSent) res.status(502).json({ error: "Stream request failed" });
   }
 });
 
@@ -1126,7 +1235,7 @@ app.get("/stream", async (req, res) => {
 app.get("/img", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).end();
-  if (!isUrlAllowed(url)) return res.status(403).end();
+  if (!(await isUrlAllowed(url))) return res.status(403).end();
   try {
     // Try original URL first, fallback to HTTP for portals with broken HTTPS certs
     let fetchUrl = url;
@@ -1151,11 +1260,30 @@ app.get("/img", async (req, res) => {
   }
 });
 
+// ── GET /api/tmdb/* — proxy TMDB API requests (keeps API key server-side)
+const TMDB_KEY = process.env.TMDB_API_KEY || "";
+app.get("/api/tmdb/*", async (req, res) => {
+  if (!TMDB_KEY) return res.status(503).json({ error: "TMDB API key not configured" });
+  const tmdbPath = req.params[0]; // everything after /api/tmdb/
+  const qs = new URLSearchParams(req.query);
+  qs.set("api_key", TMDB_KEY);
+  try {
+    const upstream = await fetch(`https://api.themoviedb.org/3/${tmdbPath}?${qs}`, {
+      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }, agent: keepAliveAgentHttps,
+    });
+    const data = await upstream.json();
+    res.set("Cache-Control", "public, max-age=3600");
+    res.json(data);
+  } catch (e) {
+    res.status(502).json({ error: "TMDB request failed" });
+  }
+});
+
 // ── GET /proxy?url=... — generic CORS proxy for Xtream API and M3U fetches
 app.get("/proxy", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "url required" });
-  if (!isUrlAllowed(url)) return res.status(403).json({ error: "URL not allowed" });
+  if (!(await isUrlAllowed(url))) return res.status(403).json({ error: "URL not allowed" });
 
   try {
     const upstream = await fetch(url, { timeout: 30000, headers: { "User-Agent": "StreamVault/1.0" }, agent: agentFor(url) });
@@ -1170,7 +1298,7 @@ app.get("/proxy", async (req, res) => {
     }
   } catch (e) {
     console.error("Proxy error:", e.message);
-    res.status(502).json({ error: e.message });
+    res.status(502).json({ error: "Proxy request failed" });
   }
 });
 
@@ -1211,7 +1339,7 @@ setInterval(trackDailyBandwidth, 60000); // every minute
 app.get("/api/analytics", (req, res) => {
   if (!ADMIN_PASS) return res.status(503).json({ error: "ADMIN_PASS not configured" });
   const token = req.headers["x-admin-token"];
-  if (token !== ADMIN_PASS) return res.status(401).json({ error: "Unauthorized" });
+  if (!safeCompare(token, ADMIN_PASS)) return res.status(401).json({ error: "Unauthorized" });
 
   const stats = cache.getStats();
   const mem = process.memoryUsage();

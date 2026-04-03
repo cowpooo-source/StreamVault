@@ -214,9 +214,9 @@ function trackGuest(guestId, ip) {
   stmtTrackGuest.run(guestId, ip, now, now, now, ip);
 }
 
+const GUEST_ACTIVITY_FIELDS = new Set(["connections", "favorites", "history"]);
 function trackGuestActivity(guestId, field) {
-  if (!guestId) return;
-  // field is one of: connections, favorites, history — validated at call site
+  if (!guestId || !GUEST_ACTIVITY_FIELDS.has(field)) return;
   db.prepare(`UPDATE guests SET ${field} = ${field} + 1, last_seen = ? WHERE guest_id = ?`)
     .run(Math.floor(Date.now() / 1000), guestId);
 }

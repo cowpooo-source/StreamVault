@@ -2014,7 +2014,7 @@ export default function App() {
   const [autoConnected, setAutoConnected] = useState(false); // true if loaded from IDB cache
 
   // ── TMDB
-  const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "548cb796fc67d6997619a8a0f7e011a5");
+  const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "server");
 
   // ── Feedback widget
   const [fbOpen, setFbOpen] = useState(false);
@@ -2045,6 +2045,10 @@ export default function App() {
   }, [themeName]);
 
   // ── TMDB enrichment for detail modal
+  function tmdbUrl(path, params = "") {
+    if (tmdbKey === "server") return `${API}/api/tmdb/${path}?${params}`;
+    return `https://api.themoviedb.org/3/${path}?api_key=${tmdbKey}&${params}`;
+  }
   useEffect(() => {
     if (!expandedItem || !tmdbKey) { setTmdbData(null); setShowTrailer(false); return; }
     setTmdbData(null);
@@ -2057,16 +2061,15 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const searchUrl = `https://api.themoviedb.org/3/search/${type}?api_key=${tmdbKey}&query=${query}${year}&language=en-US`;
+        const searchUrl = tmdbUrl(`search/${type}`, `query=${query}${year}&language=en-US`);
         const sr = await fetch(searchUrl).then(r => r.json());
         const match = sr.results?.[0];
         if (!match || cancelled) return;
 
-        const base = `https://api.themoviedb.org/3/${type}/${match.id}`;
         const [details, credits, videos] = await Promise.all([
-          fetch(`${base}?api_key=${tmdbKey}&language=en-US`).then(r => r.json()),
-          fetch(`${base}/credits?api_key=${tmdbKey}`).then(r => r.json()).catch(() => null),
-          fetch(`${base}/videos?api_key=${tmdbKey}&language=en-US`).then(r => r.json()).catch(() => null),
+          fetch(tmdbUrl(`${type}/${match.id}`, "language=en-US")).then(r => r.json()),
+          fetch(tmdbUrl(`${type}/${match.id}/credits`)).then(r => r.json()).catch(() => null),
+          fetch(tmdbUrl(`${type}/${match.id}/videos`, "language=en-US")).then(r => r.json()).catch(() => null),
         ]);
         if (cancelled) return;
 
@@ -4091,11 +4094,13 @@ const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, seri
   async function loadAll(key) {
     setLoading(true); setErr("");
     try {
-      const base = "https://api.themoviedb.org/3";
+      const u = (path) => key === "server"
+        ? `${API}/api/tmdb/${path}?language=en-US`
+        : `https://api.themoviedb.org/3/${path}?api_key=${key}&language=en-US`;
       const [t, pm, ptv] = await Promise.all([
-        fetch(`${base}/trending/all/week?api_key=${key}&language=en-US`).then(r => r.json()),
-        fetch(`${base}/movie/popular?api_key=${key}&language=en-US`).then(r => r.json()),
-        fetch(`${base}/tv/popular?api_key=${key}&language=en-US`).then(r => r.json()),
+        fetch(u("trending/all/week")).then(r => r.json()),
+        fetch(u("movie/popular")).then(r => r.json()),
+        fetch(u("tv/popular")).then(r => r.json()),
       ]);
       if (t.success === false) throw new Error(t.status_message || "Invalid API key");
       setTrending(t.results || []);
