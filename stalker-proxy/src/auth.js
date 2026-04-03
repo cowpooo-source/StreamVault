@@ -41,8 +41,9 @@ function init(database) {
   )`);
 
   // Add columns if upgrading from older schema
-  try { db.exec("ALTER TABLE users ADD COLUMN email TEXT UNIQUE COLLATE NOCASE"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN email TEXT"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL"); } catch {}
 
   db.exec(`CREATE TABLE IF NOT EXISTS email_tokens (
     token TEXT PRIMARY KEY,
