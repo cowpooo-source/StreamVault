@@ -33,6 +33,7 @@ function AuthScreen({ onAuth, onGuest }) {
         .then(r => r.json()).then(d => { if (d.ok) setInfo("Email activated! You can now login."); else setErr(d.error); });
       history.replaceState(null, "", location.pathname);
     } else if (action === "reset-password" && token) {
+      sessionStorage.setItem("sv-reset-token", token);
       setMode("reset");
       history.replaceState(null, "", location.pathname);
     }
@@ -78,12 +79,6 @@ function AuthScreen({ onAuth, onGuest }) {
     finally { setLoading(false); }
   }
 
-  // Save reset token from URL for form submission
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const token = params.get("token");
-    if (token && mode === "reset") sessionStorage.setItem("sv-reset-token", token);
-  }, [mode]);
 
   return (
     <div className="setup">
