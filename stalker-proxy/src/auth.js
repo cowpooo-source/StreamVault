@@ -30,13 +30,27 @@ function init(database) {
   db.exec(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    email TEXT UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'free' CHECK(role IN ('admin','regular','free')),
     max_connections INTEGER NOT NULL DEFAULT 2,
     created_at INTEGER NOT NULL,
     last_login INTEGER,
-    disabled INTEGER NOT NULL DEFAULT 0
+    disabled INTEGER NOT NULL DEFAULT 0,
+    email_verified INTEGER NOT NULL DEFAULT 0
   )`);
+
+  // Add columns if upgrading from older schema
+  try { db.exec("ALTER TABLE users ADD COLUMN email TEXT UNIQUE COLLATE NOCASE"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0"); } catch {}
+
+  db.exec(`CREATE TABLE IF NOT EXISTS email_tokens (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id)");
 
   db.exec(`CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
@@ -49,14 +63,23 @@ function init(database) {
 
   // Prepare statements
   stmts.getUserByUsername = db.prepare("SELECT * FROM users WHERE username = ?");
-  stmts.getUserById = db.prepare("SELECT id, username, role, max_connections, created_at, last_login, disabled FROM users WHERE id = ?");
-  stmts.createUser = db.prepare("INSERT INTO users (username, password_hash, role, max_connections, created_at) VALUES (?, ?, ?, ?, ?)");
+  stmts.getUserByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
+  stmts.getUserById = db.prepare("SELECT id, username, email, role, max_connections, created_at, last_login, disabled, email_verified FROM users WHERE id = ?");
+  stmts.createUser = db.prepare("INSERT INTO users (username, email, password_hash, role, max_connections, created_at) VALUES (?, ?, ?, ?, ?, ?)");
   stmts.updateLastLogin = db.prepare("UPDATE users SET last_login = ? WHERE id = ?");
-  stmts.listUsers = db.prepare("SELECT id, username, role, max_connections, created_at, last_login, disabled FROM users ORDER BY created_at DESC");
+  stmts.listUsers = db.prepare("SELECT id, username, email, role, max_connections, created_at, last_login, disabled, email_verified FROM users ORDER BY created_at DESC");
   stmts.updateUser = db.prepare("UPDATE users SET role = ?, max_connections = ?, disabled = ? WHERE id = ?");
   stmts.deleteUser = db.prepare("DELETE FROM users WHERE id = ?");
   stmts.countUsers = db.prepare("SELECT COUNT(*) as cnt FROM users");
   stmts.changePassword = db.prepare("UPDATE users SET password_hash = ? WHERE id = ?");
+  stmts.setEmailVerified = db.prepare("UPDATE users SET email_verified = 1 WHERE id = ?");
+  stmts.updateEmail = db.prepare("UPDATE users SET email = ?, email_verified = 0 WHERE id = ?");
+
+  stmts.createEmailToken = db.prepare("INSERT INTO email_tokens (token, user_id, type, expires_at) VALUES (?, ?, ?, ?)");
+  stmts.getEmailToken = db.prepare("SELECT * FROM email_tokens WHERE token = ? AND expires_at > ?");
+  stmts.deleteEmailToken = db.prepare("DELETE FROM email_tokens WHERE token = ?");
+  stmts.deleteUserEmailTokens = db.prepare("DELETE FROM email_tokens WHERE user_id = ? AND type = ?");
+  stmts.cleanupEmailTokens = db.prepare("DELETE FROM email_tokens WHERE expires_at <= ?");
 
   stmts.createSession = db.prepare("INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)");
   stmts.getSession = db.prepare("SELECT * FROM sessions WHERE token = ? AND expires_at > ?");
@@ -92,7 +115,7 @@ function seedAdmin() {
   const existing = stmts.getUserByUsername.get(adminUser);
   if (!existing) {
     const hash = bcrypt.hashSync(adminPass, SALT_ROUNDS);
-    stmts.createUser.run(adminUser, hash, "admin", 999, Date.now());
+    stmts.createUser.run(adminUser, null, hash, "admin", 999, Date.now());
     console.log(`   Auth: seeded admin user "${adminUser}"`);
   } else if (existing.role !== "admin") {
     stmts.updateUser.run("admin", 999, 0, existing.id);
@@ -101,16 +124,62 @@ function seedAdmin() {
 
 // ── User CRUD ──
 
-function createUser(username, password, role = DEFAULT_ROLE) {
+function createUser(username, password, role = DEFAULT_ROLE, email = null) {
   if (!username || !password) throw new Error("Username and password required");
   if (username.length < 3) throw new Error("Username must be at least 3 characters");
   if (password.length < 4) throw new Error("Password must be at least 4 characters");
   if (stmts.getUserByUsername.get(username)) throw new Error("Username already taken");
+  if (email) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Invalid email address");
+    if (stmts.getUserByEmail.get(email)) throw new Error("Email already registered");
+  }
 
   const limits = ROLE_LIMITS[role] || ROLE_LIMITS.free;
   const hash = bcrypt.hashSync(password, SALT_ROUNDS);
-  const result = stmts.createUser.run(username, hash, role, limits.maxConnections, Date.now());
-  return { id: result.lastInsertRowid, username, role };
+  const result = stmts.createUser.run(username, email || null, hash, role, limits.maxConnections, Date.now());
+  return { id: result.lastInsertRowid, username, email, role };
+}
+
+// ── Email token operations ──
+
+function createEmailToken(userId, type, expiresIn = 24 * 60 * 60 * 1000) {
+  // Delete old tokens of same type
+  stmts.deleteUserEmailTokens.run(userId, type);
+  const token = crypto.randomBytes(32).toString("hex");
+  stmts.createEmailToken.run(token, userId, type, Date.now() + expiresIn);
+  return token;
+}
+
+function verifyEmailToken(token, type) {
+  const row = stmts.getEmailToken.get(token, Date.now());
+  if (!row || row.type !== type) return null;
+  return row;
+}
+
+function consumeEmailToken(token) {
+  stmts.deleteEmailToken.run(token);
+}
+
+function activateEmail(userId) {
+  stmts.setEmailVerified.run(userId);
+}
+
+function requestPasswordReset(usernameOrEmail) {
+  const user = stmts.getUserByUsername.get(usernameOrEmail) || stmts.getUserByEmail.get(usernameOrEmail);
+  if (!user || !user.email) return null;
+  const token = createEmailToken(user.id, "reset", 60 * 60 * 1000); // 1 hour
+  return { user, token };
+}
+
+function resetPassword(token, newPassword) {
+  const row = verifyEmailToken(token, "reset");
+  if (!row) throw new Error("Invalid or expired reset link");
+  if (!newPassword || newPassword.length < 4) throw new Error("Password must be at least 4 characters");
+  const hash = bcrypt.hashSync(newPassword, SALT_ROUNDS);
+  stmts.changePassword.run(hash, row.user_id);
+  consumeEmailToken(token);
+  revokeAllUserTokens(row.user_id);
+  return stmts.getUserById.get(row.user_id);
 }
 
 function authenticate(username, password) {
@@ -135,8 +204,8 @@ function authenticate(username, password) {
   return {
     token,
     user: {
-      id: user.id, username: user.username, role: user.role,
-      maxConnections: user.max_connections, limits,
+      id: user.id, username: user.username, email: user.email, role: user.role,
+      maxConnections: user.max_connections, emailVerified: !!user.email_verified, limits,
     }
   };
 }
@@ -203,6 +272,7 @@ function changePassword(id, newPassword) {
 function cleanupSessions() {
   const result = stmts.cleanupSessions.run(Date.now());
   if (result.changes > 0) console.log(`Auth: cleaned ${result.changes} expired sessions`);
+  stmts.cleanupEmailTokens.run(Date.now());
 }
 
 // ── Express Middleware ──
@@ -239,4 +309,6 @@ module.exports = {
   createUser, authenticate, verifyToken, revokeToken, revokeAllUserTokens,
   listUsers, getUser, updateUser, deleteUser, changePassword, cleanupSessions,
   requireAuth, optionalAuth, requireRole,
+  createEmailToken, verifyEmailToken, consumeEmailToken, activateEmail,
+  requestPasswordReset, resetPassword,
 };

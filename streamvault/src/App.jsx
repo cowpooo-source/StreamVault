@@ -15,28 +15,75 @@ function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", h
 
 // ── Auth Screen ──
 function AuthScreen({ onAuth, onGuest }) {
-  const [mode, setMode] = useState("login");
+  const [mode, setMode] = useState("login"); // login | register | forgot | reset
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
+
+  // Check URL for activation/reset tokens
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const action = params.get("action");
+    const token = params.get("token");
+    if (action === "activate" && token) {
+      fetch(`${API}/api/auth/activate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) })
+        .then(r => r.json()).then(d => { if (d.ok) setInfo("Email activated! You can now login."); else setErr(d.error); });
+      history.replaceState(null, "", location.pathname);
+    } else if (action === "reset-password" && token) {
+      setMode("reset");
+      history.replaceState(null, "", location.pathname);
+    }
+  }, []);
 
   async function submit(e) {
     e?.preventDefault();
-    setErr(""); setLoading(true);
+    setErr(""); setInfo(""); setLoading(true);
     try {
-      const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const res = await fetch(`${API}${endpoint}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
-      localStorage.setItem("sv-auth-token", data.token);
-      onAuth(data.user);
+      if (mode === "forgot") {
+        const res = await fetch(`${API}/api/auth/forgot-password`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setInfo(data.message);
+      } else if (mode === "reset") {
+        const token = new URLSearchParams(location.search).get("token") || sessionStorage.getItem("sv-reset-token");
+        const res = await fetch(`${API}/api/auth/reset-password`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setInfo("Password reset! You can now login.");
+        setMode("login");
+        sessionStorage.removeItem("sv-reset-token");
+      } else {
+        const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
+        const body = mode === "register" ? { username, password, email: email || undefined } : { username, password };
+        const res = await fetch(`${API}${endpoint}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed");
+        localStorage.setItem("sv-auth-token", data.token);
+        if (mode === "register" && email) setInfo("Account created! Check your email to verify.");
+        onAuth(data.user);
+      }
     } catch (e) { setErr(e.message); }
     finally { setLoading(false); }
   }
+
+  // Save reset token from URL for form submission
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const token = params.get("token");
+    if (token && mode === "reset") sessionStorage.setItem("sv-reset-token", token);
+  }, [mode]);
 
   return (
     <div className="setup">
@@ -45,40 +92,90 @@ function AuthScreen({ onAuth, onGuest }) {
           <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"2rem",fontWeight:700,letterSpacing:".12em",color:"var(--accent)"}}>STREAMVAULT</div>
           <div style={{fontSize:".78rem",color:"var(--t3)"}}>Your personal IPTV client</div>
         </div>
-        <div className="tabs" style={{marginBottom:"1rem"}}>
-          <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("")}}>Login</button>
-          <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("")}}>Register</button>
-        </div>
+
+        {(mode === "login" || mode === "register") && (
+          <div className="tabs" style={{marginBottom:"1rem"}}>
+            <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("");setInfo("")}}>Login</button>
+            <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("");setInfo("")}}>Register</button>
+          </div>
+        )}
+
+        {mode === "forgot" && (
+          <div style={{marginBottom:"1rem"}}>
+            <div style={{fontSize:".95rem",fontWeight:600,marginBottom:".3rem"}}>Forgot Password</div>
+            <div style={{fontSize:".75rem",color:"var(--t3)"}}>Enter your username or email to receive a reset link.</div>
+          </div>
+        )}
+
+        {mode === "reset" && (
+          <div style={{marginBottom:"1rem"}}>
+            <div style={{fontSize:".95rem",fontWeight:600,marginBottom:".3rem"}}>Set New Password</div>
+          </div>
+        )}
+
         {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
+        {info && <div style={{marginBottom:".8rem",padding:".55rem .7rem",background:"rgba(0,212,255,0.1)",border:"1px solid rgba(0,212,255,0.3)",borderRadius:8,fontSize:".78rem",color:"var(--accent)"}}>{info}</div>}
+
         <form onSubmit={submit}>
-          <div className="fg">
-            <label className="fl">Username</label>
-            <input className="fi" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} autoFocus />
-          </div>
-          <div className="fg">
-            <label className="fl">Password</label>
-            <input className="fi" type="password" placeholder="Password" value={password}
-              onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && submit()} />
-          </div>
-          <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%",marginTop:".8rem"}}>
-            {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
-          </button>
-        </form>
-        <div style={{textAlign:"center",marginTop:"1.2rem"}}>
-          <button onClick={onGuest} style={{width:"100%",padding:".65rem",background:"transparent",
-            border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,color:"var(--t2)",cursor:"pointer",
-            fontSize:".88rem",fontWeight:500,fontFamily:"'DM Sans',sans-serif",transition:"all .2s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.color="var(--accent)"}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.15)";e.currentTarget.style.color="var(--t2)"}}>
-            Continue as Guest
-          </button>
-          <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed — some features limited</div>
-          {mode === "register" && (
-            <div style={{fontSize:".65rem",color:"var(--accent)",marginTop:".5rem"}}>
-              New accounts get Regular access (promo)
+          {mode !== "reset" && (
+            <div className="fg">
+              <label className="fl">{mode === "forgot" ? "Username or Email" : "Username"}</label>
+              <input className="fi" placeholder={mode === "forgot" ? "Username or email" : "Username"} value={username} onChange={e => setUsername(e.target.value)} autoFocus />
             </div>
           )}
-        </div>
+          {mode === "register" && (
+            <div className="fg">
+              <label className="fl">Email <span style={{fontSize:".65rem",color:"var(--t3)",fontWeight:400}}>(optional — for password recovery)</span></label>
+              <input className="fi" type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} />
+            </div>
+          )}
+          {mode !== "forgot" && (
+            <div className="fg">
+              <label className="fl">{mode === "reset" ? "New Password" : "Password"}</label>
+              <input className="fi" type="password" placeholder={mode === "reset" ? "New password" : "Password"} value={password}
+                onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && submit()} />
+            </div>
+          )}
+          <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%",marginTop:".8rem"}}>
+            {loading ? "..." : mode === "login" ? "Login" : mode === "register" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : "Reset Password"}
+          </button>
+        </form>
+
+        {mode === "login" && (
+          <div style={{textAlign:"center",marginTop:".6rem"}}>
+            <button onClick={() => {setMode("forgot");setErr("");setInfo("")}}
+              style={{background:"none",border:"none",color:"var(--t3)",cursor:"pointer",fontSize:".72rem",fontFamily:"inherit"}}>
+              Forgot password?
+            </button>
+          </div>
+        )}
+
+        {(mode === "forgot" || mode === "reset") && (
+          <div style={{textAlign:"center",marginTop:".6rem"}}>
+            <button onClick={() => {setMode("login");setErr("");setInfo("")}}
+              style={{background:"none",border:"none",color:"var(--accent)",cursor:"pointer",fontSize:".75rem",fontFamily:"inherit"}}>
+              Back to Login
+            </button>
+          </div>
+        )}
+
+        {(mode === "login" || mode === "register") && (
+          <div style={{textAlign:"center",marginTop:"1.2rem"}}>
+            <button onClick={onGuest} style={{width:"100%",padding:".65rem",background:"transparent",
+              border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,color:"var(--t2)",cursor:"pointer",
+              fontSize:".88rem",fontWeight:500,fontFamily:"'DM Sans',sans-serif",transition:"all .2s"}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.color="var(--accent)"}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.15)";e.currentTarget.style.color="var(--t2)"}}>
+              Continue as Guest
+            </button>
+            <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed — some features limited</div>
+            {mode === "register" && (
+              <div style={{fontSize:".65rem",color:"var(--accent)",marginTop:".5rem"}}>
+                New accounts get Regular access (promo)
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -20,7 +20,8 @@
     "express-rate-limit": "^7.0.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.3",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "resend": "^6.10.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

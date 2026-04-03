@@ -5,6 +5,7 @@ const cors        = require("cors");
 const compression = require("compression");
 const cache       = require("./cache");
 const auth        = require("./auth");
+const email       = require("./email");
 const { Transform } = require("stream");
 
 const helmet    = require("helmet");
@@ -1280,12 +1281,17 @@ app.use("/api/auth/login", rateLimit({ windowMs: 900000, max: 15, message: { err
 app.use("/api/auth/register", rateLimit({ windowMs: 3600000, max: 10, message: { error: "Too many registrations, try again later" } }));
 
 // ── POST /api/auth/register ──
-app.post("/api/auth/register", express.json(), (req, res) => {
+app.post("/api/auth/register", express.json(), async (req, res) => {
   const open = process.env.REGISTRATION_OPEN !== "false";
   if (!open) return res.status(403).json({ error: "Registration is currently closed" });
   try {
-    const { username, password } = req.body;
-    const user = auth.createUser(username, password);
+    const { username, password, email: userEmail } = req.body;
+    const user = auth.createUser(username, password, undefined, userEmail || null);
+    // Send activation email if email provided
+    if (userEmail) {
+      const token = auth.createEmailToken(user.id, "activation");
+      email.sendActivation(userEmail, username, token);
+    }
     const session = auth.authenticate(username, password);
     res.json(session);
   } catch (e) {
@@ -1316,7 +1322,8 @@ app.post("/api/auth/logout", auth.requireAuth, (req, res) => {
 app.get("/api/auth/me", auth.requireAuth, (req, res) => {
   const limits = auth.ROLE_LIMITS[req.user.role] || auth.ROLE_LIMITS.free;
   res.json({
-    id: req.user.id, username: req.user.username, role: req.user.role,
+    id: req.user.id, username: req.user.username, email: req.user.email,
+    role: req.user.role, emailVerified: !!req.user.email_verified,
     maxConnections: req.user.max_connections, limits,
   });
 });
@@ -1325,6 +1332,59 @@ app.get("/api/auth/me", auth.requireAuth, (req, res) => {
 app.put("/api/auth/password", auth.requireAuth, express.json(), (req, res) => {
   try {
     auth.changePassword(req.user.id, req.body.password);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── POST /api/auth/forgot-password ──
+app.post("/api/auth/forgot-password", rateLimit({ windowMs: 900000, max: 5 }), express.json(), async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: "Username or email required" });
+  const result = auth.requestPasswordReset(username);
+  if (result) {
+    await email.sendPasswordReset(result.user.email, result.user.username, result.token);
+  }
+  // Always return success to prevent user enumeration
+  res.json({ ok: true, message: "If an account with that username/email exists and has an email on file, a reset link has been sent." });
+});
+
+// ── POST /api/auth/reset-password ──
+app.post("/api/auth/reset-password", express.json(), (req, res) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) return res.status(400).json({ error: "Token and password required" });
+    auth.resetPassword(token, password);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── POST /api/auth/activate ──
+app.post("/api/auth/activate", express.json(), (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: "Token required" });
+    const row = auth.verifyEmailToken(token, "activation");
+    if (!row) return res.status(400).json({ error: "Invalid or expired activation link" });
+    auth.activateEmail(row.user_id);
+    auth.consumeEmailToken(token);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── PUT /api/auth/email — update email ──
+app.put("/api/auth/email", auth.requireAuth, express.json(), async (req, res) => {
+  try {
+    const { email: newEmail } = req.body;
+    if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) return res.status(400).json({ error: "Valid email required" });
+    cache.db.prepare("UPDATE users SET email = ?, email_verified = 0 WHERE id = ?").run(newEmail, req.user.id);
+    const token = auth.createEmailToken(req.user.id, "activation");
+    await email.sendActivation(newEmail, req.user.username, token);
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
