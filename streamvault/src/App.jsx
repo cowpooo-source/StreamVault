@@ -1030,6 +1030,50 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   }
 
   const [streamErr, setStreamErr] = useState(null);
+  const [showStats, setShowStats] = useState(false);
+  const [stats, setStats] = useState({});
+  const statsInterval = useRef(null);
+
+  useEffect(() => {
+    if (!showStats) { clearInterval(statsInterval.current); return; }
+    function collect() {
+      const v = videoRef.current;
+      if (!v) return;
+      const s = {};
+      s.resolution = v.videoWidth && v.videoHeight ? `${v.videoWidth}×${v.videoHeight}` : "—";
+      s.currentTime = v.currentTime?.toFixed(1) || "0";
+      s.duration = v.duration && isFinite(v.duration) ? v.duration.toFixed(1) : "Live";
+      s.readyState = ["NOTHING","METADATA","CURRENT","FUTURE","ENOUGH"][v.readyState] || v.readyState;
+      s.networkState = ["EMPTY","IDLE","LOADING","NO_SRC"][v.networkState] || v.networkState;
+      s.paused = v.paused ? "Yes" : "No";
+      s.volume = `${Math.round(v.volume * 100)}%${v.muted ? " (muted)" : ""}`;
+      // Buffer info
+      if (v.buffered.length > 0) {
+        const end = v.buffered.end(v.buffered.length - 1);
+        s.buffer = `${(end - v.currentTime).toFixed(1)}s ahead`;
+      } else { s.buffer = "0s"; }
+      // Dropped frames (Chrome/Edge)
+      const q = v.getVideoPlaybackQuality?.();
+      if (q) {
+        s.droppedFrames = `${q.droppedVideoFrames}/${q.totalVideoFrames}`;
+        s.fps = q.totalVideoFrames > 0 && v.currentTime > 1
+          ? (q.totalVideoFrames / v.currentTime).toFixed(1) : "—";
+      }
+      // HLS.js stats
+      const hls = hlsRef.current;
+      if (hls?.levels?.[hls.currentLevel]) {
+        const lvl = hls.levels[hls.currentLevel];
+        s.bitrate = lvl.bitrate ? `${(lvl.bitrate / 1000).toFixed(0)} kbps` : "—";
+        s.codec = [lvl.videoCodec, lvl.audioCodec].filter(Boolean).join(", ") || "—";
+        s.hlsLevel = `${hls.currentLevel + 1}/${hls.levels.length}`;
+      }
+      s.url = current.url?.slice(0, 80) + (current.url?.length > 80 ? "…" : "");
+      setStats(s);
+    }
+    collect();
+    statsInterval.current = setInterval(collect, 1000);
+    return () => clearInterval(statsInterval.current);
+  }, [showStats, current.url]);
 
   const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
   // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
@@ -1255,6 +1299,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         case "p":
         case "P":
           pip(); break;
+        case "s":
+          e.preventDefault();
+          setShowStats(prev => !prev); break;
         default: break;
       }
     }
@@ -1325,6 +1372,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
               </div>
             </div>
           )}
+          {/* Stream stats overlay */}
+          {showStats && (
+            <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,.82)",color:"#0f0",
+              fontFamily:"monospace",fontSize:".68rem",padding:".6rem .8rem",borderRadius:6,lineHeight:1.7,
+              zIndex:20,maxWidth:"320px",pointerEvents:"none"}}>
+              <div style={{color:"#fff",fontWeight:700,marginBottom:4,fontSize:".72rem"}}>Stream Stats</div>
+              {Object.entries(stats).map(([k, v]) => (
+                <div key={k}><span style={{color:"#aaa"}}>{k}: </span>{v}</div>
+              ))}
+            </div>
+          )}
           {/* Quick channel switcher */}
           {showQCH && channelList && (
             <div className="qch">
@@ -1358,6 +1416,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
             </>
           )}
           <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ {t("pip")}</button>
+          <button className={`player-ctrl${showStats?" on":""}`} onClick={() => setShowStats(s=>!s)} title="Stream Stats">📊</button>
           <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title={t("fav")}>
             {isFav?.(current) ? `♥ ${t("fav")}` : `♡ ${t("fav")}`}
           </button>
@@ -1370,6 +1429,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
           <span><span className="kbd">←→</span>{current.type==="live"?t("channels"):"±10s"}</span>
           <span><span className="kbd">↑↓</span>{current.type==="live"?t("channels"):t("volume")}</span>
           <span><span className="kbd">P</span>{t("pip")}</span>
+          <span><span className="kbd">S</span>Stats</span>
           <span><span className="kbd">Esc</span>Close</span>
         </div>
       </div>
@@ -1890,31 +1950,75 @@ const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
 const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, t: ct }) {
   const t = ct || ((k) => k);
+  const [diagResults, setDiagResults] = useState({});
+  const [diagLoading, setDiagLoading] = useState({});
+
+  async function diagnose(c) {
+    setDiagLoading(p => ({ ...p, [c.id]: true }));
+    setDiagResults(p => ({ ...p, [c.id]: null }));
+    try {
+      const body = { type: c.type };
+      if (c.type === "stalker") { body.portal = c.portal || c.server; body.mac = c.mac; }
+      else if (c.type === "xtream") { body.server = c.server; body.user = c.user; body.pass = c.pass; }
+      else if (c.type === "m3u") { body.url = c.url; }
+      const res = await fetch(`${API}/api/diagnose`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      setDiagResults(p => ({ ...p, [c.id]: data }));
+    } catch (e) {
+      setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
+    }
+    setDiagLoading(p => ({ ...p, [c.id]: false }));
+  }
+
   return (
     <div className="modal-ov" onClick={e => e.target===e.currentTarget && onClose()}>
-      <div className="modal" style={{maxWidth:"420px"}}>
+      <div className="modal" style={{maxWidth:"440px"}}>
         <div className="modal-title">{t("connections")}</div>
-        <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem",maxHeight:"300px",overflowY:"auto"}}>
-          {connections.map(c => (
-            <div key={c.id} style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .7rem",
-              background: c.id===activeConnId ? "var(--accent)10" : "var(--s2)",
-              border: `1px solid ${c.id===activeConnId ? "var(--accent)" : "var(--b2)"}`,
-              borderLeft: `3px solid ${c.color}`,
-              borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
-              onClick={() => { if (c.id !== activeConnId) onSwitch(c.id); }}>
-              <span style={{fontSize:"1rem"}}>{CONN_ICONS[c.type] || "📡"}</span>
-              <div style={{flex:1,overflow:"hidden"}}>
-                <div style={{fontSize:".8rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
-                <div style={{fontSize:".65rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
+        <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem",maxHeight:"400px",overflowY:"auto"}}>
+          {connections.map(c => {
+            const diag = diagResults[c.id];
+            const loading = diagLoading[c.id];
+            return (
+              <div key={c.id} style={{padding:".55rem .7rem",
+                background: c.id===activeConnId ? "var(--accent)10" : "var(--s2)",
+                border: `1px solid ${c.id===activeConnId ? "var(--accent)" : "var(--b2)"}`,
+                borderLeft: `3px solid ${c.color}`,
+                borderRadius:"8px",transition:"all .2s"}}>
+                <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}}
+                  onClick={() => { if (c.id !== activeConnId) onSwitch(c.id); }}>
+                  <span style={{fontSize:"1rem"}}>{CONN_ICONS[c.type] || "📡"}</span>
+                  <div style={{flex:1,overflow:"hidden"}}>
+                    <div style={{fontSize:".8rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
+                    <div style={{fontSize:".65rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
+                  </div>
+                  {c.id === activeConnId && <span style={{fontSize:".6rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",letterSpacing:".05em"}}>{t("active")}</span>}
+                  <button style={{background:"none",border:"1px solid var(--b2)",borderRadius:4,cursor:"pointer",fontSize:".65rem",color:"var(--t2)",padding:".15rem .4rem"}}
+                    title="Diagnose connection"
+                    onClick={e => { e.stopPropagation(); diagnose(c); }}>
+                    {loading ? "..." : "🩺"}
+                  </button>
+                  {c.id !== activeConnId && (
+                    <button style={{background:"none",border:"none",cursor:"pointer",fontSize:".75rem",color:"var(--danger)",padding:".2rem .3rem"}}
+                      title={t("removeConn")}
+                      onClick={e => { e.stopPropagation(); onRemove(c.id); }}>✕</button>
+                  )}
+                </div>
+                {diag && (
+                  <div style={{marginTop:".4rem",padding:".35rem .5rem",background:"var(--s1)",borderRadius:6,fontSize:".65rem",lineHeight:1.6,fontFamily:"monospace"}}>
+                    <span style={{color: diag.reachable ? "#4caf50" : "#f44336",fontWeight:700}}>
+                      {diag.reachable ? "● Reachable" : "● Unreachable"}
+                    </span>
+                    {diag.latency != null && <span style={{color:"var(--t2)",marginLeft:".5rem"}}>{diag.latency}ms</span>}
+                    {Object.entries(diag.details || {}).map(([k, v]) => (
+                      <div key={k} style={{color:"var(--t3)"}}>{k}: <span style={{color:"var(--t2)"}}>{String(v)}</span></div>
+                    ))}
+                  </div>
+                )}
               </div>
-              {c.id === activeConnId && <span style={{fontSize:".6rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",letterSpacing:".05em"}}>{t("active")}</span>}
-              {c.id !== activeConnId && (
-                <button style={{background:"none",border:"none",cursor:"pointer",fontSize:".75rem",color:"var(--danger)",padding:".2rem .3rem",transition:"opacity .2s"}}
-                  title={t("removeConn")}
-                  onClick={e => { e.stopPropagation(); onRemove(c.id); }}>✕</button>
-              )}
-            </div>
-          ))}
+            );
+          })}
           {connections.length === 0 && (
             <div style={{fontSize:".8rem",color:"var(--t3)",textAlign:"center",padding:"1rem"}}>{t("noSavedConns")}</div>
           )}
@@ -2955,6 +3059,38 @@ export default function App() {
     return m;
   }, [history]);
 
+  // ── Smart recommendations: genre-based matching from watch history + favorites
+  const recommendations = useMemo(() => {
+    if (section !== "vod" && section !== "series") return [];
+    const items = section === "vod" ? vod : series;
+    if (items.length === 0) return [];
+    // Collect genres from history + favorites
+    const watchedIds = new Set();
+    const genreCount = {};
+    const sources = [...history.filter(h => h.type === section).slice(0, 20), ...Object.values(favs[section] || {})];
+    for (const h of sources) {
+      watchedIds.add(h.id || h.url);
+      const genre = h.group || h.genre;
+      if (genre && genre !== "All" && genre !== "Other" && genre !== "Uncategorized") {
+        genreCount[genre] = (genreCount[genre] || 0) + 1;
+      }
+    }
+    if (Object.keys(genreCount).length === 0) return [];
+    // Rank genres by frequency
+    const topGenres = Object.entries(genreCount).sort((a, b) => b[1] - a[1]).slice(0, 5).map(g => g[0]);
+    // Find items in top genres that user hasn't watched, randomize & limit
+    const candidates = items.filter(item => {
+      if (watchedIds.has(item.id || item.url)) return false;
+      return topGenres.includes(item.group);
+    });
+    // Shuffle and pick 20
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    return candidates.slice(0, 20);
+  }, [section, vod, series, history, favs]);
+
   // ── global search
   const searchResults = useMemo(() => {
     if (globalQ.length <= 1) return [];
@@ -3338,6 +3474,24 @@ export default function App() {
               </div>
             ) : (
               <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}>
+                {/* Recommendations row */}
+                {recommendations.length > 0 && !search && cat === "All" && (
+                  <div style={{marginBottom:".8rem",flexShrink:0}}>
+                    <div style={{fontSize:".78rem",fontWeight:600,color:"var(--t2)",marginBottom:".4rem",paddingLeft:".2rem"}}>
+                      Recommended for you
+                    </div>
+                    <div style={{display:"flex",gap:".5rem",overflowX:"auto",paddingBottom:".4rem"}}>
+                      {recommendations.map((item, i) => (
+                        <div key={item.id||i} style={{flexShrink:0,width:110,cursor:"pointer"}} onClick={() => playItem(item)}>
+                          {item.logo
+                            ? <img src={imgSrc(item.logo)} alt="" style={{width:110,aspectRatio:"2/3",objectFit:"cover",borderRadius:8,background:"var(--s2)",display:"block"}} onError={e=>e.target.style.display="none"} />
+                            : <div style={{width:110,aspectRatio:"2/3",background:"var(--s2)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem"}}>{section==="series"?"📽":"🎬"}</div>}
+                          <div style={{fontSize:".65rem",marginTop:".2rem",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"var(--t2)"}}>{item.name}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {section==="live" ? (
                   <div className="ch-grid">
                     {paginatedItems.map((ch,i) => {
