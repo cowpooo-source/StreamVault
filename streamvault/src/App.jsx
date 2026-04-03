@@ -1329,6 +1329,8 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
   const [err, setErr]       = useState("");
   const [expiredPrompt, setExpiredPrompt] = useState(null); // { conn, validation }
   const [skipValidation, setSkipValidation] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(() => localStorage.getItem("sv-disclaimer-accepted") === "1");
   const set = (k,v) => setF(p => ({...p,[k]:v}));
 
   // Validate saved connection before reconnecting
@@ -1378,6 +1380,18 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
       }
     } catch {}
   }, []);
+
+  function handleConnectClick() {
+    if (!disclaimerAccepted) { setShowDisclaimer(true); return; }
+    connect();
+  }
+
+  function acceptDisclaimer() {
+    setDisclaimerAccepted(true);
+    localStorage.setItem("sv-disclaimer-accepted", "1");
+    setShowDisclaimer(false);
+    connect();
+  }
 
   async function connect() {
     setErr(""); setLoading(true);
@@ -1645,18 +1659,18 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
           <div className="fg"><label className="fl">{t("username")}</label>
             <input className="fi" placeholder="username" value={f.user} onChange={e=>set("user",e.target.value)} /></div>
           <div className="fg"><label className="fl">{t("password")}</label>
-            <input className="fi" type="password" placeholder="password" value={f.pass} onChange={e=>set("pass",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} /></div>
+            <input className="fi" type="password" placeholder="password" value={f.pass} onChange={e=>set("pass",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} /></div>
         </>)}
         {type==="m3u" && (
           <div className="fg"><label className="fl">{t("playlistURL")}</label>
-            <input className="fi" placeholder="http://example.com/playlist.m3u" value={f.url} onChange={e=>set("url",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} />
+            <input className="fi" placeholder="http://example.com/playlist.m3u" value={f.url} onChange={e=>set("url",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} />
             <div className="fhint">Supports .m3u and .m3u8 playlist files</div></div>
         )}
         {type==="stalker" && (<>
           <div className="fg"><label className="fl">{t("portalURL")}</label>
             <input className="fi" placeholder="http://server/stalker_portal/c/" value={f.server} onChange={e=>set("server",e.target.value)} /></div>
           <div className="fg"><label className="fl">{t("macAddress")}</label>
-            <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} />
+            <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} />
             <div className="fhint">The MAC address registered with your IPTV provider</div></div>
           <label style={{display:"flex",alignItems:"center",gap:".4rem",marginTop:".5rem",cursor:"pointer",fontSize:".72rem",color:"var(--t2)"}}>
             <input type="checkbox" checked={skipValidation} onChange={e => setSkipValidation(e.target.checked)}
@@ -1677,7 +1691,7 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
               <input className="fi" placeholder="Optional — used for both ID1 and ID2 if ID2 is blank" value={f.deviceId} onChange={e=>set("deviceId",e.target.value)} />
               <div className="fhint">Primary device identifier</div></div>
             <div className="fg"><label className="fl">{t("deviceId2")}</label>
-              <input className="fi" placeholder="Optional — defaults to Device ID above" value={f.deviceId2} onChange={e=>set("deviceId2",e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} />
+              <input className="fi" placeholder="Optional — defaults to Device ID above" value={f.deviceId2} onChange={e=>set("deviceId2",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} />
               <div className="fhint">Secondary device identifier (some providers use same value for both)</div></div>
           </>)}
         </>)}
@@ -1721,7 +1735,7 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
             )}
           </div>
         )}
-        <button className="btn-primary" onClick={connect} disabled={loading || type==="import"} style={type==="import"?{display:"none"}:{}}>
+        <button className="btn-primary" onClick={handleConnectClick} disabled={loading || type==="import"} style={type==="import"?{display:"none"}:{}}>
           {loading ? t("connecting") : t("connectArrow")}
         </button>
 
@@ -1760,6 +1774,43 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
                   style={{flex:1,padding:".55rem",background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,
                     color:"var(--t1,#dde0f5)",fontSize:".8rem",cursor:"pointer"}}>
                   Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        , document.body)}
+
+        {showDisclaimer && createPortal(
+          <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.7)",
+            display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+            onClick={e => { if (e.target === e.currentTarget) setShowDisclaimer(false); }}>
+            <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
+              borderRadius:14,padding:"1.8rem",width:"100%",maxWidth:460,boxShadow:"0 8px 32px rgba(0,0,0,0.5)"}}>
+              <div style={{fontSize:"1.6rem",textAlign:"center",marginBottom:".6rem"}}>⚖️</div>
+              <div style={{fontSize:"1.05rem",fontWeight:700,textAlign:"center",marginBottom:".8rem",color:"var(--t1,#dde0f5)"}}>
+                Legal Disclaimer
+              </div>
+              <div style={{fontSize:".78rem",color:"var(--t2,#8080aa)",lineHeight:1.7,marginBottom:"1.2rem"}}>
+                <p style={{marginBottom:".6rem"}}>StreamVault is a <strong>media player application</strong> only. It does not provide, host, or distribute any content, streams, or IPTV services.</p>
+                <p style={{marginBottom:".6rem"}}>By connecting an external service, you confirm that:</p>
+                <ul style={{paddingLeft:"1.2rem",margin:".4rem 0"}}>
+                  <li>You have a <strong>valid, legal subscription</strong> from your IPTV provider.</li>
+                  <li>You are <strong>solely responsible</strong> for the content you access.</li>
+                  <li>You will <strong>not use this app</strong> to access pirated or unauthorized content.</li>
+                  <li>StreamVault and its developers <strong>bear no responsibility</strong> for the content or legality of third-party services you connect to.</li>
+                </ul>
+                <p style={{marginTop:".6rem",fontSize:".72rem",color:"var(--t3)"}}>This disclaimer is shown once and your acceptance is stored locally.</p>
+              </div>
+              <div style={{display:"flex",gap:".5rem"}}>
+                <button onClick={() => setShowDisclaimer(false)}
+                  style={{flex:1,padding:".6rem",background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,
+                    color:"var(--t2,#8080aa)",fontSize:".82rem",cursor:"pointer"}}>
+                  Cancel
+                </button>
+                <button onClick={acceptDisclaimer}
+                  style={{flex:2,padding:".6rem",background:"var(--accent,#00d4ff)",border:"none",borderRadius:8,
+                    color:"#000",fontSize:".82rem",fontWeight:700,cursor:"pointer"}}>
+                  I Agree — Continue
                 </button>
               </div>
             </div>
