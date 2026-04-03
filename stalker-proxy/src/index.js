@@ -117,37 +117,64 @@ app.get("/api/feedback", (req, res) => {
   res.json({ feedback: cache.getFeedback() });
 });
 
-// ── PUT /api/sync/:type — save favorites or history
-app.put("/api/sync/:type", express.json(), (req, res) => {
+// Sync key: prefer user_id from JWT, fallback to guest_id
+function syncId(req) {
+  if (req.user) return `user:${req.user.id}`;
+  return req.headers["x-guest-id"] ? `guest:${req.headers["x-guest-id"]}` : null;
+}
+
+// ── PUT /api/sync/:type — save favorites, history, or connections
+app.put("/api/sync/:type", auth.optionalAuth, express.json(), (req, res) => {
   const { type } = req.params;
-  if (type !== "favorites" && type !== "history") return res.status(400).json({ error: "Invalid type" });
-  const guestId = req.headers["x-guest-id"];
-  if (!guestId) return res.status(400).json({ error: "X-Guest-Id required" });
+  if (!["favorites","history","connections"].includes(type)) return res.status(400).json({ error: "Invalid type" });
+  const sid = syncId(req);
+  if (!sid) return res.status(400).json({ error: "Authentication or X-Guest-Id required" });
   const { connId, data } = req.body;
-  if (!connId || !data) return res.status(400).json({ error: "connId and data required" });
-  cache.saveGuestData(guestId, connId, type, data);
+  // connections sync uses "_all" as connId
+  const cid = type === "connections" ? "_all" : connId;
+  if (!cid || data === undefined) return res.status(400).json({ error: "connId and data required" });
+  cache.saveGuestData(sid, cid, type, data);
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
-  cache.trackGuest(guestId, ip);
+  const guestId = req.headers["x-guest-id"];
+  if (guestId) cache.trackGuest(guestId, ip);
   res.json({ ok: true });
 });
 
-// ── GET /api/sync/:type — restore favorites or history
-app.get("/api/sync/:type", (req, res) => {
+// ── GET /api/sync/:type — restore favorites, history, or connections
+app.get("/api/sync/:type", auth.optionalAuth, (req, res) => {
   const { type } = req.params;
-  if (type !== "favorites" && type !== "history") return res.status(400).json({ error: "Invalid type" });
-  const guestId = req.headers["x-guest-id"];
-  if (!guestId) return res.status(400).json({ error: "X-Guest-Id required" });
-  const connId = req.query.connId;
+  if (!["favorites","history","connections"].includes(type)) return res.status(400).json({ error: "Invalid type" });
+  const sid = syncId(req);
+  if (!sid) return res.status(400).json({ error: "Authentication or X-Guest-Id required" });
+  const connId = type === "connections" ? "_all" : req.query.connId;
   if (!connId) return res.status(400).json({ error: "connId required" });
-  const data = cache.getGuestData(guestId, connId, type);
+  const data = cache.getGuestData(sid, connId, type);
   res.json({ data });
 });
 
+// ── POST /api/sync/migrate-guest — link guest data to authenticated user
+app.post("/api/sync/migrate-guest", auth.requireAuth, express.json(), (req, res) => {
+  const { guestId } = req.body;
+  if (!guestId) return res.status(400).json({ error: "guestId required" });
+  const userId = `user:${req.user.id}`;
+  const guestKey = `guest:${guestId}`;
+  // Copy all guest data rows to user
+  const rows = cache.db.prepare("SELECT conn_id, type, data, updated_at FROM guest_data WHERE guest_id = ?").all(guestKey);
+  for (const row of rows) {
+    // Only copy if user doesn't already have this data
+    const existing = cache.getGuestData(userId, row.conn_id, row.type);
+    if (!existing) {
+      cache.saveGuestData(userId, row.conn_id, row.type, JSON.parse(row.data));
+    }
+  }
+  res.json({ migrated: rows.length });
+});
+
 // ── DELETE /api/sync — delete all data for a connection
-app.delete("/api/sync", (req, res) => {
-  const guestId = req.headers["x-guest-id"];
+app.delete("/api/sync", auth.optionalAuth, (req, res) => {
+  const sid = syncId(req);
   const connId = req.query.connId;
-  if (guestId && connId) cache.deleteGuestData(guestId, connId);
+  if (sid && connId) cache.deleteGuestData(sid, connId);
   res.json({ ok: true });
 });
 

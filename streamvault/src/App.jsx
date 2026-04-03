@@ -80,15 +80,15 @@ function AuthScreen({ onAuth, onGuest }) {
   );
 }
 
-// Server sync — fire-and-forget with debounce
+// Server sync — fire-and-forget with debounce (uses auth token if logged in)
 const _syncTimers = {};
 function syncToServer(type, connId, data) {
   const key = `${type}:${connId}`;
   clearTimeout(_syncTimers[key]);
   _syncTimers[key] = setTimeout(() => {
-    fetch(`${API}/api/sync/${type}`, {
+    authFetch(`${API}/api/sync/${type}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ connId, data }),
     }).catch(() => {});
   }, 2000);
@@ -96,13 +96,32 @@ function syncToServer(type, connId, data) {
 
 async function restoreFromServer(type, connId) {
   try {
-    const res = await fetch(`${API}/api/sync/${type}?connId=${encodeURIComponent(connId)}`, {
-      headers: { "X-Guest-Id": GUEST_ID },
-    });
+    const res = await authFetch(`${API}/api/sync/${type}?connId=${encodeURIComponent(connId)}`);
     if (!res.ok) return null;
     const { data } = await res.json();
     return data;
   } catch { return null; }
+}
+
+// Sync connections list to server
+function syncConnectionsToServer(conns) {
+  syncToServer("connections", "_all", conns);
+}
+
+// Restore connections from server (for cross-device sync)
+async function restoreConnectionsFromServer() {
+  return restoreFromServer("connections", "_all");
+}
+
+// Migrate guest data to authenticated user
+async function migrateGuestData() {
+  try {
+    await authFetch(`${API}/api/sync/migrate-guest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestId: GUEST_ID }),
+    });
+  } catch {}
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1842,7 +1861,23 @@ export default function App() {
       .finally(() => setAuthLoading(false));
   }, []);
 
-  function handleAuth(user) { setAuthUser(user); setIsGuest(false); localStorage.removeItem("sv-guest-mode"); }
+  async function handleAuth(user) {
+    setAuthUser(user); setIsGuest(false); localStorage.removeItem("sv-guest-mode");
+    // Migrate guest data to new user account
+    migrateGuestData();
+    // Restore connections from server if local is empty
+    const localConns = await db.get("sv-connections", []);
+    if (!localConns.length) {
+      const serverConns = await restoreConnectionsFromServer();
+      if (serverConns?.length) {
+        setConnections(serverConns);
+        db.set("sv-connections", serverConns);
+      }
+    } else {
+      // Push local connections to server so other devices can access
+      syncConnectionsToServer(localConns);
+    }
+  }
   function handleGuest() { setIsGuest(true); localStorage.setItem("sv-guest-mode", "1"); }
   function handleLogout() {
     const token = getAuthToken();
@@ -2677,6 +2712,7 @@ export default function App() {
     setActiveConnId(cId);
     db.set("sv-connections", newConns);
     db.set("sv-activeConn", cId);
+    if (authUser) syncConnectionsToServer(newConns);
   }
 
   function switchConnection(id) {
@@ -2703,6 +2739,7 @@ export default function App() {
     const newConns = connections.filter(c => c.id !== id);
     setConnections(newConns);
     db.set("sv-connections", newConns);
+    if (authUser) syncConnectionsToServer(newConns);
     // Clean up localStorage
     localStorage.removeItem(`sv-favs-${id}`);
     localStorage.removeItem(`sv-history-${id}`);
@@ -2721,8 +2758,8 @@ export default function App() {
       }).catch(() => {});
     }
     // Clean up server-side sync + cache data
-    fetch(`${API}/api/sync?connId=${encodeURIComponent(id)}`, { method: "DELETE", headers: { "X-Guest-Id": GUEST_ID } }).catch(() => {});
-    fetch(`${API}/api/cache?connId=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+    authFetch(`${API}/api/sync?connId=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+    authFetch(`${API}/api/cache?connId=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
   }
 
   function addNewConnection() {
