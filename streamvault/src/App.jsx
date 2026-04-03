@@ -977,7 +977,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
   // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
   const origin = API || location.origin;
-  const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin);
+  const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin) && !current?._direct;
   const streamProxy = (u) => (u?.startsWith('/') || u?.startsWith(origin)) ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
 
   function initPlayer(url) {
@@ -3996,14 +3996,14 @@ const DirectHLSView = memo(function DirectHLSView() {
       <div className="hls-row">
         <input className="fi" placeholder="https://your-stream.com/live/stream.m3u8"
           value={url} onChange={e=>setUrl(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&url&&setPlaying({name:url.split("/").pop()||"Stream",url,type:"live",group:"Direct"})} />
-        <button className="btn-go" onClick={()=>url&&setPlaying({name:url.split("/").pop()||"Stream",url,type:"live",group:"Direct"})}>▶ Play</button>
+          onKeyDown={e=>e.key==="Enter"&&url&&setPlaying({name:url.split("/").pop()||"Stream",url,type:"live",group:"Direct",_direct:true})} />
+        <button className="btn-go" onClick={()=>url&&setPlaying({name:url.split("/").pop()||"Stream",url,type:"live",group:"Direct",_direct:true})}>▶ Play</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:".35rem"}}>
         <div style={{fontSize:".7rem",color:"var(--t3)",textTransform:"uppercase",letterSpacing:".08em",fontWeight:600}}>Public test streams</div>
         {EXAMPLES.map(([label,href]) => (
           <div key={label} style={{fontSize:".75rem",color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}}
-            onClick={()=>{setUrl(href);setPlaying({name:label,url:href,type:"live",group:"Test"});}}>
+            onClick={()=>{setUrl(href);setPlaying({name:label,url:href,type:"live",group:"Test",_direct:true});}}>
             {label}
           </div>
         ))}
