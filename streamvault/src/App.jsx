@@ -64,11 +64,15 @@ function AuthScreen({ onAuth, onGuest }) {
             {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
           </button>
         </form>
-        <div style={{textAlign:"center",marginTop:"1rem"}}>
-          <button onClick={onGuest} style={{background:"none",border:"none",color:"var(--t3)",cursor:"pointer",
-            fontSize:".75rem",textDecoration:"underline",fontFamily:"'DM Sans',sans-serif"}}>
+        <div style={{textAlign:"center",marginTop:"1.2rem"}}>
+          <button onClick={onGuest} style={{width:"100%",padding:".65rem",background:"transparent",
+            border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,color:"var(--t2)",cursor:"pointer",
+            fontSize:".88rem",fontWeight:500,fontFamily:"'DM Sans',sans-serif",transition:"all .2s"}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.color="var(--accent)"}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.15)";e.currentTarget.style.color="var(--t2)"}}>
             Continue as Guest
           </button>
+          <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed — some features limited</div>
           {mode === "register" && (
             <div style={{fontSize:".65rem",color:"var(--accent)",marginTop:".5rem"}}>
               New accounts get Regular access (promo)
