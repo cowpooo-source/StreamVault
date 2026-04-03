@@ -3981,9 +3981,12 @@ const DirectHLSView = memo(function DirectHLSView() {
   const [url, setUrl] = useState("");
   const [playing, setPlaying] = useState(null);
   const EXAMPLES = [
-    ["Apple HLS Bipbop (Adaptive)", "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8"],
-    ["Big Buck Bunny (MP4)", "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"],
-    ["Elephant Dream (MP4)", "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"],
+    ["HLS — Tears of Steel (Adaptive)", "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8"],
+    ["HLS — Apple Advanced (fMP4)", "https://devstreaming-cdn.apple.com/videos/streaming/examples/adv_dv_atmos/main.m3u8"],
+    ["MP4 — Big Buck Bunny", "https://www3.cde.ca.gov/download/rod/big_buck_bunny.mp4"],
+    ["MP4 — Sintel (Open Movie)", "https://media.w3.org/2010/05/sintel/trailer.mp4"],
+    ["MP4 — Cosmos Laundromat", "https://media.w3.org/2010/05/bunny/trailer.mp4"],
+    ["Live — Bloomberg TV", "https://www.bloomberg.com/media-manifest/streams/us.m3u8"],
   ];
   return (
     <div className="hls-body">
