@@ -1091,11 +1091,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
       player.play().catch(()=>{});
     }
 
+    const SRI_HASHES = {
+      "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js": "sha384-miJUhTuRucSoqFe3/VSB2sRghSMoev6wpPoEyj5fhF0PARehD+naPBsAkl5NqwPO",
+      "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js": "sha384-Z2H/TjKWDNZA/2luGOnjLx9pcva7cK4VSWC+hZn78Kr5uG8YbMpxdz+wWXBMO6N/",
+    };
     function loadScript(src, cb) {
       if (document.querySelector(`script[src="${src}"]`)) { cb(); return; }
       const s = document.createElement("script");
       s.src = src;
       s.crossOrigin = "anonymous";
+      if (SRI_HASHES[src]) s.integrity = SRI_HASHES[src];
       s.onload = cb;
       document.head.appendChild(s);
     }

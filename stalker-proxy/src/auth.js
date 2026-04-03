@@ -14,8 +14,9 @@ const ROLE_LIMITS = {
   guest:   { maxConnections: 2,   maxVod: 500,      epg: true, sync: false },
 };
 
-// Promo: new registrations get this role
-const DEFAULT_ROLE = process.env.DEFAULT_ROLE || "regular";
+// Promo: new registrations get this role (validated against allowed set)
+const ALLOWED_DEFAULT_ROLES = new Set(["regular", "free"]);
+const DEFAULT_ROLE = ALLOWED_DEFAULT_ROLES.has(process.env.DEFAULT_ROLE) ? process.env.DEFAULT_ROLE : "regular";
 
 let db;
 let jwtSecret;
@@ -108,14 +109,14 @@ function init(database) {
   console.log(`   Auth: ${stmts.countUsers.get().cnt} users, JWT ${process.env.JWT_SECRET ? "env" : "auto"}-secret`);
 }
 
-function seedAdmin() {
+async function seedAdmin() {
   const adminUser = process.env.ADMIN_USER || "admin";
   const adminPass = process.env.ADMIN_PASS;
   if (!adminPass) return;
 
   const existing = stmts.getUserByUsername.get(adminUser);
   if (!existing) {
-    const hash = bcrypt.hashSync(adminPass, SALT_ROUNDS);
+    const hash = await bcrypt.hash(adminPass, SALT_ROUNDS);
     stmts.createUser.run(adminUser, null, hash, "admin", 999, Date.now());
     console.log(`   Auth: seeded admin user "${adminUser}"`);
   } else if (existing.role !== "admin") {
@@ -125,10 +126,10 @@ function seedAdmin() {
 
 // ── User CRUD ──
 
-function createUser(username, password, role = DEFAULT_ROLE, email = null) {
+async function createUser(username, password, role = DEFAULT_ROLE, email = null) {
   if (!username || !password) throw new Error("Username and password required");
   if (username.length < 3) throw new Error("Username must be at least 3 characters");
-  if (password.length < 4) throw new Error("Password must be at least 4 characters");
+  if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) throw new Error("Password must be at least 8 characters with letters and numbers");
   if (stmts.getUserByUsername.get(username)) throw new Error("Username already taken");
   if (email) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Invalid email address");
@@ -136,7 +137,7 @@ function createUser(username, password, role = DEFAULT_ROLE, email = null) {
   }
 
   const limits = ROLE_LIMITS[role] || ROLE_LIMITS.free;
-  const hash = bcrypt.hashSync(password, SALT_ROUNDS);
+  const hash = await bcrypt.hash(password, SALT_ROUNDS);
   const result = stmts.createUser.run(username, email || null, hash, role, limits.maxConnections, Date.now());
   return { id: result.lastInsertRowid, username, email, role };
 }
@@ -172,22 +173,22 @@ function requestPasswordReset(usernameOrEmail) {
   return { user, token };
 }
 
-function resetPassword(token, newPassword) {
+async function resetPassword(token, newPassword) {
   const row = verifyEmailToken(token, "reset");
   if (!row) throw new Error("Invalid or expired reset link");
-  if (!newPassword || newPassword.length < 4) throw new Error("Password must be at least 4 characters");
-  const hash = bcrypt.hashSync(newPassword, SALT_ROUNDS);
+  if (!newPassword || newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) throw new Error("Password must be at least 8 characters with letters and numbers");
+  const hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
   stmts.changePassword.run(hash, row.user_id);
   consumeEmailToken(token);
   revokeAllUserTokens(row.user_id);
   return stmts.getUserById.get(row.user_id);
 }
 
-function authenticate(username, password) {
+async function authenticate(username, password) {
   const user = stmts.getUserByUsername.get(username);
   if (!user) throw new Error("Invalid username or password");
   if (user.disabled) throw new Error("Account is disabled");
-  if (!bcrypt.compareSync(password, user.password_hash)) throw new Error("Invalid username or password");
+  if (!(await bcrypt.compare(password, user.password_hash))) throw new Error("Invalid username or password");
 
   stmts.updateLastLogin.run(Date.now(), user.id);
 
@@ -197,9 +198,10 @@ function authenticate(username, password) {
     { expiresIn: TOKEN_EXPIRY }
   );
 
-  // Store session for server-side revocation
+  // Store session hash for server-side revocation (not raw JWT)
   const decoded = jwt.decode(token);
-  stmts.createSession.run(token, user.id, Date.now(), decoded.exp * 1000);
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  stmts.createSession.run(tokenHash, user.id, Date.now(), decoded.exp * 1000);
 
   const limits = ROLE_LIMITS[user.role] || ROLE_LIMITS.free;
   return {
@@ -214,8 +216,9 @@ function authenticate(username, password) {
 function verifyToken(token) {
   try {
     const payload = jwt.verify(token, jwtSecret);
-    // Check server-side session exists (allows revocation)
-    const session = stmts.getSession.get(token, Date.now());
+    // Check server-side session exists (allows revocation) — stored as hash
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const session = stmts.getSession.get(tokenHash, Date.now());
     if (!session) return null;
 
     const user = stmts.getUserById.get(payload.sub);
@@ -229,7 +232,8 @@ function verifyToken(token) {
 }
 
 function revokeToken(token) {
-  stmts.deleteSession.run(token);
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  stmts.deleteSession.run(tokenHash);
 }
 
 function revokeAllUserTokens(userId) {
@@ -263,9 +267,9 @@ function deleteUser(id) {
   stmts.deleteUser.run(id);
 }
 
-function changePassword(id, newPassword) {
-  if (!newPassword || newPassword.length < 4) throw new Error("Password must be at least 4 characters");
-  const hash = bcrypt.hashSync(newPassword, SALT_ROUNDS);
+async function changePassword(id, newPassword) {
+  if (!newPassword || newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) throw new Error("Password must be at least 8 characters with letters and numbers");
+  const hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
   stmts.changePassword.run(hash, id);
   revokeAllUserTokens(id);
 }

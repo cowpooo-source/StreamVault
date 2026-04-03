@@ -1408,13 +1408,13 @@ app.use("/api/auth/login", rateLimit({ windowMs: 900000, max: 15, message: { err
 app.use("/api/auth/register", rateLimit({ windowMs: 3600000, max: 10, message: { error: "Too many registrations, try again later" } }));
 
 // ── POST /api/auth/register ──
-app.post("/api/auth/register", express.json(), (req, res) => {
+app.post("/api/auth/register", express.json(), async (req, res) => {
   const open = process.env.REGISTRATION_OPEN !== "false";
   if (!open) return res.status(403).json({ error: "Registration is currently closed" });
   try {
     const { username, password } = req.body;
-    auth.createUser(username, password);
-    const session = auth.authenticate(username, password);
+    await auth.createUser(username, password);
+    const session = await auth.authenticate(username, password);
     res.json(session);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -1422,11 +1422,11 @@ app.post("/api/auth/register", express.json(), (req, res) => {
 });
 
 // ── POST /api/auth/login ──
-app.post("/api/auth/login", express.json(), (req, res) => {
+app.post("/api/auth/login", express.json(), async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Username and password required" });
-    const session = auth.authenticate(username, password);
+    const session = await auth.authenticate(username, password);
     res.json(session);
   } catch (e) {
     res.status(401).json({ error: e.message });
@@ -1451,9 +1451,9 @@ app.get("/api/auth/me", auth.requireAuth, (req, res) => {
 });
 
 // ── PUT /api/auth/password ──
-app.put("/api/auth/password", auth.requireAuth, express.json(), (req, res) => {
+app.put("/api/auth/password", auth.requireAuth, express.json(), async (req, res) => {
   try {
-    auth.changePassword(req.user.id, req.body.password);
+    await auth.changePassword(req.user.id, req.body.password);
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -1465,10 +1465,10 @@ app.get("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), (req, r
   res.json(auth.listUsers());
 });
 
-app.post("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), express.json(), (req, res) => {
+app.post("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), express.json(), async (req, res) => {
   try {
     const { username, password, role } = req.body;
-    const user = auth.createUser(username, password, role || "regular");
+    const user = await auth.createUser(username, password, role || "regular");
     res.json(user);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -1477,7 +1477,7 @@ app.post("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), expres
 
 app.put("/api/admin/users/:id", auth.requireAuth, auth.requireRole("admin"), express.json(), (req, res) => {
   try {
-    const user = auth.updateUser(parseInt(req.params.id), req.body);
+    const user = auth.updateUser(parseInt(req.params.id, 10), req.body);
     res.json(user);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -1485,7 +1485,7 @@ app.put("/api/admin/users/:id", auth.requireAuth, auth.requireRole("admin"), exp
 });
 
 app.delete("/api/admin/users/:id", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(req.params.id, 10);
   if (id === req.user.id) return res.status(400).json({ error: "Cannot delete yourself" });
   auth.deleteUser(id);
   res.json({ ok: true });
@@ -1495,8 +1495,23 @@ app.delete("/api/admin/users/:id", auth.requireAuth, auth.requireRole("admin"), 
 setInterval(() => auth.cleanupSessions(), 60 * 60 * 1000);
 
 // ─────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/health`);
   console.log(`   Cache: SQLite/better-sqlite3 (7-day TTL, WAL mode)`);
 });
+
+// Graceful shutdown: close server, checkpoint WAL, then exit
+function shutdown(signal) {
+  console.log(`\n${signal} received — shutting down gracefully…`);
+  server.close(() => {
+    try { cache.db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+    try { cache.db.close(); } catch {}
+    console.log("Shutdown complete.");
+    process.exit(0);
+  });
+  // Force exit after 10s if connections don't close
+  setTimeout(() => { console.error("Forced shutdown after timeout"); process.exit(1); }, 10000);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
