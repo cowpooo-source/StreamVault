@@ -122,7 +122,7 @@ function authenticate(username, password) {
   stmts.updateLastLogin.run(Date.now(), user.id);
 
   const token = jwt.sign(
-    { sub: user.id, username: user.username, role: user.role },
+    { sub: user.id, username: user.username, role: user.role, jti: crypto.randomBytes(8).toString("hex") },
     jwtSecret,
     { expiresIn: TOKEN_EXPIRY }
   );
