@@ -3,8 +3,13 @@ import { createPortal } from "react-dom";
 
 const API = import.meta.env.VITE_API_URL || "";
 
-// Proxy external images to avoid mixed-content / broken SSL cert issues
-function imgSrc(url) { return url ? `${API}/img?url=${encodeURIComponent(url)}` : null; }
+// Proxy portal images to avoid mixed-content / broken SSL cert issues
+// Skip proxying for known-good HTTPS domains (TMDB, etc.)
+function imgSrc(url) {
+  if (!url) return null;
+  if (url.includes("image.tmdb.org") || url.includes("themoviedb.org")) return url;
+  return `${API}/img?url=${encodeURIComponent(url)}`;
+}
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
