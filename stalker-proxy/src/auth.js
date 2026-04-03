@@ -282,10 +282,15 @@ function cleanupSessions() {
 
 // ── Express Middleware ──
 
-function requireAuth(req, res, next) {
+function extractToken(req) {
   const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) return res.status(401).json({ error: "Authentication required" });
-  const token = header.slice(7);
+  if (header?.startsWith("Bearer ")) return header.slice(7);
+  return req.cookies?.sv_auth || null;
+}
+
+function requireAuth(req, res, next) {
+  const token = extractToken(req);
+  if (!token) return res.status(401).json({ error: "Authentication required" });
   const user = verifyToken(token);
   if (!user) return res.status(401).json({ error: "Invalid or expired token" });
   req.user = user;
@@ -294,11 +299,8 @@ function requireAuth(req, res, next) {
 
 // Optional auth — sets req.user if token present, but doesn't block
 function optionalAuth(req, res, next) {
-  const header = req.headers.authorization;
-  if (header?.startsWith("Bearer ")) {
-    const token = header.slice(7);
-    req.user = verifyToken(token);
-  }
+  const token = extractToken(req);
+  if (token) req.user = verifyToken(token);
   next();
 }
 

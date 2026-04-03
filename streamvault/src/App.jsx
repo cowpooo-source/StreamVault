@@ -13,9 +13,10 @@ function imgSrc(url) {
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
+// Auth: httpOnly cookie is primary, localStorage Bearer is fallback for backward compat
 function getAuthToken() { return localStorage.getItem("sv-auth-token"); }
 function authHeaders(extra = {}) { const t = getAuthToken(); return { ...extra, ...(t ? { "Authorization": `Bearer ${t}` } : {}), "X-Guest-Id": GUEST_ID }; }
-function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); return fetch(url, opts); }
+function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
 function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
 
 // ── Auth Screen ──
@@ -89,6 +90,51 @@ function AuthScreen({ onAuth, onGuest }) {
   );
 }
 
+// ── Client-side encryption for credentials synced to server ──
+const ENC_ALGO = "AES-GCM";
+async function deriveKey() {
+  const raw = new TextEncoder().encode(GUEST_ID + ":sv-enc-key");
+  const hash = await crypto.subtle.digest("SHA-256", raw);
+  return crypto.subtle.importKey("raw", hash, ENC_ALGO, false, ["encrypt", "decrypt"]);
+}
+async function encryptData(plaintext) {
+  try {
+    const key = await deriveKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const enc = await crypto.subtle.encrypt({ name: ENC_ALGO, iv }, key, new TextEncoder().encode(plaintext));
+    return btoa(String.fromCharCode(...iv)) + "." + btoa(String.fromCharCode(...new Uint8Array(enc)));
+  } catch { return plaintext; }
+}
+async function decryptData(ciphertext) {
+  try {
+    if (!ciphertext || !ciphertext.includes(".")) return ciphertext;
+    const [ivB64, dataB64] = ciphertext.split(".");
+    const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
+    const data = Uint8Array.from(atob(dataB64), c => c.charCodeAt(0));
+    const key = await deriveKey();
+    const dec = await crypto.subtle.decrypt({ name: ENC_ALGO, iv }, key, data);
+    return new TextDecoder().decode(dec);
+  } catch { return ciphertext; }
+}
+
+// Strip sensitive fields before syncing, encrypt the rest
+async function encryptConnections(conns) {
+  const stripped = conns.map(c => {
+    const safe = { ...c };
+    // Remove plaintext credentials — encrypt them separately
+    if (safe.type === "xtream" && safe.pass) { safe._encPass = true; delete safe.pass; }
+    if (safe.type === "stalker" && safe.mac) { safe._encMac = true; }
+    return safe;
+  });
+  return await encryptData(JSON.stringify(stripped));
+}
+
+async function decryptConnections(data) {
+  if (!data) return null;
+  const json = await decryptData(typeof data === "string" ? data : JSON.stringify(data));
+  try { return JSON.parse(json); } catch { return typeof data === "object" ? data : null; }
+}
+
 // Server sync — fire-and-forget with debounce (uses auth token if logged in)
 const _syncTimers = {};
 function syncToServer(type, connId, data) {
@@ -112,14 +158,16 @@ async function restoreFromServer(type, connId) {
   } catch { return null; }
 }
 
-// Sync connections list to server
-function syncConnectionsToServer(conns) {
-  syncToServer("connections", "_all", conns);
+// Sync connections list to server (encrypted)
+async function syncConnectionsToServer(conns) {
+  const encrypted = await encryptConnections(conns);
+  syncToServer("connections", "_all", encrypted);
 }
 
-// Restore connections from server (for cross-device sync)
+// Restore connections from server (decrypt)
 async function restoreConnectionsFromServer() {
-  return restoreFromServer("connections", "_all");
+  const data = await restoreFromServer("connections", "_all");
+  return decryptConnections(data);
 }
 
 // Migrate guest data to authenticated user

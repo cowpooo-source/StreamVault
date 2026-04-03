@@ -3,6 +3,7 @@ const express     = require("express");
 const fetch       = require("node-fetch");
 const cors        = require("cors");
 const compression = require("compression");
+const cookieParser = require("cookie-parser");
 const cache       = require("./cache");
 const auth        = require("./auth");
 const { Transform } = require("stream");
@@ -19,8 +20,15 @@ const keepAliveAgent      = new http.Agent({ keepAlive: true, maxSockets: 50 });
 const keepAliveAgentHttps = new https.Agent({ keepAlive: true, maxSockets: 50 });
 const agentFor = (url) => url.startsWith("https") ? keepAliveAgentHttps : keepAliveAgent;
 
+// Total transfer timeout (prevents slow-loris). Returns { signal, clear }.
+function transferTimeout(ms) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  return { signal: ac.signal, clear: () => clearTimeout(timer) };
+}
+
 const app  = express();
-app.set("trust proxy", 1); // trust nginx X-Forwarded-For
+if (process.env.TRUST_PROXY !== "false") app.set("trust proxy", 1); // trust nginx X-Forwarded-For (disable with TRUST_PROXY=false)
 const PORT = process.env.PORT || 3001;
 
 // Block SSRF: validate proxy URLs with DNS resolution to prevent rebinding
@@ -63,6 +71,15 @@ async function isUrlAllowed(urlStr) {
     if (isPrivateIP(address)) return false;
     return true;
   } catch { return false; }
+}
+
+app.use(cookieParser());
+
+function setAuthCookie(res, token) {
+  res.cookie("sv_auth", token, {
+    httpOnly: true, secure: process.env.NODE_ENV === "production",
+    sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000, path: "/",
+  });
 }
 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
@@ -1285,16 +1302,18 @@ app.get("/proxy", async (req, res) => {
   if (!url) return res.status(400).json({ error: "url required" });
   if (!(await isUrlAllowed(url))) return res.status(403).json({ error: "URL not allowed" });
 
+  const tt = transferTimeout(60000); // 60s total transfer limit
   try {
-    const upstream = await fetch(url, { timeout: 30000, headers: { "User-Agent": "StreamVault/1.0" }, agent: agentFor(url) });
+    const upstream = await fetch(url, { timeout: 30000, signal: tt.signal, headers: { "User-Agent": "StreamVault/1.0" }, agent: agentFor(url) });
     const contentType = upstream.headers.get("content-type") || "";
 
     if (contentType.includes("json")) {
       const data = await upstream.json();
+      tt.clear();
       res.json(data);
     } else {
       res.set("Content-Type", contentType || "text/plain");
-      upstream.body.pipe(res);
+      upstream.body.on("end", tt.clear).on("error", tt.clear).pipe(res);
     }
   } catch (e) {
     console.error("Proxy error:", e.message);
@@ -1415,6 +1434,7 @@ app.post("/api/auth/register", express.json(), async (req, res) => {
     const { username, password } = req.body;
     await auth.createUser(username, password);
     const session = await auth.authenticate(username, password);
+    setAuthCookie(res, session.token);
     res.json(session);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -1427,6 +1447,7 @@ app.post("/api/auth/login", express.json(), async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Username and password required" });
     const session = await auth.authenticate(username, password);
+    setAuthCookie(res, session.token);
     res.json(session);
   } catch (e) {
     res.status(401).json({ error: e.message });
@@ -1435,8 +1456,9 @@ app.post("/api/auth/login", express.json(), async (req, res) => {
 
 // ── POST /api/auth/logout ──
 app.post("/api/auth/logout", auth.requireAuth, (req, res) => {
-  const token = req.headers.authorization.slice(7);
-  auth.revokeToken(token);
+  const token = req.headers.authorization?.slice(7) || req.cookies?.sv_auth;
+  if (token) auth.revokeToken(token);
+  res.clearCookie("sv_auth", { path: "/" });
   res.json({ ok: true });
 });
 

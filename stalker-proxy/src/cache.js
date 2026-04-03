@@ -115,9 +115,19 @@ function trackRequest(type) {
   stmtTrackRequest.run(today, type);
 }
 
+function maskIp(ip) {
+  if (!ip) return "unknown";
+  // IPv4: zero last 2 octets (1.2.3.4 → 1.2.0.0)
+  const v4 = ip.match(/^(\d+\.\d+)\.\d+\.\d+$/);
+  if (v4) return `${v4[1]}.0.0`;
+  // IPv6: keep first 3 groups
+  if (ip.includes(":")) return ip.split(":").slice(0, 3).join(":") + "::";
+  return "unknown";
+}
+
 function trackVisitor(ip) {
   const now = Math.floor(Date.now() / 1000);
-  stmtTrackVisitor.run(ip, now, now, now);
+  stmtTrackVisitor.run(maskIp(ip), now, now, now);
 }
 
 function trackPortal(portal, mac, type) {
@@ -211,7 +221,8 @@ function getStats() {
 function trackGuest(guestId, ip) {
   if (!guestId) return;
   const now = Math.floor(Date.now() / 1000);
-  stmtTrackGuest.run(guestId, ip, now, now, now, ip);
+  const masked = maskIp(ip);
+  stmtTrackGuest.run(guestId, masked, now, now, now, masked);
 }
 
 const GUEST_ACTIVITY_FIELDS = new Set(["connections", "favorites", "history"]);
@@ -229,7 +240,7 @@ function trackWatch(name, type) {
 function saveFeedback(message, guestId, userAgent, ip) {
   if (!message) return;
   const now = Math.floor(Date.now() / 1000);
-  stmtSaveFeedback.run(message, guestId || null, userAgent || null, ip || null, now);
+  stmtSaveFeedback.run(message, guestId || null, userAgent || null, maskIp(ip), now);
 }
 
 function getFeedback() {
