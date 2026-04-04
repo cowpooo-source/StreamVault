@@ -1957,10 +1957,11 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
     setDiagLoading(p => ({ ...p, [c.id]: true }));
     setDiagResults(p => ({ ...p, [c.id]: null }));
     try {
+      const cfg = c.config || c;
       const body = { type: c.type };
-      if (c.type === "stalker") { body.portal = c.portal || c.server; body.mac = c.mac; }
-      else if (c.type === "xtream") { body.server = c.server; body.user = c.user; body.pass = c.pass; }
-      else if (c.type === "m3u") { body.url = c.url; }
+      if (c.type === "stalker") { body.portal = cfg.portal || cfg.server; body.mac = cfg.mac; }
+      else if (c.type === "xtream") { body.server = cfg.server; body.user = cfg.user; body.pass = cfg.pass; }
+      else if (c.type === "m3u") { body.url = cfg.url; }
       const res = await fetch(`${API}/api/diagnose`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
