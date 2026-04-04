@@ -56,7 +56,10 @@ function isUrlAllowedSync(urlStr) {
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
     const host = u.hostname.toLowerCase();
     if (host === "localhost" || host === "[::1]") return false;
-    if (isPrivateIP(host)) return false;
+    // Only check isPrivateIP for IP addresses (not hostnames — DNS is checked async)
+    if (/^[\d.]+$/.test(host) || host.includes(":")) {
+      if (isPrivateIP(host)) return false;
+    }
     return true;
   } catch { return false; }
 }
