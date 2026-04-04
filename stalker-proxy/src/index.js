@@ -501,39 +501,47 @@ app.post("/api/diagnose", express.json(), async (req, res) => {
 
   try {
     if (type === "stalker" && portal) {
-      const start = Date.now();
-      const r = await fetch(portal, { method: "HEAD", timeout: 8000, agent: agentFor(portal) }).catch(() => null);
-      result.latency = Date.now() - start;
-      result.reachable = r?.ok || r?.status === 301 || r?.status === 302 || r?.status === 200;
-      result.details.status = r?.status || "unreachable";
-      result.details.server = r?.headers?.get("server") || "—";
-      // Try handshake
-      if (result.reachable && mac) {
+      // Stalker: skip reachability ping, go straight to handshake (portals reject HEAD/bare GET)
+      if (mac) {
+        const start = Date.now();
         try {
           const session = await getSession(portal, mac);
+          result.latency = Date.now() - start;
+          result.reachable = true;
           result.details.handshake = "ok";
           result.details.token = session.token ? "received" : "none";
-        } catch (e) { result.details.handshake = e.message?.slice(0, 80); }
+        } catch (e) {
+          result.latency = Date.now() - start;
+          result.details.handshake = e.message?.slice(0, 80);
+          // Still reachable if we got a portal error (not a network error)
+          result.reachable = e.message?.startsWith("Portal") || false;
+          result.details.status = result.reachable ? "portal error" : "unreachable";
+        }
+      } else {
+        result.details.status = "MAC required for stalker diagnosis";
       }
     } else if (type === "xtream" && server) {
       const start = Date.now();
       const apiUrl = `${server}/player_api.php?username=${encodeURIComponent(user || "")}&password=${encodeURIComponent(pass || "")}`;
       const r = await fetch(apiUrl, { timeout: 8000, agent: agentFor(server) }).catch(() => null);
       result.latency = Date.now() - start;
-      if (r?.ok) {
+      if (r) {
         result.reachable = true;
-        try {
-          const data = await r.json();
-          result.details.auth = data?.user_info?.auth === 1 ? "ok" : "failed";
-          result.details.status = data?.user_info?.status || "—";
-          result.details.maxConnections = data?.user_info?.max_connections || "—";
-          result.details.activeCons = data?.user_info?.active_cons || "—";
-          result.details.expDate = data?.user_info?.exp_date || "—";
-        } catch { result.details.parse = "non-JSON response"; }
-      } else { result.details.status = r?.status || "unreachable"; }
+        result.details.httpStatus = r.status;
+        if (r.ok) {
+          try {
+            const data = await r.json();
+            result.details.auth = data?.user_info?.auth === 1 ? "ok" : "failed";
+            result.details.status = data?.user_info?.status || "—";
+            result.details.maxConnections = data?.user_info?.max_connections || "—";
+            result.details.activeCons = data?.user_info?.active_cons || "—";
+            result.details.expDate = data?.user_info?.exp_date ? new Date(data.user_info.exp_date * 1000).toLocaleDateString() : "—";
+          } catch { result.details.parse = "non-JSON response"; }
+        }
+      } else { result.details.status = "unreachable"; }
     } else if (type === "m3u" && m3uUrl) {
       const start = Date.now();
-      const r = await fetch(m3uUrl, { method: "HEAD", timeout: 8000, agent: agentFor(m3uUrl) }).catch(() => null);
+      const r = await fetch(m3uUrl, { timeout: 8000, redirect: "follow", agent: agentFor(m3uUrl) }).catch(() => null);
       result.latency = Date.now() - start;
       result.reachable = r?.ok || false;
       result.details.status = r?.status || "unreachable";
