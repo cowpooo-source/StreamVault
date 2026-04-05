@@ -1,8 +1,26 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { readFileSync, writeFileSync } from 'fs'
+import { resolve } from 'path'
+
+// Inject build version into SW on each build so browser detects changes
+function swVersionPlugin() {
+  return {
+    name: 'sw-version',
+    writeBundle() {
+      const swPath = resolve('dist/sw.js');
+      try {
+        let sw = readFileSync(swPath, 'utf8');
+        const version = `sv-${Date.now().toString(36)}`;
+        sw = sw.replace(/const CACHE = "[^"]+";/, `const CACHE = "${version}";`);
+        writeFileSync(swPath, sw);
+      } catch {}
+    }
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), swVersionPlugin()],
 
   server: {
     proxy: {
