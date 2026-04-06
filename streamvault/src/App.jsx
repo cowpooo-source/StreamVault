@@ -873,7 +873,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onRemoveConn, t: st }) {
+function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onRemoveConn, authUser, isGuest, onLogout, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -1184,6 +1184,35 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
       <div className="card">
         <div className="logo">STREAMVAULT</div>
         <div className="tagline">{t("tagline")}</div>
+
+        {/* Logged-in user info */}
+        {(authUser || isGuest) && (
+          <div style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .75rem",marginBottom:"1rem",
+            background:"var(--s2)",border:"1px solid var(--b1)",borderRadius:"10px"}}>
+            <div style={{width:34,height:34,borderRadius:"50%",background:"var(--accent-22)",
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:".9rem",fontWeight:700,
+              color:"var(--accent)",flexShrink:0}}>
+              {authUser ? authUser.username?.[0]?.toUpperCase() || "U" : "G"}
+            </div>
+            <div style={{flex:1,overflow:"hidden"}}>
+              <div style={{fontSize:".82rem",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {authUser ? authUser.username : "Guest"}
+              </div>
+              <div style={{fontSize:".62rem",color:"var(--t3)"}}>
+                {authUser ? `${authUser.role} · ${connections.length}/${authUser.maxConnections || authUser.limits?.maxConnections || "?"} connections` : "Guest mode · data stored locally"}
+              </div>
+            </div>
+            {authUser && (
+              <button onClick={onLogout}
+                style={{background:"none",border:"1px solid var(--b2)",borderRadius:6,cursor:"pointer",
+                  fontSize:".65rem",color:"var(--t3)",padding:".25rem .6rem",transition:"all .2s"}}
+                onMouseEnter={e => { e.currentTarget.style.borderColor="var(--danger)"; e.currentTarget.style.color="var(--danger)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor="var(--b2)"; e.currentTarget.style.color="var(--t3)"; }}>
+                Logout
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Saved connections — quick reconnect */}
         {connections.length > 0 && (
@@ -2661,7 +2690,7 @@ export default function App() {
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} onImportMultiple={handleImportMultiple} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} t={t} />
+      <Setup onConnect={handleConnect} onImportMultiple={handleImportMultiple} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} authUser={authUser} isGuest={isGuest} onLogout={handleLogout} t={t} />
       {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
