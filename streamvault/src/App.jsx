@@ -2560,23 +2560,31 @@ export default function App() {
 
   function handleImportMultiple(items) {
     if (!items.length) return;
-    // Save all connections, connect to the first one
-    for (const d of items) {
-      const cfg = d.type === "stalker"
-        ? { type: d.type, server: d.server, mac: d.mac, serial: d.serial, deviceId: d.deviceId, deviceId2: d.deviceId2 }
-        : d.type === "xtream"
-        ? { type: d.type, server: d.server, user: d.user, pass: d.pass }
-        : { type: d.type, url: d.url };
-      saveConnection(cfg);
+    // Build configs for all items
+    const configs = items.map(d => {
+      if (d.type === "stalker") return { type: d.type, server: d.server, mac: d.mac, serial: d.serial, deviceId: d.deviceId, deviceId2: d.deviceId2 };
+      if (d.type === "xtream") return { type: d.type, server: d.server, user: d.user, pass: d.pass };
+      return { type: d.type, url: d.url };
+    });
+    // Build all connection objects at once to avoid stale state
+    let newConns = [...connections];
+    const usedColors = new Set(newConns.map(c => c.color));
+    for (const cfg of configs) {
+      const cId = connId(cfg);
+      if (!cId || newConns.find(c => c.id === cId)) continue;
+      const color = PROFILE_COLORS.find(c => !usedColors.has(c)) || PROFILE_COLORS[newConns.length % PROFILE_COLORS.length];
+      usedColors.add(color);
+      newConns.push({ id: cId, type: cfg.type, label: makeConnectionLabel(cfg.type, cfg), color, config: cfg });
     }
+    // Single state update with all connections
+    setConnections(newConns);
+    db.set("sv-connections", newConns);
+    if (authUser) syncConnectionsToServer(newConns);
     // Connect to the first imported one
-    const first = items[0];
-    const cfg = first.type === "stalker"
-      ? { type: first.type, server: first.server, mac: first.mac, serial: first.serial, deviceId: first.deviceId, deviceId2: first.deviceId2 }
-      : first.type === "xtream"
-      ? { type: first.type, server: first.server, user: first.user, pass: first.pass }
-      : { type: first.type, url: first.url };
-    setConn(cfg);
+    const firstCfg = configs[0];
+    const firstId = connId(firstCfg);
+    if (firstId) { setActiveConnId(firstId); db.set("sv-activeConn", firstId); }
+    setConn(firstCfg);
   }
 
   // Auth gate: show login/register before anything else
