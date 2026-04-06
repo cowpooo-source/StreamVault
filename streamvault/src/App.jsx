@@ -865,13 +865,14 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }) {
+function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onRemoveConn, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [rawText, setRawText] = useState("");
   const [detected, setDetected] = useState([]);
+  const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [err, setErr]       = useState("");
   const [expiredPrompt, setExpiredPrompt] = useState(null); // { conn, validation }
@@ -1254,27 +1255,55 @@ function Setup({ onConnect, connections = [], onReconnect, onRemoveConn, t: st }
               <textarea className="fi" style={{minHeight:"120px",resize:"vertical",fontFamily:"monospace",fontSize:".75rem"}}
                 placeholder={"Paste any text containing:\n• Stalker portal URLs + MAC addresses\n• Xtream Codes URLs with username/password\n• M3U/M3U8 playlist URLs\n\nAuto-detects all connection types."}
                 value={rawText}
-                onChange={e => { setRawText(e.target.value); setDetected(detectFromText(e.target.value)); }}
+                onChange={e => { setRawText(e.target.value); const d = detectFromText(e.target.value); setDetected(d); setSelected(new Set()); }}
               />
             </div>
             {detected.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem"}}>
-                <div className="fl">{t("detected")} ({detected.length})</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div className="fl">{t("detected")} ({detected.length})</div>
+                  {detected.length > 1 && (
+                    <label style={{fontSize:".65rem",color:"var(--t3)",cursor:"pointer",display:"flex",alignItems:"center",gap:".3rem"}}>
+                      <input type="checkbox" checked={selected.size === detected.length}
+                        onChange={e => setSelected(e.target.checked ? new Set(detected.map((_,i) => i)) : new Set())} />
+                      Select all
+                    </label>
+                  )}
+                </div>
                 {detected.map((d, i) => (
                   <div key={i} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".45rem .65rem",
-                    background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
+                    background: selected.has(i) ? "var(--accent-14)" : "var(--s2)",
+                    border: `1px solid ${selected.has(i) ? "var(--accent)" : "var(--b2)"}`,
+                    borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
                     onClick={() => {
-                      if (d.type==="stalker") { setType("stalker"); set("server",d.server); set("mac",d.mac); if(d.serial){set("serial",d.serial);setShowAdvanced(true);} if(d.deviceId){set("deviceId",d.deviceId);setShowAdvanced(true);} if(d.deviceId2){set("deviceId2",d.deviceId2);setShowAdvanced(true);} else if(d.deviceId){set("deviceId2",d.deviceId);} }
-                      else if (d.type==="xtream") { setType("xtream"); set("server",d.server); set("user",d.user); set("pass",d.pass); }
-                      else if (d.type==="m3u") { setType("m3u"); set("url",d.url); }
+                      if (detected.length > 1) {
+                        setSelected(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
+                      } else {
+                        if (d.type==="stalker") { setType("stalker"); set("server",d.server); set("mac",d.mac); if(d.serial){set("serial",d.serial);setShowAdvanced(true);} if(d.deviceId){set("deviceId",d.deviceId);setShowAdvanced(true);} if(d.deviceId2){set("deviceId2",d.deviceId2);setShowAdvanced(true);} else if(d.deviceId){set("deviceId2",d.deviceId);} }
+                        else if (d.type==="xtream") { setType("xtream"); set("server",d.server); set("user",d.user); set("pass",d.pass); }
+                        else if (d.type==="m3u") { setType("m3u"); set("url",d.url); }
+                      }
                     }}
-                    onMouseEnter={e=>e.currentTarget.style.borderColor="var(--accent)"}
-                    onMouseLeave={e=>e.currentTarget.style.borderColor="var(--b2)"}>
+                    onMouseEnter={e => { if (!selected.has(i)) e.currentTarget.style.borderColor="var(--accent)"; }}
+                    onMouseLeave={e => { if (!selected.has(i)) e.currentTarget.style.borderColor="var(--b2)"; }}>
+                    {detected.length > 1 && (
+                      <input type="checkbox" checked={selected.has(i)} readOnly
+                        style={{accentColor:"var(--accent)",cursor:"pointer"}} />
+                    )}
                     <span style={{fontSize:".7rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",minWidth:"50px"}}>{d.type}</span>
                     <span style={{fontSize:".78rem",color:"var(--t1)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.label}</span>
-                    <span style={{fontSize:".65rem",color:"var(--t3)"}}>{t("clickToFill")}</span>
+                    {detected.length === 1 && <span style={{fontSize:".65rem",color:"var(--t3)"}}>{t("clickToFill")}</span>}
                   </div>
                 ))}
+                {selected.size > 0 && (
+                  <button className="btn-primary" style={{marginTop:".4rem"}}
+                    onClick={() => {
+                      const items = [...selected].sort((a,b)=>a-b).map(i => detected[i]);
+                      if (onImportMultiple) onImportMultiple(items);
+                    }}>
+                    Import {selected.size} connection{selected.size > 1 ? "s" : ""}
+                  </button>
+                )}
               </div>
             )}
             {rawText && detected.length === 0 && (
@@ -2529,6 +2558,27 @@ export default function App() {
     setConn(connConfig);
   }
 
+  function handleImportMultiple(items) {
+    if (!items.length) return;
+    // Save all connections, connect to the first one
+    for (const d of items) {
+      const cfg = d.type === "stalker"
+        ? { type: d.type, server: d.server, mac: d.mac, serial: d.serial, deviceId: d.deviceId, deviceId2: d.deviceId2 }
+        : d.type === "xtream"
+        ? { type: d.type, server: d.server, user: d.user, pass: d.pass }
+        : { type: d.type, url: d.url };
+      saveConnection(cfg);
+    }
+    // Connect to the first imported one
+    const first = items[0];
+    const cfg = first.type === "stalker"
+      ? { type: first.type, server: first.server, mac: first.mac, serial: first.serial, deviceId: first.deviceId, deviceId2: first.deviceId2 }
+      : first.type === "xtream"
+      ? { type: first.type, server: first.server, user: first.user, pass: first.pass }
+      : { type: first.type, url: first.url };
+    setConn(cfg);
+  }
+
   // Auth gate: show login/register before anything else
   if (authLoading) return (<><style>{genCSS(THEMES[themeName])}</style><div className="setup"><div className="card" style={{textAlign:"center",padding:"3rem"}}><div className="spinner" /></div></div></>);
   if (!authUser && !isGuest) return (<><style>{genCSS(THEMES[themeName])}</style><AuthScreen onAuth={handleAuth} onGuest={handleGuest} /></>);
@@ -2536,7 +2586,7 @@ export default function App() {
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} t={t} />
+      <Setup onConnect={handleConnect} onImportMultiple={handleImportMultiple} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} t={t} />
       {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
