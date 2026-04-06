@@ -1602,7 +1602,7 @@ export default function App() {
   const [cat, setCat]         = useState("All");
   const [search, setSearch]   = useState("");
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 50;
   const [globalQ, setGlobalQ] = useState("");
   const [playing, setPlaying] = useState(null);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
