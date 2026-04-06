@@ -1130,6 +1130,24 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
       }
     }
 
+    // Detect Xtream from labeled key-value format (Host/Username/Password)
+    const hostMatch = text.match(/(?:host|server|url|portal)\s*(?:=>|[:=])\s*(https?:\/\/[^\s,;]+)/gi);
+    const userMatch = text.match(/(?:username|user|login)\s*(?:=>|[:=])\s*([^\s,;]+)/gi);
+    const passMatch = text.match(/(?:password|pass)\s*(?:=>|[:=])\s*([^\s,;]+)/gi);
+    if (hostMatch && userMatch && passMatch) {
+      // Pair them by order (first host with first user/pass, etc.)
+      const hosts = hostMatch.map(m => m.replace(/^[^:=]*[=:]\s*/i, "").trim());
+      const users = userMatch.map(m => m.replace(/^[^:=]*[=:]\s*/i, "").trim());
+      const passes = passMatch.map(m => m.replace(/^[^:=]*[=:]\s*/i, "").trim());
+      const count = Math.min(hosts.length, users.length, passes.length);
+      for (let i = 0; i < count; i++) {
+        const server = hosts[i].replace(/\/+$/, "");
+        if (!results.find(r => r.type === "xtream" && r.server === server && r.user === users[i])) {
+          results.push({ type: "xtream", server, user: users[i], pass: passes[i], label: `Xtream · ${users[i]}` });
+        }
+      }
+    }
+
     // Detect M3U URLs
     const m3uPattern = /https?:\/\/[^\s"'<>]+\.m3u8?(?:\?[^\s"'<>]*)?/gi;
     const m3us = text.match(m3uPattern) || [];
