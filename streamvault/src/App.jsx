@@ -93,8 +93,10 @@ function AuthScreen({ onAuth, onGuest }) {
 
 // ── Client-side encryption for credentials synced to server ──
 const ENC_ALGO = "AES-GCM";
+let _encKeySource = GUEST_ID; // default to guest ID, updated to user ID on login
+function setEncKeySource(id) { _encKeySource = id; }
 async function deriveKey() {
-  const raw = new TextEncoder().encode(GUEST_ID + ":sv-enc-key");
+  const raw = new TextEncoder().encode(_encKeySource + ":sv-enc-key");
   const hash = await crypto.subtle.digest("SHA-256", raw);
   return crypto.subtle.importKey("raw", hash, ENC_ALGO, false, ["encrypt", "decrypt"]);
 }
@@ -132,8 +134,14 @@ async function encryptConnections(conns) {
 
 async function decryptConnections(data) {
   if (!data) return null;
+  // If data is already an array (stored unencrypted / pre-encryption), return directly
+  if (Array.isArray(data)) return data;
+  // Try to decrypt
   const json = await decryptData(typeof data === "string" ? data : JSON.stringify(data));
-  try { return JSON.parse(json); } catch { return typeof data === "object" ? data : null; }
+  try { return JSON.parse(json); } catch {}
+  // Decryption failed — try parsing raw data as JSON (unencrypted fallback)
+  if (typeof data === "string") { try { return JSON.parse(data); } catch {} }
+  return typeof data === "object" ? data : null;
 }
 
 // Server sync — fire-and-forget with debounce (uses auth token if logged in)
@@ -1547,13 +1555,15 @@ export default function App() {
     if (!token) { setAuthLoading(false); return; }
     fetch(`${API}/api/auth/me`, { headers: { "Authorization": `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(u => setAuthUser(u))
+      .then(u => { setAuthUser(u); setEncKeySource(`user:${u.id}`); })
       .catch(() => { localStorage.removeItem("sv-auth-token"); })
       .finally(() => setAuthLoading(false));
   }, []);
 
   async function handleAuth(user) {
     setAuthUser(user); setIsGuest(false); localStorage.removeItem("sv-guest-mode");
+    // Use user ID for encryption key (consistent across devices)
+    setEncKeySource(`user:${user.id}`);
     // Migrate guest data to new user account
     migrateGuestData();
     // Restore connections from server if local is empty
@@ -1565,7 +1575,7 @@ export default function App() {
         db.set("sv-connections", serverConns);
       }
     } else {
-      // Push local connections to server so other devices can access
+      // Re-encrypt with user key and push to server so other devices can access
       syncConnectionsToServer(localConns);
     }
   }
