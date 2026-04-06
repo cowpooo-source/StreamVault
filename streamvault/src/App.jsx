@@ -1609,7 +1609,16 @@ export default function App() {
     if (!token) { setAuthLoading(false); return; }
     fetch(`${API}/api/auth/me`, { headers: { "Authorization": `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(u => { setAuthUser(u); setEncKeySource(`user:${u.id}`); })
+      .then(async u => {
+        setAuthUser(u);
+        setEncKeySource(`user:${u.id}`);
+        // Restore this user's connections from server
+        const serverConns = await restoreConnectionsFromServer();
+        if (serverConns?.length) {
+          setConnections(serverConns);
+          db.set("sv-connections", serverConns);
+        }
+      })
       .catch(() => { localStorage.removeItem("sv-auth-token"); })
       .finally(() => setAuthLoading(false));
   }, []);
@@ -1620,17 +1629,15 @@ export default function App() {
     setEncKeySource(`user:${user.id}`);
     // Migrate guest data to new user account
     migrateGuestData();
-    // Restore connections from server if local is empty
-    const localConns = await db.get("sv-connections", []);
-    if (!localConns.length) {
-      const serverConns = await restoreConnectionsFromServer();
-      if (serverConns?.length) {
-        setConnections(serverConns);
-        db.set("sv-connections", serverConns);
-      }
+    // Always restore this user's connections from server
+    const serverConns = await restoreConnectionsFromServer();
+    if (serverConns?.length) {
+      setConnections(serverConns);
+      db.set("sv-connections", serverConns);
     } else {
-      // Re-encrypt with user key and push to server so other devices can access
-      syncConnectionsToServer(localConns);
+      // No server data — start fresh for this user
+      setConnections([]);
+      db.set("sv-connections", []);
     }
   }
   function handleGuest() { setIsGuest(true); localStorage.setItem("sv-guest-mode", "1"); }
@@ -1639,6 +1646,13 @@ export default function App() {
     if (token) authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
     localStorage.removeItem("sv-auth-token");
     localStorage.removeItem("sv-guest-mode");
+    // Clear current user's connections from local state
+    setConnections([]);
+    setActiveConnId(null);
+    setConn(null);
+    db.set("sv-connections", []);
+    db.set("sv-activeConn", null);
+    setEncKeySource(GUEST_ID);
     setAuthUser(null); setIsGuest(false);
   }
   const userRole = authUser?.role || (isGuest ? "guest" : null);
