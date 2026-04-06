@@ -1428,7 +1428,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 // ══════════════════════════════════════════════════════════════════
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, t: ct }) {
+const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, authUser, isGuest, onLogout, t: ct }) {
   const t = ct || ((k) => k);
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
@@ -1457,6 +1457,31 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
     <div className="modal-ov" onClick={e => e.target===e.currentTarget && onClose()}>
       <div className="modal" style={{maxWidth:"440px"}}>
         <div className="modal-title">{t("connections")}</div>
+        {/* Logged-in user info */}
+        {(authUser || isGuest) && (
+          <div style={{display:"flex",alignItems:"center",gap:".6rem",padding:".5rem .7rem",marginBottom:".6rem",
+            background:"var(--s2)",border:"1px solid var(--b1)",borderRadius:"8px"}}>
+            <div style={{width:32,height:32,borderRadius:"50%",background:"var(--accent-22)",
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:".85rem",flexShrink:0}}>
+              {authUser ? authUser.username?.[0]?.toUpperCase() || "U" : "G"}
+            </div>
+            <div style={{flex:1,overflow:"hidden"}}>
+              <div style={{fontSize:".8rem",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {authUser ? authUser.username : "Guest"}
+              </div>
+              <div style={{fontSize:".6rem",color:"var(--t3)",textTransform:"capitalize"}}>
+                {authUser ? `${authUser.role} · ${connections.length}/${authUser.maxConnections || authUser.limits?.maxConnections || "?"} connections` : "Guest mode · No sync"}
+              </div>
+            </div>
+            {authUser && (
+              <button style={{background:"none",border:"1px solid var(--b2)",borderRadius:4,cursor:"pointer",
+                fontSize:".6rem",color:"var(--t3)",padding:".2rem .5rem"}}
+                onClick={e => { e.stopPropagation(); onLogout(); onClose(); }}>
+                Logout
+              </button>
+            )}
+          </div>
+        )}
         <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem",maxHeight:"400px",overflowY:"auto"}}>
           {connections.map(c => {
             const diag = diagResults[c.id];
@@ -3294,6 +3319,9 @@ export default function App() {
           onRemove={removeConnection}
           onAddNew={addNewConnection}
           onClose={() => setShowConnManager(false)}
+          authUser={authUser}
+          isGuest={isGuest}
+          onLogout={handleLogout}
           t={t}
         />
       )}
