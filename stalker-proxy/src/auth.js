@@ -21,6 +21,39 @@ const DEFAULT_ROLE = ALLOWED_DEFAULT_ROLES.has(process.env.DEFAULT_ROLE) ? proce
 let db;
 let jwtSecret;
 
+// Login attempt tracking (in-memory, resets on restart)
+const loginAttempts = new Map(); // username -> { count, lockedUntil }
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
+function checkLockout(username) {
+  const entry = loginAttempts.get(username.toLowerCase());
+  if (!entry) return null;
+  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
+    const mins = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
+    return `Account locked. Try again in ${mins} minute${mins > 1 ? "s" : ""}.`;
+  }
+  if (entry.lockedUntil && Date.now() >= entry.lockedUntil) {
+    loginAttempts.delete(username.toLowerCase());
+  }
+  return null;
+}
+
+function recordFailedLogin(username) {
+  const key = username.toLowerCase();
+  const entry = loginAttempts.get(key) || { count: 0, lockedUntil: null };
+  entry.count++;
+  if (entry.count >= MAX_ATTEMPTS) {
+    entry.lockedUntil = Date.now() + LOCKOUT_MINUTES * 60000;
+    entry.count = 0;
+  }
+  loginAttempts.set(key, entry);
+}
+
+function clearFailedLogins(username) {
+  loginAttempts.delete(username.toLowerCase());
+}
+
 // Prepared statements
 let stmts = {};
 
@@ -185,10 +218,20 @@ async function resetPassword(token, newPassword) {
 }
 
 async function authenticate(username, password) {
+  // Check lockout before anything else
+  const lockMsg = checkLockout(username);
+  if (lockMsg) throw new Error(lockMsg);
+
   const user = stmts.getUserByUsername.get(username);
-  if (!user) throw new Error("Invalid username or password");
+  if (!user) { recordFailedLogin(username); throw new Error("Invalid username or password"); }
   if (user.disabled) throw new Error("Account is disabled");
-  if (!(await bcrypt.compare(password, user.password_hash))) throw new Error("Invalid username or password");
+  if (!(await bcrypt.compare(password, user.password_hash))) {
+    recordFailedLogin(username);
+    throw new Error("Invalid username or password");
+  }
+
+  // Success — clear failed attempts
+  clearFailedLogins(username);
 
   stmts.updateLastLogin.run(Date.now(), user.id);
 

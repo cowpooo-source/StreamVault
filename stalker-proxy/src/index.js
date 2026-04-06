@@ -98,6 +98,8 @@ app.use(helmet({
 }));
 
 // Rate limiting
+app.use("/api/auth/login", rateLimit({ windowMs: 15 * 60000, max: 10, message: { error: "Too many login attempts. Try again in 15 minutes." } }));
+app.use("/api/auth/register", rateLimit({ windowMs: 60 * 60000, max: 5, message: { error: "Too many registrations. Try again later." } }));
 app.use("/api/feedback", rateLimit({ windowMs: 60000, max: 10, message: { error: "Too many feedback submissions" } }));
 app.use("/api/", rateLimit({ windowMs: 60000, max: 60, message: { error: "Too many requests" } }));
 app.use("/stalker/", rateLimit({ windowMs: 60000, max: 600, message: { error: "Too many requests" } }));
