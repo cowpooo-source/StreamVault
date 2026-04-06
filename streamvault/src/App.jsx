@@ -2372,13 +2372,18 @@ export default function App() {
 
   function saveConnection(connConfig) {
     const cId = connId(connConfig);
-    if (!cId) return;
+    if (!cId) return "Invalid connection";
     const existing = connections.find(c => c.id === cId);
     if (existing) {
       // Already saved — just activate
       setActiveConnId(cId);
       db.set("sv-activeConn", cId);
-      return;
+      return null;
+    }
+    // Enforce connection limit
+    const maxConns = userLimits?.maxConnections ?? 5;
+    if (connections.length >= maxConns) {
+      return `Connection limit reached (${maxConns}). Remove a connection to add a new one.`;
     }
     const usedColors = new Set(connections.map(c => c.color));
     const color = PROFILE_COLORS.find(c => !usedColors.has(c)) || PROFILE_COLORS[connections.length % PROFILE_COLORS.length];
@@ -2389,6 +2394,7 @@ export default function App() {
     db.set("sv-connections", newConns);
     db.set("sv-activeConn", cId);
     if (authUser) syncConnectionsToServer(newConns);
+    return null;
   }
 
   function switchConnection(id) {
@@ -2554,7 +2560,8 @@ export default function App() {
   }, [globalQ, channels, vod, series]);
 
   function handleConnect(connConfig) {
-    saveConnection(connConfig);
+    const err = saveConnection(connConfig);
+    if (err) { alert(err); return; }
     setConn(connConfig);
   }
 
@@ -2567,14 +2574,21 @@ export default function App() {
       return { type: d.type, url: d.url };
     });
     // Build all connection objects at once to avoid stale state
+    const maxConns = userLimits?.maxConnections ?? 5;
     let newConns = [...connections];
     const usedColors = new Set(newConns.map(c => c.color));
+    let added = 0;
     for (const cfg of configs) {
+      if (newConns.length >= maxConns) break;
       const cId = connId(cfg);
       if (!cId || newConns.find(c => c.id === cId)) continue;
       const color = PROFILE_COLORS.find(c => !usedColors.has(c)) || PROFILE_COLORS[newConns.length % PROFILE_COLORS.length];
       usedColors.add(color);
       newConns.push({ id: cId, type: cfg.type, label: makeConnectionLabel(cfg.type, cfg), color, config: cfg });
+      added++;
+    }
+    if (added < configs.length) {
+      alert(`Imported ${added} of ${configs.length} connections (limit: ${maxConns}). Remove existing connections to add more.`);
     }
     // Single state update with all connections
     setConnections(newConns);
