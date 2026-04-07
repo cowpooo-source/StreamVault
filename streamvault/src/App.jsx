@@ -1202,7 +1202,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
                 {authUser ? `${authUser.role} · ${connections.length}/${authUser.maxConnections || authUser.limits?.maxConnections || "?"} connections` : "Guest mode · data stored locally"}
               </div>
             </div>
-            {authUser && (
+            {(authUser || isGuest) && (
               <button onClick={onLogout}
                 style={{background:"none",border:"1px solid var(--b2)",borderRadius:6,cursor:"pointer",
                   fontSize:".65rem",color:"var(--t3)",padding:".25rem .6rem",transition:"all .2s"}}
