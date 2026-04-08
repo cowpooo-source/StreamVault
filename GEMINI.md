@@ -20,3 +20,15 @@ This project is an IPTV client architecture optimized for self-hosting on a VPS.
 
 ## Deployment
 Typically deployed using the provided `deploy.sh` script to a VPS environment.
+
+## Recent Progress (April 7, 2026)
+- **Branch Strategy**: Locked development focus to the `vps/self-hosted` branch.
+- **Architecture Review**: Mapped the interaction between the React frontend and Node.js proxy backend.
+- **Bug Fixes**: 
+  - Fixed guest logout visibility in `App.jsx`.
+  - Added an automatic fallback in `mpegts.js` to native `<video>` playback for "Unsupported media type" errors.
+- **VPS Deployment**:
+  - Successfully deployed to `40.233.113.76`.
+  - Verified with a 43-test security suite (SSRF, Auth, Rate Limiting, etc.).
+  - Established a "Hard Reset" deployment workflow to avoid `dist` folder conflicts.
+- **Documentation**: Created a manual deployment guide for VPS updates.

@@ -605,6 +605,13 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         } else if (errType === "NetworkError") {
           title = "Network Error";
           body = `Could not load the stream. ${errInfo?.msg || "Check your connection or try again."}`;
+        } else if (errDetail?.includes("Unsupported media type")) {
+          // Fallback to native video if mpegts.js can't handle it
+          console.warn("mpegts.js: Unsupported media type, falling back to native <video>");
+          destroyPlayers();
+          video.src = u;
+          video.play().catch(()=>{});
+          return;
         } else {
           body = `${errType}: ${errDetail || "Unknown error"}${code ? ` (HTTP ${code})` : ""}`;
         }
