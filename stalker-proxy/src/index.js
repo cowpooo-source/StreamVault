@@ -247,6 +247,11 @@ app.delete("/api/cache", auth.optionalAuth, (req, res) => {
 // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
 const pathCache = new Map();
 const PATH_CACHE_MAX = 500;
+const sessionCache = new Map();
+const inFlightSessions = new Map();
+const portalCooldowns = new Map();
+const SESSION_TTL_MS = 30 * 1000;
+const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 function setPathCache(key, value) {
   if (pathCache.size >= PATH_CACHE_MAX) {
     // Evict oldest entry (first inserted) instead of clearing all
@@ -271,6 +276,75 @@ function safeError(e) {
 
 function cacheKey(portal, mac) {
   return `${portal.replace(/\/+$/, "")}|${mac}`;
+}
+
+function normalizeStalkerOpts(opts = {}) {
+  return {
+    serial: opts.serial || null,
+    deviceId: opts.deviceId || null,
+    deviceId2: opts.deviceId2 || null,
+  };
+}
+
+function sessionCacheKey(portal, mac, opts = {}) {
+  const normalized = normalizeStalkerOpts(opts);
+  return `${cacheKey(portal, mac)}|${normalized.serial || ""}`;
+}
+
+function getCachedSession(portal, mac, opts = {}) {
+  const key = sessionCacheKey(portal, mac, opts);
+  const cached = sessionCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    sessionCache.delete(key);
+    return null;
+  }
+  const normalized = normalizeStalkerOpts(opts);
+  return {
+    token: cached.token,
+    base: cached.base,
+    apiPath: cached.apiPath,
+    portal,
+    mac,
+    opts: normalized,
+    headers: stalkerHeaders(mac, cached.token, portal, normalized),
+    async refresh() { return getSession(portal, mac, normalized, { forceRefresh: true }); },
+  };
+}
+
+function storeSession(portal, mac, opts, result) {
+  const normalized = normalizeStalkerOpts(opts);
+  sessionCache.set(sessionCacheKey(portal, mac, normalized), {
+    token: result.token,
+    base: result.base,
+    apiPath: result.apiPath,
+    expiresAt: Date.now() + SESSION_TTL_MS,
+  });
+  return {
+    token: result.token,
+    base: result.base,
+    apiPath: result.apiPath,
+    portal,
+    mac,
+    opts: normalized,
+    headers: stalkerHeaders(mac, result.token, portal, normalized),
+    async refresh() { return getSession(portal, mac, normalized, { forceRefresh: true }); },
+  };
+}
+
+function setPortalCooldown(portal, mac, opts = {}) {
+  portalCooldowns.set(sessionCacheKey(portal, mac, opts), Date.now() + RATE_LIMIT_COOLDOWN_MS);
+}
+
+function getPortalCooldown(portal, mac, opts = {}) {
+  const key = sessionCacheKey(portal, mac, opts);
+  const expiresAt = portalCooldowns.get(key);
+  if (!expiresAt) return 0;
+  if (expiresAt <= Date.now()) {
+    portalCooldowns.delete(key);
+    return 0;
+  }
+  return expiresAt;
 }
 
 function buildStalkerStreamHeaders(session, reqHeaders = {}) {
@@ -351,10 +425,10 @@ async function extractApiPath(portalUrl, mac) {
 }
 
 // Try a handshake with a specific base + apiPath combo, using both GET and POST
-async function tryHandshake(base, apiPath, mac, portalUrl) {
+async function tryHandshake(base, apiPath, mac, portalUrl, opts = {}) {
   const qs = `type=stb&action=handshake&prehash=0&token=&JsHttpRequest=1-xml`;
   const url = `${base}${apiPath}?${qs}`;
-  const headers = stalkerHeaders(mac, "", portalUrl);
+  const headers = stalkerHeaders(mac, "", portalUrl, normalizeStalkerOpts(opts));
 
   try {
     const res = await fetch(url, { headers, timeout: 8000, agent: agentFor(url) });
@@ -371,22 +445,53 @@ async function tryHandshake(base, apiPath, mac, portalUrl) {
 
 // Get a session with a valid token — does exactly ONE handshake
 // Path resolution is cached; token is always fresh
-async function getSession(portal, mac, opts = {}) {
+async function getSession(portal, mac, opts = {}, config = {}) {
+  const normalized = normalizeStalkerOpts(opts);
   const key = cacheKey(portal, mac);
+  const sessionKey = sessionCacheKey(portal, mac, normalized);
   const cached = pathCache.get(key);
+
+  if (config.forceRefresh) {
+    sessionCache.delete(sessionKey);
+  } else {
+    const cachedSession = getCachedSession(portal, mac, normalized);
+    if (cachedSession) return cachedSession;
+  }
+
+  const cooldownUntil = getPortalCooldown(portal, mac, normalized);
+  if (cooldownUntil) {
+    const waitSeconds = Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 1000));
+    throw new Error(`Portal rate limited (429). Cooldown active for ${waitSeconds}s.`);
+  }
+
+  if (!config.forceRefresh && inFlightSessions.has(sessionKey)) {
+    return inFlightSessions.get(sessionKey);
+  }
+
+  const loader = (async () => {
+  let sawRateLimit = false;
 
   // If path is known, do a single handshake on the known path
   if (cached) {
-    const result = await tryHandshake(cached.base, cached.apiPath, mac, portal);
+    try {
+    const result = await tryHandshake(cached.base, cached.apiPath, mac, portal, normalized);
     if (result) {
-      return {
-        token: result.token, base: cached.base, apiPath: cached.apiPath, portal, mac, opts,
-        headers: stalkerHeaders(mac, result.token, portal, opts),
-        async refresh() { return getSession(portal, mac, opts); },
-      };
+      return storeSession(portal, mac, normalized, {
+        token: result.token,
+        base: cached.base,
+        apiPath: cached.apiPath,
+      });
     }
     // Path may have changed — clear cache and re-discover
     pathCache.delete(key);
+    } catch (e) {
+      if (e.code === "RATE_LIMITED") {
+        sawRateLimit = true;
+        pathCache.delete(key);
+      } else {
+        throw e;
+      }
+    }
   }
 
   // Discover path: try each base+path combo (each attempt is a handshake)
@@ -403,23 +508,40 @@ async function getSession(portal, mac, opts = {}) {
   for (const base of bases) {
     for (const path of API_PATHS) {
       try {
-        const result = await tryHandshake(base, path, mac, portal);
+        const result = await tryHandshake(base, path, mac, portal, normalized);
         if (result) {
           setPathCache(key, { base, apiPath: path });
           console.log(`✓ Path resolved: ${base}${path}`);
-          return {
-            token: result.token, base, apiPath: path, portal, mac, opts,
-            headers: stalkerHeaders(mac, result.token, portal, opts),
-            async refresh() { return getSession(portal, mac, opts); },
-          };
+          return storeSession(portal, mac, normalized, { token: result.token, base, apiPath: path });
         }
       } catch(e) {
-        if (e.code === "RATE_LIMITED") throw new Error("Portal rate limited (429). Try again in a minute.");
+        if (e.code === "RATE_LIMITED") {
+          sawRateLimit = true;
+          continue;
+        }
         throw e;
       }
     }
   }
+  if (sawRateLimit) {
+    setPortalCooldown(portal, mac, normalized);
+    throw new Error("Portal rate limited (429). Try again in a minute.");
+  }
   throw new Error("Handshake failed: could not obtain token from portal");
+  })();
+
+  if (!config.forceRefresh) inFlightSessions.set(sessionKey, loader);
+  try {
+    return await loader;
+  } finally {
+    const cooldownUntil = getPortalCooldown(portal, mac, normalized);
+    const deleteDelay = cooldownUntil ? 1000 : 0;
+    if (deleteDelay > 0) {
+      setTimeout(() => inFlightSessions.delete(sessionKey), deleteDelay);
+    } else {
+      inFlightSessions.delete(sessionKey);
+    }
+  }
 }
 
 // portalFetch with automatic token refresh on auth failure
@@ -679,11 +801,11 @@ app.post("/stalker/validate", async (req, res) => {
 
 // ── GET /stalker/api (generic passthrough)
 app.get("/stalker/api", async (req, res) => {
-  const { portal, mac, ...apiParams } = req.query;
+  const { portal, mac, serial, deviceId, deviceId2, ...apiParams } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const data = await portalFetchRetry(session, apiParams);
     res.json(data);
   } catch (e) {
@@ -694,7 +816,7 @@ app.get("/stalker/api", async (req, res) => {
 
 // ── GET /stalker/channels
 app.get("/stalker/channels", async (req, res) => {
-  const { portal, mac, refresh } = req.query;
+  const { portal, mac, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   const ck = cache.cacheKey(portal, mac, "channels");
@@ -704,7 +826,7 @@ app.get("/stalker/channels", async (req, res) => {
   }
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
 
     const genreData = await portalFetchRetry(session, { type: "itv", action: "get_genres" }, 10000);
     const chData = await portalFetchRetry(session, { type: "itv", action: "get_all_channels" }, 15000);
@@ -770,14 +892,14 @@ async function fetchAllPages(session, type, category, maxItems = 500) {
 
 // ── GET /stalker/vod/categories  — returns category list only (fast, single request)
 app.get("/stalker/vod/categories", async (req, res) => {
-  const { portal, mac, refresh } = req.query;
+  const { portal, mac, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   const ck = cache.cacheKey(portal, mac, "vod-cats");
   if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const catData = await portalFetchRetry(session, { type: "vod", action: "get_categories" }, 10000);
     const categories = (catData?.js || []).map(c => ({
       id:    String(c.id),
@@ -795,7 +917,7 @@ app.get("/stalker/vod/categories", async (req, res) => {
 
 // ── GET /stalker/vod?cat=ID  — returns items for one category (lazy load)
 app.get("/stalker/vod", async (req, res) => {
-  const { portal, mac, cat, refresh } = req.query;
+  const { portal, mac, cat, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
   if (!cat)            return res.status(400).json({ error: "cat (category id) required" });
 
@@ -803,7 +925,7 @@ app.get("/stalker/vod", async (req, res) => {
   if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
-    const session  = await getSession(portal, mac);
+    const session  = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const rawItems = await fetchAllPages(session, "vod", cat);
 
     const items = rawItems.map(v => ({
@@ -835,14 +957,14 @@ app.get("/stalker/vod", async (req, res) => {
 // ── GET /stalker/stream
 // content_type: "live" (default) uses type=itv, "vod" uses type=vod, "series" uses type=vod
 app.get("/stalker/stream", async (req, res) => {
-  const { portal, mac, cmd, content_type } = req.query;
+  const { portal, mac, cmd, content_type, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac || !cmd) return res.status(400).json({ error: "portal, mac and cmd required" });
 
   // Map content_type to the correct Stalker API type parameter
   const stalkerType = (content_type === "vod" || content_type === "series") ? "vod" : "itv";
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const data = await portalFetchRetry(session, {
       type: stalkerType, action: "create_link",
       cmd, series: 0, forced_storage: 0,
@@ -976,14 +1098,14 @@ app.get("/stalker/play", async (req, res) => {
 
 // ── GET /stalker/series/seasons (query-param version)
 app.get("/stalker/series/seasons", async (req, res) => {
-  const { portal, mac, seriesId, refresh } = req.query;
+  const { portal, mac, seriesId, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac || !seriesId) return res.status(400).json({ error: "portal, mac and seriesId required" });
 
   const ck = cache.cacheKey(portal, mac, "seasons", seriesId);
   if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const movieId = seriesId.split(":")[0];
     const data = await portalFetchRetry(session, {
       type: "series", action: "get_ordered_list",
@@ -1006,14 +1128,14 @@ app.get("/stalker/series/seasons", async (req, res) => {
 
 // ── GET /stalker/series/categories
 app.get("/stalker/series/categories", async (req, res) => {
-  const { portal, mac, refresh } = req.query;
+  const { portal, mac, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   const ck = cache.cacheKey(portal, mac, "series-cats");
   if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const catData = await portalFetchRetry(session, { type: "series", action: "get_categories" }, 10000);
     const categories = (catData?.js || []).map(c => ({
       id:    String(c.id),
@@ -1031,7 +1153,7 @@ app.get("/stalker/series/categories", async (req, res) => {
 
 // ── GET /stalker/series?cat=ID
 app.get("/stalker/series", async (req, res) => {
-  const { portal, mac, cat, refresh } = req.query;
+  const { portal, mac, cat, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
   if (!cat)            return res.status(400).json({ error: "cat (category id) required" });
 
@@ -1039,7 +1161,7 @@ app.get("/stalker/series", async (req, res) => {
   if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
-    const session  = await getSession(portal, mac);
+    const session  = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const rawItems = await fetchAllPages(session, "series", cat);
 
     const items = rawItems.map(s => ({
@@ -1070,13 +1192,13 @@ app.get("/stalker/series", async (req, res) => {
 // ── GET /stalker/series/episode/stream — resolve a playable URL for a series episode
 // NOTE: This static route must be registered BEFORE the parameterized :seriesId route
 app.get("/stalker/series/episode/stream", async (req, res) => {
-  const { portal, mac, cmd, episode } = req.query;
+  const { portal, mac, cmd, episode, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac || !cmd || !episode) {
     return res.status(400).json({ error: "portal, mac, cmd and episode required" });
   }
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const data = await portalFetchRetry(session, {
       type: "vod", action: "create_link",
       cmd, series: episode, forced_storage: 0,
@@ -1097,13 +1219,13 @@ app.get("/stalker/series/episode/stream", async (req, res) => {
 
 // ── GET /stalker/series/:seriesId/seasons — returns seasons with episode lists
 app.get("/stalker/series/:seriesId/seasons", async (req, res) => {
-  const { portal, mac } = req.query;
+  const { portal, mac, serial, deviceId, deviceId2 } = req.query;
   const { seriesId } = req.params;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
   if (!seriesId)       return res.status(400).json({ error: "seriesId required" });
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     // movie_id is the numeric part of the series id (e.g. "646" from "646:646")
     const movieId = seriesId.split(":")[0];
     const data = await portalFetchRetry(session, {
@@ -1153,11 +1275,11 @@ app.get("/stalker/profile", async (req, res) => {
 
 // ── GET /stalker/account (new — from extractstb)
 app.get("/stalker/account", async (req, res) => {
-  const { portal, mac } = req.query;
+  const { portal, mac, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const data = await portalFetchRetry(session, {
       type: "account_info", action: "get_main_info",
     });
@@ -1171,7 +1293,7 @@ app.get("/stalker/account", async (req, res) => {
 // ── GET /stalker/epg?portal=...&mac=...&period=N
 // Fetches EPG data for all channels (period in hours, default 4)
 app.get("/stalker/epg", async (req, res) => {
-  const { portal, mac, period = 4, refresh } = req.query;
+  const { portal, mac, period = 4, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
   // EPG cached for 4 hours (not 7 days — program data changes frequently)
@@ -1180,7 +1302,7 @@ app.get("/stalker/epg", async (req, res) => {
   if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
 
   try {
-    const session = await getSession(portal, mac);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
     const data = await portalFetchRetry(session, {
       type: "itv", action: "get_epg_info", period,
     }, 20000);
