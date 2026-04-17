@@ -203,6 +203,21 @@ html{height:100%}
 .player-close{padding:.28rem .7rem;background:#ff446612;border:1px solid #ff446622;border-radius:6px;
   color:var(--danger);font-family:'DM Sans',sans-serif;font-size:.72rem;cursor:pointer;transition:all .2s}
 .player-close:hover{background:#ff446622}
+.player-ad{position:absolute;top:1rem;right:1rem;z-index:22;max-width:260px;background:rgba(6,8,14,.88);
+  border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:.8rem .85rem;backdrop-filter:blur(14px);
+  box-shadow:0 18px 48px #000000aa;display:flex;flex-direction:column;gap:.45rem}
+.player-ad-badge{align-self:flex-start;font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent);background:var(--accent-18);border:1px solid var(--accent-22);border-radius:999px;padding:.12rem .45rem}
+.player-ad-title{font-family:'Rajdhani',sans-serif;font-size:1rem;font-weight:600;line-height:1.15;color:var(--t1)}
+.player-ad-meta{font-size:.7rem;color:var(--t2);text-transform:uppercase;letter-spacing:.05em}
+.player-ad-actions{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+.player-ad-link,.player-ad-skip{padding:.35rem .65rem;border-radius:7px;border:1px solid transparent;font-family:'DM Sans',sans-serif;
+  font-size:.72rem;font-weight:600;cursor:pointer;transition:all .2s}
+.player-ad-link{background:var(--s2);border-color:var(--b2);color:var(--t1)}
+.player-ad-link:hover{border-color:var(--accent);color:var(--accent)}
+.player-ad-skip{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff}
+.player-ad-skip:hover{opacity:.9}
+.player-ad-countdown{font-size:.72rem;color:var(--t2)}
 .kbd-hint{font-size:.6rem;color:var(--t3);display:flex;gap:.5rem;flex-wrap:wrap;padding:.4rem 1.1rem;background:var(--bg);border-top:1px solid var(--b1)}
 .kbd{display:inline-block;background:var(--s2);border:1px solid var(--b2);border-radius:3px;padding:.05rem .3rem;font-size:.58rem;color:var(--t2);margin-right:.2rem}
 
@@ -498,6 +513,7 @@ html{height:100%}
   .player-bar{padding:.5rem .7rem;gap:.5rem;flex-wrap:wrap}
   .player-title{font-size:.92rem}
   .player-epg{max-width:100%;flex-basis:100%;order:10;margin-top:.2rem}
+  .player-ad{top:.6rem;left:.6rem;right:.6rem;max-width:none}
   .player-ctrl,.player-close{padding:.35rem .6rem;font-size:.72rem;min-height:36px;display:flex;align-items:center}
   .kbd-hint{display:none!important}
   .osd{top:.5rem;left:.5rem;max-width:calc(100vw - 1rem);padding:.5rem .7rem}

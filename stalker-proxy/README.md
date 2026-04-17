@@ -15,6 +15,7 @@ This proxy handles all three transparently.
 
 ```bash
 cp .env.example .env
+# Set ADMIN_PASS and optionally TMDB_API_KEY in .env
 npm install
 npm start
 # Runs at http://localhost:3001
@@ -42,11 +43,11 @@ npm start
 
 ### Koyeb (recommended)
 
-`koyeb.yaml` is pre-configured. Set `ALLOWED_ORIGIN` to your frontend URL.
+`koyeb.yaml` is pre-configured. Set `ALLOWED_ORIGIN` to your frontend URL and add `TMDB_API_KEY` if you want server-side TMDB metadata.
 
 ### Railway
 
-`railway.json` is pre-configured. Add env var `ALLOWED_ORIGIN`.
+`railway.json` is pre-configured. Add env vars `ALLOWED_ORIGIN` and `TMDB_API_KEY` if you want server-side TMDB metadata.
 
 ### Render
 
@@ -58,3 +59,4 @@ Build: `npm install` · Start: `npm start` · Free tier works.
 |----------|---------|-------------|
 | `PORT` | `3001` | Server port |
 | `ALLOWED_ORIGIN` | `*` | CORS origin — lock down in production |
+| `TMDB_API_KEY` | — | TMDB v3 API key used by `/api/tmdb/*` for all users |

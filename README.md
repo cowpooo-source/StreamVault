@@ -83,7 +83,7 @@ New registrations automatically get **Regular** access (promotional).
 ```bash
 # Backend
 cd stalker-proxy
-cp .env.example .env    # set ADMIN_PASS at minimum
+cp .env.example .env    # set ADMIN_PASS at minimum, TMDB_API_KEY for server-side metadata
 npm install
 node src/index.js       # http://localhost:3001
 
@@ -120,6 +120,7 @@ cat > stalker-proxy/.env << EOF
 PORT=3001
 ADMIN_PASS=your-secure-password
 ALLOWED_ORIGIN=*
+TMDB_API_KEY=your-tmdb-v3-key
 EOF
 
 # Start with PM2
@@ -143,6 +144,7 @@ Nginx serves `Portal Heaven/dist/` as static files and proxies API routes to por
 | `DEFAULT_ROLE` | `regular` | Role assigned to new registrations |
 | `REGISTRATION_OPEN` | `true` | Set `false` to disable public registration |
 | `ALLOWED_ORIGIN` | `*` | CORS allowed origins |
+| `TMDB_API_KEY` | — | TMDB v3 API key used by `/api/tmdb/*` for all users |
 | `CACHE_DB` | `data/cache.db` | SQLite database path |
 
 ---

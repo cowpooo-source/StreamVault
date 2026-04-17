@@ -1020,7 +1020,7 @@ app.get("/stalker/play", async (req, res) => {
     }
     // Try to pipe the stream (same IP as create_link) with the same Stalker session context
     const fetchHeaders = buildStalkerStreamHeaders(session, req.headers);
-    const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow", agent: agentFor(cleanUrl) });
+    const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow" });
     const upstreamSummary = summarizeUpstreamHeaders(upstream.headers);
     if (!upstream.ok && upstream.status !== 206) {
       console.warn("Stalker play upstream rejected stream", {
@@ -1444,14 +1444,12 @@ app.get("/img", async (req, res) => {
     // Try original URL first, fallback to HTTP for portals with broken HTTPS certs
     let fetchUrl = url;
     let upstream = await fetch(fetchUrl, {
-      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" },
-      agent: agentFor(fetchUrl),
+      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }
     }).catch(() => null);
     if (!upstream && url.startsWith("https:")) {
       fetchUrl = url.replace(/^https:/, "http:");
       upstream = await fetch(fetchUrl, {
-        timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" },
-        agent: agentFor(fetchUrl),
+        timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }
       });
     }
     if (!upstream || !upstream.ok) return res.status(upstream?.status || 502).end();
@@ -1473,7 +1471,7 @@ app.get("/api/tmdb/*", async (req, res) => {
   qs.set("api_key", TMDB_KEY);
   try {
     const upstream = await fetch(`https://api.themoviedb.org/3/${tmdbPath}?${qs}`, {
-      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }, agent: keepAliveAgentHttps,
+      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }
     });
     const data = await upstream.json();
     res.set("Cache-Control", "public, max-age=3600");
@@ -1491,7 +1489,7 @@ app.get("/proxy", async (req, res) => {
 
   const tt = transferTimeout(60000); // 60s total transfer limit
   try {
-    const upstream = await fetch(url, { timeout: 30000, signal: tt.signal, headers: { "User-Agent": "StreamVault/1.0" }, agent: agentFor(url) });
+    const upstream = await fetch(url, { timeout: 30000, signal: tt.signal, headers: { "User-Agent": "StreamVault/1.0" } });
     const contentType = upstream.headers.get("content-type") || "";
 
     if (contentType.includes("json")) {

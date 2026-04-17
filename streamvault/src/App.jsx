@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import "./app.css";
 
 const API = import.meta.env.VITE_API_URL || "";
+const EXOCLICK_VAST_URL = import.meta.env.VITE_EXOCLICK_VAST_URL || "https://s.magsrv.com/v1/vast.php?idzone=2916384";
 
 // Proxy portal images to avoid mixed-content / broken SSL cert issues
 // Skip proxying for known-good HTTPS domains (TMDB, etc.)
@@ -19,6 +20,113 @@ function getAuthToken() { return localStorage.getItem("sv-auth-token"); }
 function authHeaders(extra = {}) { const t = getAuthToken(); return { ...extra, ...(t ? { "Authorization": `Bearer ${t}` } : {}), "X-Guest-Id": GUEST_ID }; }
 function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
 function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
+
+function resolveUrl(raw, base) {
+  if (!raw) return "";
+  try { return new URL(String(raw).trim(), base).toString(); } catch { return ""; }
+}
+
+function parseVastTime(value) {
+  if (!value) return 0;
+  const text = String(value).trim();
+  if (!text) return 0;
+  if (text.includes(":")) {
+    const parts = text.split(":").map(Number);
+    if (parts.some(Number.isNaN)) return 0;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+  }
+  const n = Number(text);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pingUrl(url) {
+  if (!url) return;
+  try {
+    const img = new Image();
+    img.referrerPolicy = "no-referrer";
+    img.src = url;
+  } catch {}
+}
+
+function pingUrls(urls = []) {
+  urls.forEach(pingUrl);
+}
+
+function mergeTrackers(...sets) {
+  const merged = {};
+  for (const set of sets) {
+    if (!set) continue;
+    for (const [event, urls] of Object.entries(set)) {
+      if (!urls?.length) continue;
+      (merged[event] ||= []).push(...urls);
+    }
+  }
+  for (const [event, urls] of Object.entries(merged)) {
+    merged[event] = [...new Set(urls.filter(Boolean))];
+  }
+  return merged;
+}
+
+function collectVastTrackers(root) {
+  const trackers = {};
+  const push = (event, url) => {
+    if (!event || !url) return;
+    (trackers[event] ||= []).push(url);
+  };
+  root.querySelectorAll("Impression").forEach((node) => push("impression", node.textContent?.trim()));
+  root.querySelectorAll("TrackingEvents Tracking").forEach((node) => push((node.getAttribute("event") || "").toLowerCase(), node.textContent?.trim()));
+  return trackers;
+}
+
+async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) {
+  if (!vastUrl || depth > 2) return null;
+  try {
+    const res = await fetch(vastUrl, { cache: "no-store", credentials: "omit", redirect: "follow" });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    if (doc.querySelector("parsererror")) return null;
+
+    const wrapper = doc.querySelector("Wrapper");
+    if (wrapper) {
+      const nextUrl = resolveUrl(wrapper.querySelector("VASTAdTagURI")?.textContent, vastUrl);
+      if (!nextUrl) return null;
+      const wrapperTrackers = collectVastTrackers(wrapper);
+      return await fetchVastAd(nextUrl, videoEl, depth + 1, mergeTrackers(inheritedTrackers, wrapperTrackers));
+    }
+
+    const inline = doc.querySelector("InLine");
+    const linear = inline?.querySelector("Linear");
+    if (!inline || !linear) return null;
+
+    const mediaFiles = [...linear.querySelectorAll("MediaFile")]
+      .map((node) => ({
+        url: node.textContent?.trim(),
+        type: node.getAttribute("type") || "",
+      }))
+      .filter((file) => file.url);
+
+    if (!mediaFiles.length) return null;
+
+    const media = mediaFiles.find((file) => file.type.startsWith("video/") && (!videoEl?.canPlayType || videoEl.canPlayType(file.type))) ||
+      mediaFiles.find((file) => file.type.startsWith("video/")) ||
+      mediaFiles[0];
+
+    const trackers = mergeTrackers(inheritedTrackers, collectVastTrackers(inline));
+    return {
+      title: inline.querySelector("AdTitle")?.textContent?.trim() || "Sponsored",
+      mediaUrl: resolveUrl(media.url, vastUrl),
+      mediaType: media.type,
+      clickThrough: resolveUrl(inline.querySelector("VideoClicks > ClickThrough")?.textContent, vastUrl),
+      duration: parseVastTime(linear.querySelector("Duration")?.textContent),
+      skipOffset: linear.getAttribute("skipoffset") ? parseVastTime(linear.getAttribute("skipoffset")) : null,
+      trackers,
+    };
+  } catch {
+    return null;
+  }
+}
 
 // ── Auth Screen ──
 function AuthScreen({ onAuth, onGuest }) {
@@ -441,6 +549,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
   const mpegtsRef  = useRef(null);
+  const adPlayedRef = useRef(false);
+  const adSessionRef = useRef(0);
+  const adFinishRef = useRef(null);
   const osdTimer   = useRef(null);
   const [osd, setOsd]         = useState(true);
   const [showQCH, setShowQCH] = useState(false);
@@ -450,6 +561,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
     return channelList.findIndex(c => c.id === item.id || c.url === item.url);
   });
   const [current, setCurrent] = useState(item);
+  const [adState, setAdState] = useState(null);
 
   const showOSD = useCallback(() => {
     setOsd(true);
@@ -460,6 +572,107 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   function destroyPlayers() {
     if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
     if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+  }
+
+  async function playVastPreroll(video, ad, isCancelled) {
+    return new Promise((resolve) => {
+      if (!video || !ad?.mediaUrl || isCancelled()) {
+        resolve(false);
+        return;
+      }
+
+      let done = false;
+      let skipTimer = null;
+      let impressionSent = false;
+      const wasMuted = video.muted;
+      const wasControls = video.controls;
+
+      const cleanup = () => {
+        video.removeEventListener("ended", onEnded);
+        video.removeEventListener("error", onError);
+        video.removeEventListener("timeupdate", onTimeUpdate);
+        video.removeEventListener("playing", onPlaying);
+        video.removeEventListener("click", onClick);
+        if (skipTimer) clearInterval(skipTimer);
+        video.muted = wasMuted;
+        video.controls = wasControls;
+        adFinishRef.current = null;
+      };
+
+      const finish = (result, eventName = null) => {
+        if (done) return;
+        done = true;
+        if (eventName) pingUrls(ad.trackers?.[eventName]);
+        cleanup();
+        setAdState(null);
+        resolve(result);
+      };
+
+      const updateOverlay = () => {
+        if (isCancelled()) {
+          finish(false);
+          return;
+        }
+        const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+        const skipEnabled = ad.skipOffset !== null;
+        const canSkip = !skipEnabled || ad.skipOffset <= 0 || currentTime >= ad.skipOffset;
+        const remaining = skipEnabled && !canSkip ? Math.max(0, Math.ceil(ad.skipOffset - currentTime)) : 0;
+        setAdState({
+          active: true,
+          title: ad.title,
+          clickThrough: ad.clickThrough,
+          skipEnabled,
+          canSkip,
+          skipRemaining: remaining,
+          mediaType: ad.mediaType,
+        });
+      };
+
+      const onEnded = () => finish(true, "complete");
+      const onError = () => finish(false);
+      const onPlaying = () => {
+        if (impressionSent) return;
+        impressionSent = true;
+        pingUrls(ad.trackers?.impression);
+      };
+      const onClick = () => {
+        if (!ad.clickThrough) return;
+        window.open(ad.clickThrough, "_blank", "noopener,noreferrer");
+      };
+      const onTimeUpdate = () => updateOverlay();
+
+      adFinishRef.current = (eventName = "complete") => finish(true, eventName);
+
+      video.pause();
+      video.removeAttribute("src");
+      video.src = ad.mediaUrl;
+      video.controls = true;
+      video.playsInline = true;
+      video.muted = true;
+      video.load();
+
+      video.addEventListener("ended", onEnded);
+      video.addEventListener("error", onError);
+      video.addEventListener("timeupdate", onTimeUpdate);
+      video.addEventListener("playing", onPlaying, { once: true });
+      video.addEventListener("click", onClick);
+
+      if (ad.skipOffset !== null && ad.skipOffset > 0) {
+        skipTimer = setInterval(updateOverlay, 250);
+      }
+
+      updateOverlay();
+      const playPromise = video.play();
+      if (playPromise?.catch) {
+        playPromise.catch(() => finish(false));
+      }
+    });
   }
 
   const [streamErr, setStreamErr] = useState(null);
@@ -686,9 +899,40 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   }
 
   useEffect(() => {
-    initPlayer(current.url);
-    showOSD();
+    let cancelled = false;
+    const sessionId = ++adSessionRef.current;
+    const video = videoRef.current;
+    if (!video || !current.url) return;
+
+    async function start() {
+      setStreamErr(null);
+      setAdState(null);
+      destroyPlayers();
+
+      if (!adPlayedRef.current) {
+        adPlayedRef.current = true;
+        const ad = await fetchVastAd(EXOCLICK_VAST_URL, video);
+        if (cancelled || sessionId !== adSessionRef.current) return;
+        if (ad?.mediaUrl) {
+          const played = await playVastPreroll(video, ad, () => cancelled || sessionId !== adSessionRef.current);
+          if (cancelled || sessionId !== adSessionRef.current) return;
+          if (!played) {
+            setAdState(null);
+          }
+        }
+      }
+
+      if (cancelled || sessionId !== adSessionRef.current) return;
+      initPlayer(current.url);
+      showOSD();
+    }
+
+    start();
     return () => {
+      cancelled = true;
+      adSessionRef.current += 1;
+      adFinishRef.current = null;
+      setAdState(null);
       destroyPlayers();
       clearTimeout(osdTimer.current);
       clearTimeout(qchTimer.current);
@@ -789,6 +1033,27 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
       <div className="player-wrap">
         <div style={{ position:"relative" }}>
           <video ref={videoRef} className="player-video" controls playsInline />
+          {adState?.active && (
+            <div className="player-ad">
+              <div className="player-ad-badge">ExoClick Ad</div>
+              <div className="player-ad-title">{adState.title}</div>
+              <div className="player-ad-meta">{adState.mediaType || "VAST preroll"}</div>
+              <div className="player-ad-actions">
+                {adState.clickThrough && (
+                  <button className="player-ad-link" onClick={() => window.open(adState.clickThrough, "_blank", "noopener,noreferrer")}>
+                    Learn More
+                  </button>
+                )}
+                {adState.skipEnabled && (adState.canSkip ? (
+                  <button className="player-ad-skip" onClick={() => adFinishRef.current?.("skip")}>
+                    Skip Ad
+                  </button>
+                ) : (
+                  <div className="player-ad-countdown">Skip in {adState.skipRemaining}s</div>
+                ))}
+              </div>
+            </div>
+          )}
           {streamErr && (
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
               background:"rgba(0,0,0,.88)",padding:"2rem",textAlign:"center"}}>

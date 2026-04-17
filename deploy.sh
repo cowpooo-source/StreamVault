@@ -57,15 +57,31 @@ fi
 # Build frontend
 cd "$INSTALL_DIR/streamvault"
 npm install
+# Clean old dist to avoid conflicts
+rm -rf dist
 VITE_API_URL="" npm run build
 
 # Install backend deps
 cd "$INSTALL_DIR/stalker-proxy"
 npm install --production
-cat > .env <<ENV
-PORT=$NODE_PORT
-ALLOWED_ORIGIN=*
-ENV
+
+# Preserve existing secrets on redeploy; allow explicit overrides via env vars.
+TMP_ENV="$(mktemp)"
+PRESERVE_PATTERN='^(PORT|ALLOWED_ORIGIN)='
+if [ -n "${TMDB_API_KEY:-}" ]; then
+  PRESERVE_PATTERN='^(PORT|ALLOWED_ORIGIN|TMDB_API_KEY)='
+fi
+{
+  printf 'PORT=%s\n' "$NODE_PORT"
+  printf 'ALLOWED_ORIGIN=%s\n' "${ALLOWED_ORIGIN:-*}"
+  if [ -n "${TMDB_API_KEY:-}" ]; then
+    printf 'TMDB_API_KEY=%s\n' "$TMDB_API_KEY"
+  fi
+  if [ -f .env ]; then
+    grep -Ev "$PRESERVE_PATTERN" .env || true
+  fi
+} > "$TMP_ENV"
+mv "$TMP_ENV" .env
 
 # Nginx config
 sudo tee /etc/nginx/conf.d/streamvault.conf > /dev/null <<NGINX
@@ -76,7 +92,7 @@ server {
     root $INSTALL_DIR/streamvault/dist;
     index index.html;
 
-    location ~ ^/(stalker|stream|proxy|health) {
+    location ~ ^/(stalker|stream|proxy|health|api|img|analytics) {
         proxy_pass http://127.0.0.1:$NODE_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -89,6 +105,14 @@ server {
 
     location / {
         try_files \$uri \$uri/ /index.html;
+    }
+
+    # Prevent MIME type errors by returning 404 for missing assets instead of index.html
+    location ~* \.(?:js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|otf|map)$ {
+        expires 1y;
+        access_log off;
+        add_header Cache-Control "public";
+        try_files \$uri =404;
     }
 }
 NGINX

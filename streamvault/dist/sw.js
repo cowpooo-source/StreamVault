@@ -1,4 +1,4 @@
-const CACHE = "sv-mnqs5qzv";
+const CACHE = "sv-mo3aptyw";
 
 self.addEventListener("install", e => {
   self.skipWaiting();
