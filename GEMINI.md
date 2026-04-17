@@ -1,4 +1,4 @@
-# StreamVault (vps/self-hosted branch)
+# Portal Heaven (vps/self-hosted branch)
 
 ## Overview
 This project is an IPTV client architecture optimized for self-hosting on a VPS. It provides a "TiviMate-like" user experience for Stalker, Xtream, and M3U portals.
@@ -6,10 +6,10 @@ This project is an IPTV client architecture optimized for self-hosting on a VPS.
 ## Project Guidelines
 - **Core Branch**: All development and research should focus strictly on the `vps/self-hosted` branch.
 - **Privacy & Security**: Adhere to the client-side encryption (AES-GCM) pattern for user credentials.
-- **Architectural Integrity**: Maintain the separation between the React frontend (`streamvault`) and the Node.js backend (`stalker-proxy`).
+- **Architectural Integrity**: Maintain the separation between the React frontend (`Portal Heaven`) and the Node.js backend (`stalker-proxy`).
 
 ## Architecture Details
-1. **Frontend (`streamvault`)**: 
+1. **Frontend (`Portal Heaven`)**: 
    - Vite-based React SPA.
    - Features: Multi-language support (i18n), multiple themes, and a responsive player.
    - Security: Encrypts connection details (passwords, MAC addresses) before syncing to the backend.

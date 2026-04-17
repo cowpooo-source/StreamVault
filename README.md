@@ -1,4 +1,4 @@
-# StreamVault
+# Portal Heaven
 
 The first fully browser-based Stalker Portal IPTV client. No apps to install, no STB emulators — just open a URL and stream.
 
@@ -88,7 +88,7 @@ npm install
 node src/index.js       # http://localhost:3001
 
 # Frontend
-cd streamvault
+cd Portal Heaven
 npm install
 npm run dev             # http://localhost:5173
 ```
@@ -111,9 +111,9 @@ Sets up Node.js, Nginx, SSL (Let's Encrypt), PM2 — fully automated for RHEL/Ce
 
 ```bash
 # Clone and install
-git clone https://github.com/frossty/StreamVault.git
-cd StreamVault/stalker-proxy && npm install --omit=dev
-cd ../streamvault && npm install && npm run build
+git clone https://github.com/frossty/Portal Heaven.git
+cd Portal Heaven/stalker-proxy && npm install --omit=dev
+cd ../Portal Heaven && npm install && npm run build
 
 # Configure
 cat > stalker-proxy/.env << EOF
@@ -128,7 +128,7 @@ pm2 start src/index.js --name stalker-proxy
 pm2 save && pm2 startup
 ```
 
-Nginx serves `streamvault/dist/` as static files and proxies API routes to port 3001.
+Nginx serves `Portal Heaven/dist/` as static files and proxies API routes to port 3001.
 
 ---
 
@@ -216,8 +216,8 @@ Nginx serves `streamvault/dist/` as static files and proxies API routes to port 
 ## Project Structure
 
 ```
-StreamVault/
-├── streamvault/                 # React frontend
+Portal Heaven/
+├── Portal Heaven/                 # React frontend
 │   ├── src/App.jsx              # Entire SPA (single-file)
 │   ├── public/                  # PWA assets, service worker
 │   └── dist/                    # Production build
@@ -235,7 +235,7 @@ StreamVault/
 
 ## Disclaimer
 
-StreamVault is a **media player application** only. It does not provide, host, or distribute any content, streams, or IPTV services. Users are solely responsible for ensuring they have valid, legal subscriptions for any services they connect. The developers bear no responsibility for the content or legality of third-party services.
+Portal Heaven is a **media player application** only. It does not provide, host, or distribute any content, streams, or IPTV services. Users are solely responsible for ensuring they have valid, legal subscriptions for any services they connect. The developers bear no responsibility for the content or legality of third-party services.
 
 ---
 

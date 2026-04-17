@@ -1,5 +1,5 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-/* StreamVault styles — extracted from genCSS */
+/* Portal Heaven styles — extracted from genCSS */
 body{background:var(--bg);font-family:'DM Sans',sans-serif;color:var(--t1);overflow:hidden;height:100%}
 html{height:100%}
 #root{height:100%}

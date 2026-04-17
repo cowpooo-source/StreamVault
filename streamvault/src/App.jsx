@@ -49,7 +49,7 @@ function AuthScreen({ onAuth, onGuest }) {
     <div className="setup">
       <div className="card" style={{maxWidth:380}}>
         <div style={{textAlign:"center",marginBottom:"1.5rem"}}>
-          <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"2rem",fontWeight:700,letterSpacing:".12em",color:"var(--accent)"}}>STREAMVAULT</div>
+          <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"2rem",fontWeight:700,letterSpacing:".12em",color:"var(--accent)"}}>Portal Heaven</div>
           <div style={{fontSize:".78rem",color:"var(--t3)"}}>Your personal IPTV client</div>
         </div>
         <div className="tabs" style={{marginBottom:"1rem"}}>
@@ -1211,7 +1211,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
   return (
     <div className="setup">
       <div className="card">
-        <div className="logo">STREAMVAULT</div>
+        <div className="logo">Portal Heaven</div>
         <div className="tagline">{t("tagline")}</div>
 
         {/* Logged-in user info */}
@@ -1469,13 +1469,13 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
                 Legal Disclaimer
               </div>
               <div style={{fontSize:".78rem",color:"var(--t2,#8080aa)",lineHeight:1.7,marginBottom:"1.2rem"}}>
-                <p style={{marginBottom:".6rem"}}>StreamVault is a <strong>media player application</strong> only. It does not provide, host, or distribute any content, streams, or IPTV services.</p>
+                <p style={{marginBottom:".6rem"}}>Portal Heaven is a <strong>media player application</strong> only. It does not provide, host, or distribute any content, streams, or IPTV services.</p>
                 <p style={{marginBottom:".6rem"}}>By connecting an external service, you confirm that:</p>
                 <ul style={{paddingLeft:"1.2rem",margin:".4rem 0"}}>
                   <li>You have a <strong>valid, legal subscription</strong> from your IPTV provider.</li>
                   <li>You are <strong>solely responsible</strong> for the content you access.</li>
                   <li>You will <strong>not use this app</strong> to access pirated or unauthorized content.</li>
-                  <li>StreamVault and its developers <strong>bear no responsibility</strong> for the content or legality of third-party services you connect to.</li>
+                  <li>Portal Heaven and its developers <strong>bear no responsibility</strong> for the content or legality of third-party services you connect to.</li>
                 </ul>
                 <p style={{marginTop:".6rem",fontSize:".72rem",color:"var(--t3)"}}>This disclaimer is shown once and your acceptance is stored locally.</p>
               </div>
@@ -2809,12 +2809,12 @@ export default function App() {
       {/* ── MOBILE TOP BAR + DRAWER ── */}
       <div className="mob-topbar">
         <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>☰</button>
-        <span className="mob-topbar-title">STREAMVAULT</span>
+        <span className="mob-topbar-title">Portal Heaven</span>
         <span className="mob-topbar-section">{LABEL[section]}</span>
       </div>
       <div className={`mob-overlay ${mobileMenuOpen?"open":""}`} onClick={() => setMobileMenuOpen(false)} />
       <div className={`mob-drawer ${mobileMenuOpen?"open":""}`}>
-        <div className="s-logo">STREAMVAULT</div>
+        <div className="s-logo">Portal Heaven</div>
         {activeConnection && (
           <div className="conn-card" style={{borderLeftColor: activeConnection.color}}
             onClick={() => { setShowConnManager(true); setMobileMenuOpen(false); }}>
@@ -2870,7 +2870,7 @@ export default function App() {
 
       {/* ── SIDEBAR (desktop only) ── */}
       <div className="sidebar">
-        <div className="s-logo">STREAMVAULT</div>
+        <div className="s-logo">Portal Heaven</div>
 
         {/* Connection Card */}
         {activeConnection && (
@@ -3744,7 +3744,7 @@ function SettingsView({ connections, favs, history, authUser, isGuest, activeCon
 
   async function exportData() {
     const data = {
-      _streamvault_export: true,
+      _portal_heaven_export: true,
       version: 1,
       exported_at: new Date().toISOString(),
       user: authUser ? { username: authUser.username, role: authUser.role } : { guest: true },
@@ -3767,7 +3767,7 @@ function SettingsView({ connections, favs, history, authUser, isGuest, activeCon
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `streamvault-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `Portal Heaven-backup-${new Date().toISOString().slice(0,10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -3780,7 +3780,7 @@ function SettingsView({ connections, favs, history, authUser, isGuest, activeCon
     reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        if (!data._streamvault_export) throw new Error("Not a valid StreamVault export file");
+        if (!data._portal_heaven_export) throw new Error("Not a valid Portal Heaven export file");
 
         // Import connections
         if (data.connections?.length) {

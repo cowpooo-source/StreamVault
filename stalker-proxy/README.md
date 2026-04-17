@@ -1,6 +1,6 @@
 # Stalker Proxy
 
-A lightweight Node.js proxy that handles Stalker/Ministra portal authentication and CORS so StreamVault can talk to IPTV portals from a browser.
+A lightweight Node.js proxy that handles Stalker/Ministra portal authentication and CORS so Portal Heaven can talk to IPTV portals from a browser.
 
 ## Why is this needed?
 
