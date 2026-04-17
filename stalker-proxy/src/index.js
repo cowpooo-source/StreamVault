@@ -1368,7 +1368,7 @@ app.get("/stream", async (req, res) => {
     const headers = { "User-Agent": "StreamVault/1.0" };
     if (req.headers.range) headers["Range"] = req.headers.range;
 
-    const upstream = await fetch(url, { headers, redirect: "follow", agent: agentFor(url) });
+    const upstream = await fetch(url, { headers, redirect: "follow" });
     if (!upstream.ok && upstream.status !== 206) return res.status(upstream.status).end();
 
     const ct = upstream.headers.get("content-type") || "";
