@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import "./app.css";
 
 const API = import.meta.env.VITE_API_URL || "";
-const EXOCLICK_VAST_URL = import.meta.env.VITE_EXOCLICK_VAST_URL || "https://s.magsrv.com/v1/vast.php?idzone=2916384";
+const EXOCLICK_VAST_URL = import.meta.env.VITE_EXOCLICK_VAST_URL || "https://s.magsrv.com/v1/vast.php?idzone=5903402";
 
 // Proxy portal images to avoid mixed-content / broken SSL cert issues
 // Skip proxying for known-good HTTPS domains (TMDB, etc.)
