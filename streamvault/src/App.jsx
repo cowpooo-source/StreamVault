@@ -2047,6 +2047,17 @@ export default function App() {
   const userRole = authUser?.role || (isGuest ? "guest" : null);
   const userLimits = authUser?.limits || (isGuest ? { maxConnections: 2, maxVod: 500, epg: true, sync: false } : null);
 
+  // Show upgrade prompt for free/guest users on login
+  useEffect(() => {
+    if (!authLoading && (userRole === "free" || userRole === "guest")) {
+      // Small delay to let the UI settle
+      const timer = setTimeout(() => {
+        setShowUpgradePrompt(true);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [authLoading, userRole]);
+
   // ── connection & data
   const [conn, setConn]       = useState(null);
   const [channels, setChannels] = useState([]);
@@ -2057,6 +2068,9 @@ export default function App() {
   // ── series detail modal
   const [seriesDetail, setSeriesDetail] = useState(null); // {item, seasons, activeSeason}
   const [seriesLoading, setSeriesLoading] = useState(false);
+
+  // ── upgrade prompt for free/guest users
+  const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
   const [episodeLoading, setEpisodeLoading] = useState(null); // episode number being loaded
   const [expandedItem, setExpandedItem] = useState(null); // inline detail expansion for vod/series card
   const [tmdbData, setTmdbData] = useState(null);
@@ -3637,6 +3651,39 @@ export default function App() {
                   {fbSending ? t("sending") : t("send")}</button>
               </div>
             </>)}
+          </div>
+        </div>
+      , document.body)}
+
+      {/* Upgrade prompt for free/guest users */}
+      {showUpgradePrompt && createPortal(
+        <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
+          display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+          onClick={e => { if (e.target === e.currentTarget) setShowUpgradePrompt(false); }}>
+          <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
+            borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:420,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",position:"relative"}}>
+            <button onClick={() => setShowUpgradePrompt(false)} style={{position:"absolute",top:".5rem",right:".5rem",background:"none",border:"none",color:"var(--t2)",fontSize:"1.2rem",cursor:"pointer"}}>×</button>
+            <div style={{fontSize:"1.2rem",fontWeight:600,marginBottom:"1rem",color:"var(--accent)"}}>✨ Upgrade Your Account</div>
+            <div style={{fontSize:".85rem",color:"var(--t2)",marginBottom:"1.5rem"}}>
+              Unlock premium features and enhance your streaming experience:
+            </div>
+            <ul style={{margin:0,paddingLeft:"1.2rem",color:"var(--t1)",fontSize:".85rem",lineHeight:1.6}}>
+              <li>No ads — enjoy uninterrupted streaming</li>
+              <li>More simultaneous connections</li>
+              <li>Unlimited VOD library access</li>
+              <li>Sync across all your devices</li>
+              <li>Priority support</li>
+            </ul>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:".5rem",marginTop:"1.5rem"}}>
+              <button onClick={() => setShowUpgradePrompt(false)}
+                style={{padding:".5rem 1rem",background:"transparent",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"var(--t2)",fontSize:".85rem",cursor:"pointer"}}>
+                Maybe Later
+              </button>
+              <button onClick={() => { disconnect(); handleLogout(); setShowUpgradePrompt(false); }}
+                style={{padding:".5rem 1.2rem",background:"var(--accent,#00d4ff)",border:"none",borderRadius:7,color:"#fff",fontSize:".85rem",fontWeight:600,cursor:"pointer"}}>
+                Upgrade Now
+              </button>
+            </div>
           </div>
         </div>
       , document.body)}
