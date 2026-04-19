@@ -2,7 +2,7 @@
 
 A browser-based IPTV client — no app install, no subscription, bring your own service.
 
-**Try it now:** https://streamvault-poc.pages.dev/
+**Try it now:** https://portalheaven.stream/
 
 Supports **Xtream Codes**, **M3U playlists**, **Stalker/Ministra portals**, and **direct HLS/MP4 URLs**.
 
