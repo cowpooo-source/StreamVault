@@ -128,6 +128,83 @@ async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) 
   }
 }
 
+// ── Adsterra Social Bar ──
+const ADSTERRA_COOLDOWN_MS = 3 * 60 * 1000;
+const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
+
+function AdsterraSocialBar({ onAllowedPage }) {
+  useEffect(() => {
+    if (!onAllowedPage) return;
+
+    // ✅ Check cooldown BEFORE doing anything
+    const closedAt = localStorage.getItem(ADSTERRA_STORAGE_KEY);
+    if (closedAt && (Date.now() - parseInt(closedAt)) < ADSTERRA_COOLDOWN_MS) return;
+
+    const script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src = "https://pl29160027.profitablecpmratenetwork.com/fe/df/06/fedf067b01378386e9c4bc061ffa1edb.js";
+    script.async = true;
+    document.head.appendChild(script);
+
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.removedNodes) {
+          if (node.nodeType === 1) {
+            const isAdBar =
+              node.id?.startsWith("at_") ||
+              node.className?.includes("adsterra") ||
+              node.className?.includes("social-bar");
+
+            if (isAdBar) {
+              localStorage.setItem(ADSTERRA_STORAGE_KEY, Date.now().toString());
+              observer.disconnect();
+              // ✅ No setTicket — don't re-trigger the effect at all
+            }
+          }
+        }
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
+    };
+  }, [onAllowedPage]); // ✅ Only re-evaluate if the page eligibility changes
+
+  return null;
+}
+
+// ── Adsterra Native Banner ──
+function AdsterraNativeBanner({ enabled }) {
+  useEffect(() => {
+    if (!enabled) return;
+
+    // Check if script already exists
+    const existingScript = document.querySelector('script[src="https://pl29188175.profitablecpmratenetwork.com/3b0dde1ecede80099770260eafdfbd02/invoke.js"]');
+    if (existingScript) return;
+
+    const script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src = "https://pl29188175.profitablecpmratenetwork.com/3b0dde1ecede80099770260eafdfbd02/invoke.js";
+    script.async = true;
+    script.setAttribute("data-cfasync", "false");
+    document.head.appendChild(script);
+  }, [enabled]);
+
+  if (!enabled) return null;
+
+  return (
+    <div
+      id="container-3b0dde1ecede80099770260eafdfbd02"
+      style={{ gridColumn: "1 / -1", width: "100%", minHeight: "50px" }}
+    />
+  );
+}
+
 // ── Auth Screen ──
 function AuthScreen({ onAuth, onGuest }) {
   const [mode, setMode] = useState("login");
@@ -3061,6 +3138,7 @@ export default function App() {
     </>
   );
 
+  const onAllowedPage = (authUser || isGuest) && !!conn;
   const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:"Settings"};
   const activeConnection = connections.find(c => c.id === activeConnId);
   const channelCount = channels.length + vod.length + series.length;
@@ -3071,6 +3149,7 @@ export default function App() {
 
   return (
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
+      <AdsterraSocialBar onAllowedPage={onAllowedPage} />
       {/* ── MOBILE TOP BAR + DRAWER ── */}
       <div className="mob-topbar">
         <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>☰</button>
@@ -3419,6 +3498,7 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="vod-grid">
+                  <AdsterraNativeBanner enabled={section === "vod" || section === "series"} />
                     {paginatedItems.map((item,i) => {
                       const faved = isFav(item);
                       const hist = historyMap.get(item.id || item.url);
@@ -3716,6 +3796,7 @@ const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, isFav, t 
                 <button className="vod-fav on" onClick={e=>{e.stopPropagation();toggleFav(item);}}>♥</button>
               </div>
             ))}
+            {label === t("movies") && <AdsterraNativeBanner enabled={true} />}
           </div>
         </div>
       ))}
