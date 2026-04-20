@@ -1924,9 +1924,10 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
                     {loading ? "..." : "🩺"}
                   </button>
                   {c.id !== activeConnId && (
-                    <button style={{background:"none",border:"none",cursor:"pointer",fontSize:".75rem",color:"var(--danger)",padding:".2rem .3rem"}}
-                      title={t("removeConn")}
-                      onClick={e => { e.stopPropagation(); onRemove(c.id); }}>✕</button>
+                    <button onClick={e => { e.stopPropagation(); if(confirm(`Delete "${c.label}"?`)) onRemove(c.id); }}
+                      style={{background:"none",border:"none",color:"var(--danger)",cursor:"pointer",fontSize:".75rem",padding:".2rem .3rem",
+                        borderRadius:"4px",lineHeight:1,flexShrink:0}}
+                      title={t("removeConn")}>✕</button>
                   )}
                 </div>
                 {diag && (
@@ -2103,6 +2104,7 @@ export default function App() {
   const [activeConnId, setActiveConnId] = useState(null);
   const [showConnManager, setShowConnManager] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [editingConn, setEditingConn] = useState(null);
 
   // ── favorites {live:{}, vod:{}, series:{}}
   const [favs, setFavs] = useState({live:{}, vod:{}, series:{}});
