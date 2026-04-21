@@ -205,22 +205,96 @@ function AdsterraNativeBanner({ enabled }) {
   );
 }
 
+// ── Reset Password Modal ──
+function ResetPasswordModal({ token, onClose }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+
+  async function submit(e) {
+    e?.preventDefault();
+    if (!password) return setErr("Password is required");
+    if (password !== confirm) return setErr("Passwords do not match");
+    setErr(""); setLoading(true);
+    try {
+      const res = await fetch(`${API}/api/auth/reset-password`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setDone(true);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="modal-ov">
+      <div className="modal" style={{maxWidth:380}}>
+        <div className="modal-title" style={{textAlign:"center",marginBottom:"1.5rem"}}>Reset Password</div>
+        {done ? (
+          <div style={{textAlign:"center"}}>
+            <div style={{background:"rgba(0,212,255,0.1)",color:"var(--accent)",padding:".8rem",borderRadius:8,fontSize:".85rem",marginBottom:"1.5rem",border:"1px solid var(--accent-22)"}}>
+              Password successfully reset! You can now log in with your new password.
+            </div>
+            <button className="btn-primary" onClick={onClose} style={{width:"100%"}}>Go to Login</button>
+          </div>
+        ) : (
+          <form onSubmit={submit}>
+            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
+            <div className="fg">
+              <label className="fl">New Password</label>
+              <input className="fi" type="password" placeholder="New Password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
+            </div>
+            <div className="fg">
+              <label className="fl">Confirm New Password</label>
+              <input className="fi" type="password" placeholder="Confirm Password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+            </div>
+            <div className="modal-btns" style={{marginTop:"1.5rem"}}>
+              <button type="button" className="btn-cancel" onClick={onClose} disabled={loading} style={{flex:1}}>Cancel</button>
+              <button type="submit" className="btn-confirm" disabled={loading} style={{flex:1}}>{loading ? "..." : "Reset"}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Auth Screen ──
 function AuthScreen({ onAuth, onGuest }) {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [emailInput, setEmailInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
 
   async function submit(e) {
     e?.preventDefault();
-    setErr(""); setLoading(true);
+    setErr(""); setMsg(""); setLoading(true);
     try {
+      if (mode === "forgot") {
+        if (!emailInput) throw new Error("Email is required");
+        const res = await fetch(`${API}/api/auth/forgot-password`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: emailInput }),
+        });
+        const data = await res.json();
+        setMsg(data.message || "Reset link sent!");
+        return;
+      }
+
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
+      const body = { username, password };
+      if (mode === "register") body.email = emailInput;
+
       const res = await fetch(`${API}${endpoint}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
@@ -237,25 +311,59 @@ function AuthScreen({ onAuth, onGuest }) {
           <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"2rem",fontWeight:700,letterSpacing:".12em",color:"var(--accent)"}}>Portal Heaven</div>
           <div style={{fontSize:".78rem",color:"var(--t3)"}}>Your personal IPTV client</div>
         </div>
-        <div className="tabs" style={{marginBottom:"1rem"}}>
-          <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("")}}>Login</button>
-          <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("")}}>Register</button>
-        </div>
-        {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
-        <form onSubmit={submit}>
-          <div className="fg">
-            <label className="fl">Username</label>
-            <input className="fi" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} autoFocus />
-          </div>
-          <div className="fg">
-            <label className="fl">Password</label>
-            <input className="fi" type="password" placeholder="Password" value={password}
-              onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && submit()} />
-          </div>
-          <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%",marginTop:".8rem"}}>
-            {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
-          </button>
-        </form>
+
+        {mode !== "forgot" ? (
+          <>
+            <div className="tabs" style={{marginBottom:"1rem"}}>
+              <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("");setMsg("");}}>Login</button>
+              <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("");setMsg("");}}>Register</button>
+            </div>
+            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
+            <form onSubmit={submit}>
+              <div className="fg">
+                <label className="fl">Username</label>
+                <input className="fi" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} autoFocus />
+              </div>
+              {mode === "register" && (
+                <div className="fg">
+                  <label className="fl">Email Address</label>
+                  <input className="fi" type="email" placeholder="email@example.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} />
+                </div>
+              )}
+              <div className="fg">
+                <label className="fl">Password</label>
+                <input className="fi" type="password" placeholder="Password" value={password}
+                  onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && submit()} />
+              </div>
+              {mode === "login" && (
+                <div style={{textAlign:"right",marginTop:"-0.5rem",marginBottom:"0.8rem"}}>
+                  <button type="button" onClick={() => setMode("forgot")} style={{background:"none",border:"none",color:"var(--accent)",fontSize:".75rem",cursor:"pointer",padding:0}}>Forgot Password?</button>
+                </div>
+              )}
+              <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%"}}>
+                {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
+              </button>
+            </form>
+          </>
+        ) : (
+          <>
+            <div style={{fontSize:"1.1rem",fontWeight:600,marginBottom:"0.5rem",textAlign:"center"}}>Reset Password</div>
+            <p style={{fontSize:".8rem",color:"var(--t2)",marginBottom:"1.2rem",textAlign:"center"}}>Enter your email address and we'll send you a link to reset your password.</p>
+            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
+            {msg && <div style={{background:"rgba(0,212,255,0.1)",color:"var(--accent)",padding:".8rem",borderRadius:8,fontSize:".8rem",marginBottom:"1rem",border:"1px solid var(--accent-22)"}}>{msg}</div>}
+            <form onSubmit={submit}>
+              <div className="fg">
+                <label className="fl">Email Address</label>
+                <input className="fi" type="email" placeholder="email@example.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} autoFocus />
+              </div>
+              <button type="submit" className="btn-primary" disabled={loading || !!msg} style={{width:"100%",marginTop:".5rem"}}>
+                {loading ? "..." : "Send Reset Link"}
+              </button>
+              <button type="button" onClick={() => setMode("login")} style={{width:"100%",background:"none",border:"1px solid var(--b2)",color:"var(--t2)",padding:".6rem",borderRadius:8,fontSize:".85rem",marginTop:".8rem",cursor:"pointer"}}>Back to Login</button>
+            </form>
+          </>
+        )}
+
         <div style={{textAlign:"center",marginTop:"1.2rem"}}>
           <button onClick={onGuest} style={{width:"100%",padding:".65rem",background:"transparent",
             border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,color:"var(--t2)",cursor:"pointer",
@@ -395,12 +503,12 @@ const PROFILE_COLORS = ["#00d4ff","#ff6b35","#00e896","#ff2d55","#a78bfa","#fbbf
 const RTL_LANGS = ["ar","ur"];
 const LANG_META = {en:"English",es:"Español",fr:"Français",ar:"العربية",pt:"Português",hi:"हिन्दी",ur:"اردو"};
 const LANGS={en:{discover:"Discover",live:"Live TV",movies:"Movies",series:"Series",favorites:"Favorites",continueWatching:"Continue Watching",tvGuide:"TV Guide",globalSearch:"Global Search",directPlay:"Direct Play",watch:"Watch",tools:"Tools",savedConns:"Saved Connections",orAddNew:"or add new",connect:"Connect",connectArrow:"Connect →",disconnect:"Disconnect",feedback:"Feedback",send:"Send",cancel:"Cancel",close:"Close",refresh:"Refresh",search:"Search",prev:"Prev",next:"Next",fav:"Fav",pip:"PiP",play:"Play",go:"Go",playPause:"Play/Pause",fullscreen:"Fullscreen",mute:"Mute",channels:"Channels",volume:"Volume",portalURL:"Portal URL",macAddress:"MAC Address",serverURL:"Server URL",username:"Username",password:"Password",playlistURL:"Playlist URL",connFailed:"Connection failed",connecting:"Connecting…",import:"Import",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U Playlist",stalkerPortal:"Stalker Portal",directHLS:"Direct HLS",noChannels:"No channels found",loading:"Loading…",loadingSection:"Loading {0}…",playbackErr:"Playback Error",networkErr:"Network Error",streamNotFound:"Stream Not Found",accessDenied:"Access Denied",serverErr:"Server Error",noContent:"No content found",selectCategory:"Select a category",fetchingItems:"Fetching items from portal.",tryDifferent:"Try a different category or clear your search.",now:"Now",loadEPG:"Load EPG",noChannelsLoaded:"No channels loaded",noEPGData:"No EPG data",filterChannels:"Filter channels…",sendFeedback:"Send Feedback",thankYou:"Thank you!",feedbackReceived:"Your feedback has been received.",feedbackHint:"Bug reports, feature requests, or general comments",feedbackPlaceholder:"What's on your mind?",sending:"Sending...",noFavsYet:"No favorites yet",favHint:"Click the ♡ icon on any channel or movie to add it here.",liveTV:"Live TV",nothingStarted:"Nothing started yet",resumeHint:"Watch some content and it will appear here for easy resuming.",resumeWatching:"Resume Watching",recentlyWatched:"Recently Watched",searchEverything:"Search everything",searchHint:"Type above to search across Live TV, Movies, and Series simultaneously.",noResults:'No results for "{0}"',searchAll:"Search all content — Live, Movies, Series…",discoverTrending:"Discover Trending Content",trendingWeek:"Trending This Week",popularMovies:"Popular Movies",popularTV:"Popular TV Shows",notInLibrary:"Not in your library",matchesInLib:"{0} match(es) in your library",inLibPlay:"In your library — click to play",changeApiKey:"Change API Key",hlsDesc:"Enter any HLS (.m3u8), DASH, or direct media URL. Great for testing your own streams.",publicTests:"Public test streams",connections:"Connections",addConnection:"+ Add Connection",noSavedConns:"No saved connections",active:"Active",removeConn:"Remove connection",switchConn:"Switch",items:"items",tagline:"Your personal IPTV client · Connect your own legal service",pasteRaw:"Paste raw text, URLs, or config",detected:"Detected",clickToFill:"Click to fill →",noConnsDetected:"No connections detected in the pasted text.",advancedOpts:"Advanced options",hideAdvanced:"Hide advanced",serialNumber:"Serial Number",deviceId:"Device ID",deviceId2:"Device ID 2",showCategory:"Show category",hideCategory:"Hide category",filterToThis:"Filter to this",page:"Page",of:"of",synced:"Synced",justNow:"just now",noSeasonsFound:"No seasons found for this series.",loadingSeasons:"Loading seasons…",hlsPlayNote:"Play any HLS stream, M3U8 URL, or direct media URL instantly — no account needed.",chooseCategory:"Choose a category from the list above to load content.",stalkerHint:"Stalker portal browsing requires a backend proxy. Try Xtream Codes or M3U.",connectToPopulate:"Connect via Xtream Codes or M3U to populate TV Guide.",epgLoadHint:"Paste your XMLTV EPG URL above and click Load EPG.",loadMoviesFirst:"Load your Movies or Series first — connect via Xtream, M3U, or Stalker, then switch to the Movies/Series tab.",categories:"categories",episode:"Episode",season:"Season",language:"Language",loadMore:"Load More"},
-es:{discover:"Descubrir",live:"TV en Vivo",movies:"Películas",series:"Series",favorites:"Favoritos",continueWatching:"Seguir Viendo",tvGuide:"Guía TV",globalSearch:"Búsqueda Global",directPlay:"Reproducción Directa",watch:"Ver",tools:"Herramientas",savedConns:"Conexiones Guardadas",orAddNew:"o agregar nueva",connect:"Conectar",connectArrow:"Conectar →",disconnect:"Desconectar",feedback:"Comentarios",send:"Enviar",cancel:"Cancelar",close:"Cerrar",refresh:"Actualizar",search:"Buscar",prev:"Anterior",next:"Siguiente",fav:"Fav",pip:"PiP",play:"Reproducir",go:"Ir",playPause:"Reproducir/Pausa",fullscreen:"Pantalla Completa",mute:"Silenciar",channels:"Canales",volume:"Volumen",portalURL:"URL del Portal",macAddress:"Dirección MAC",serverURL:"URL del Servidor",username:"Usuario",password:"Contraseña",playlistURL:"URL de Lista",connFailed:"Conexión fallida",connecting:"Conectando…",import:"Importar",xtreamCodes:"Xtream Codes",m3uPlaylist:"Lista M3U",stalkerPortal:"Portal Stalker",directHLS:"HLS Directo",noChannels:"No se encontraron canales",loading:"Cargando…",loadingSection:"Cargando {0}…",playbackErr:"Error de Reproducción",networkErr:"Error de Red",streamNotFound:"Transmisión No Encontrada",accessDenied:"Acceso Denegado",serverErr:"Error del Servidor",noContent:"No se encontró contenido",selectCategory:"Seleccionar categoría",fetchingItems:"Obteniendo elementos del portal.",tryDifferent:"Pruebe otra categoría o borre su búsqueda.",now:"Ahora",loadEPG:"Cargar EPG",noChannelsLoaded:"No hay canales cargados",noEPGData:"Sin datos EPG",filterChannels:"Filtrar canales…",sendFeedback:"Enviar Comentarios",thankYou:"¡Gracias!",feedbackReceived:"Su comentario ha sido recibido.",feedbackHint:"Reportes de errores, solicitudes o comentarios generales",feedbackPlaceholder:"¿Qué tienes en mente?",sending:"Enviando...",noFavsYet:"Aún no hay favoritos",favHint:"Haga clic en el icono ♡ en cualquier canal o película para agregarlo aquí.",liveTV:"TV en Vivo",nothingStarted:"Nada iniciado aún",resumeHint:"Mire contenido y aparecerá aquí para continuar fácilmente.",resumeWatching:"Continuar Viendo",recentlyWatched:"Visto Recientemente",searchEverything:"Buscar todo",searchHint:"Escriba arriba para buscar en TV en Vivo, Películas y Series simultáneamente.",noResults:'Sin resultados para "{0}"',searchAll:"Buscar todo — TV en Vivo, Películas, Series…",discoverTrending:"Descubrir Contenido en Tendencia",trendingWeek:"Tendencia de la Semana",popularMovies:"Películas Populares",popularTV:"Series Populares",notInLibrary:"No está en tu biblioteca",matchesInLib:"{0} coincidencia(s) en tu biblioteca",inLibPlay:"En tu biblioteca — clic para reproducir",changeApiKey:"Cambiar Clave API",hlsDesc:"Ingrese cualquier URL de HLS (.m3u8), DASH o medio directo.",publicTests:"Transmisiones de prueba públicas",connections:"Conexiones",addConnection:"+ Agregar Conexión",noSavedConns:"Sin conexiones guardadas",active:"Activo",removeConn:"Eliminar conexión",switchConn:"Cambiar",items:"elementos",tagline:"Tu cliente IPTV personal · Conecta tu propio servicio legal",pasteRaw:"Pegar texto, URLs o configuración",detected:"Detectado",clickToFill:"Clic para llenar →",noConnsDetected:"No se detectaron conexiones en el texto pegado.",advancedOpts:"Opciones avanzadas",hideAdvanced:"Ocultar avanzadas",serialNumber:"Número de Serie",deviceId:"ID de Dispositivo",deviceId2:"ID de Dispositivo 2",showCategory:"Mostrar categoría",hideCategory:"Ocultar categoría",filterToThis:"Filtrar a esta",page:"Página",of:"de",synced:"Sincronizado",justNow:"ahora mismo",noSeasonsFound:"No se encontraron temporadas para esta serie.",loadingSeasons:"Cargando temporadas…",hlsPlayNote:"Reproduzca cualquier transmisión HLS, URL M3U8 o URL de medio directo al instante.",chooseCategory:"Elija una categoría de la lista anterior para cargar contenido.",stalkerHint:"La navegación del portal Stalker requiere un proxy backend.",connectToPopulate:"Conéctese vía Xtream Codes o M3U para llenar la Guía TV.",epgLoadHint:"Pegue su URL EPG XMLTV arriba y haga clic en Cargar EPG.",loadMoviesFirst:"Cargue sus Películas o Series primero.",categories:"categorías",episode:"Episodio",season:"Temporada",language:"Idioma",loadMore:"Cargar Más"},
-fr:{discover:"Découvrir",live:"TV en Direct",movies:"Films",series:"Séries",favorites:"Favoris",continueWatching:"Continuer à Regarder",tvGuide:"Guide TV",globalSearch:"Recherche Globale",directPlay:"Lecture Directe",watch:"Regarder",tools:"Outils",savedConns:"Connexions Enregistrées",orAddNew:"ou ajouter nouvelle",connect:"Connecter",connectArrow:"Connecter →",disconnect:"Déconnecter",feedback:"Commentaires",send:"Envoyer",cancel:"Annuler",close:"Fermer",refresh:"Actualiser",search:"Rechercher",prev:"Préc.",next:"Suiv.",fav:"Fav",pip:"PiP",play:"Lecture",go:"Go",playPause:"Lecture/Pause",fullscreen:"Plein Écran",mute:"Muet",channels:"Chaînes",volume:"Volume",portalURL:"URL du Portail",macAddress:"Adresse MAC",serverURL:"URL du Serveur",username:"Identifiant",password:"Mot de passe",playlistURL:"URL de la Playlist",connFailed:"Échec de connexion",connecting:"Connexion…",import:"Importer",xtreamCodes:"Xtream Codes",m3uPlaylist:"Playlist M3U",stalkerPortal:"Portail Stalker",directHLS:"HLS Direct",noChannels:"Aucune chaîne trouvée",loading:"Chargement…",loadingSection:"Chargement de {0}…",playbackErr:"Erreur de Lecture",networkErr:"Erreur Réseau",streamNotFound:"Flux Introuvable",accessDenied:"Accès Refusé",serverErr:"Erreur Serveur",noContent:"Aucun contenu trouvé",selectCategory:"Sélectionner une catégorie",fetchingItems:"Récupération des éléments du portail.",tryDifferent:"Essayez une autre catégorie ou effacez votre recherche.",now:"Maintenant",loadEPG:"Charger EPG",noChannelsLoaded:"Aucune chaîne chargée",noEPGData:"Pas de données EPG",filterChannels:"Filtrer les chaînes…",sendFeedback:"Envoyer un Commentaire",thankYou:"Merci !",feedbackReceived:"Votre commentaire a été reçu.",feedbackHint:"Rapports de bugs, demandes de fonctionnalités ou commentaires généraux",feedbackPlaceholder:"Qu'avez-vous en tête ?",sending:"Envoi...",noFavsYet:"Pas encore de favoris",favHint:"Cliquez sur l'icône ♡ sur une chaîne ou un film pour l'ajouter ici.",liveTV:"TV en Direct",nothingStarted:"Rien commencé",resumeHint:"Regardez du contenu et il apparaîtra ici pour reprendre facilement.",resumeWatching:"Reprendre",recentlyWatched:"Vus Récemment",searchEverything:"Tout rechercher",searchHint:"Tapez ci-dessus pour rechercher dans TV en Direct, Films et Séries.",noResults:'Aucun résultat pour « {0} »',searchAll:"Rechercher tout — TV en Direct, Films, Séries…",discoverTrending:"Découvrir les Tendances",trendingWeek:"Tendances de la Semaine",popularMovies:"Films Populaires",popularTV:"Séries Populaires",notInLibrary:"Pas dans votre bibliothèque",matchesInLib:"{0} correspondance(s) dans votre bibliothèque",inLibPlay:"Dans votre bibliothèque — cliquez pour lire",changeApiKey:"Changer la Clé API",hlsDesc:"Entrez une URL HLS (.m3u8), DASH ou média direct.",publicTests:"Flux de test publics",connections:"Connexions",addConnection:"+ Ajouter Connexion",noSavedConns:"Aucune connexion enregistrée",active:"Actif",removeConn:"Supprimer la connexion",switchConn:"Changer",items:"éléments",tagline:"Votre client IPTV personnel · Connectez votre propre service légal",pasteRaw:"Collez du texte, des URLs ou une configuration",detected:"Détecté",clickToFill:"Cliquez pour remplir →",noConnsDetected:"Aucune connexion détectée dans le texte collé.",advancedOpts:"Options avancées",hideAdvanced:"Masquer avancées",serialNumber:"Numéro de Série",deviceId:"ID d'Appareil",deviceId2:"ID d'Appareil 2",showCategory:"Afficher la catégorie",hideCategory:"Masquer la catégorie",filterToThis:"Filtrer ici",page:"Page",of:"de",synced:"Synchronisé",justNow:"à l'instant",noSeasonsFound:"Aucune saison trouvée pour cette série.",loadingSeasons:"Chargement des saisons…",hlsPlayNote:"Lisez n'importe quel flux HLS, URL M3U8 ou média direct instantanément.",chooseCategory:"Choisissez une catégorie dans la liste ci-dessus.",stalkerHint:"La navigation Stalker nécessite un proxy backend.",connectToPopulate:"Connectez-vous via Xtream Codes ou M3U pour remplir le Guide TV.",epgLoadHint:"Collez votre URL EPG XMLTV ci-dessus et cliquez sur Charger EPG.",loadMoviesFirst:"Chargez d'abord vos Films ou Séries.",categories:"catégories",episode:"Épisode",season:"Saison",language:"Langue",loadMore:"Charger Plus"},
-ar:{discover:"اكتشف",live:"البث المباشر",movies:"أفلام",series:"مسلسلات",favorites:"المفضلة",continueWatching:"متابعة المشاهدة",tvGuide:"دليل التلفزيون",globalSearch:"بحث شامل",directPlay:"تشغيل مباشر",watch:"مشاهدة",tools:"أدوات",savedConns:"الاتصالات المحفوظة",orAddNew:"أو أضف جديد",connect:"اتصال",connectArrow:"← اتصال",disconnect:"قطع الاتصال",feedback:"ملاحظات",send:"إرسال",cancel:"إلغاء",close:"إغلاق",refresh:"تحديث",search:"بحث",prev:"السابق",next:"التالي",fav:"مفضلة",pip:"صورة في صورة",play:"تشغيل",go:"انطلق",playPause:"تشغيل/إيقاف",fullscreen:"ملء الشاشة",mute:"كتم الصوت",channels:"القنوات",volume:"الصوت",portalURL:"رابط البوابة",macAddress:"عنوان MAC",serverURL:"رابط الخادم",username:"اسم المستخدم",password:"كلمة المرور",playlistURL:"رابط قائمة التشغيل",connFailed:"فشل الاتصال",connecting:"جارٍ الاتصال…",import:"استيراد",xtreamCodes:"Xtream Codes",m3uPlaylist:"قائمة M3U",stalkerPortal:"بوابة Stalker",directHLS:"HLS مباشر",noChannels:"لم يتم العثور على قنوات",loading:"جارٍ التحميل…",loadingSection:"جارٍ تحميل {0}…",playbackErr:"خطأ في التشغيل",networkErr:"خطأ في الشبكة",streamNotFound:"البث غير موجود",accessDenied:"الوصول مرفوض",serverErr:"خطأ في الخادم",noContent:"لم يتم العثور على محتوى",selectCategory:"اختر فئة",fetchingItems:"جارٍ جلب العناصر من البوابة.",tryDifferent:"جرّب فئة أخرى أو امسح البحث.",now:"الآن",loadEPG:"تحميل EPG",noChannelsLoaded:"لا توجد قنوات محمّلة",noEPGData:"لا توجد بيانات EPG",filterChannels:"تصفية القنوات…",sendFeedback:"إرسال ملاحظات",thankYou:"شكراً لك!",feedbackReceived:"تم استلام ملاحظاتك.",feedbackHint:"تقارير الأخطاء أو طلبات الميزات أو التعليقات العامة",feedbackPlaceholder:"ما الذي يدور في ذهنك؟",sending:"جارٍ الإرسال...",noFavsYet:"لا توجد مفضلات بعد",favHint:"اضغط على أيقونة ♡ على أي قناة أو فيلم لإضافته هنا.",liveTV:"البث المباشر",nothingStarted:"لم تبدأ شيئاً بعد",resumeHint:"شاهد بعض المحتوى وسيظهر هنا لاستئنافه بسهولة.",resumeWatching:"استئناف المشاهدة",recentlyWatched:"شوهد مؤخراً",searchEverything:"بحث في كل شيء",searchHint:"اكتب أعلاه للبحث في البث المباشر والأفلام والمسلسلات.",noResults:'لا توجد نتائج لـ "{0}"',searchAll:"بحث في كل المحتوى — مباشر، أفلام، مسلسلات…",discoverTrending:"اكتشف المحتوى الرائج",trendingWeek:"الرائج هذا الأسبوع",popularMovies:"أفلام شائعة",popularTV:"مسلسلات شائعة",notInLibrary:"غير موجود في مكتبتك",matchesInLib:"{0} تطابق(ات) في مكتبتك",inLibPlay:"في مكتبتك — اضغط للتشغيل",changeApiKey:"تغيير مفتاح API",hlsDesc:"أدخل أي رابط HLS أو DASH أو وسائط مباشرة.",publicTests:"بث تجريبي عام",connections:"الاتصالات",addConnection:"+ إضافة اتصال",noSavedConns:"لا توجد اتصالات محفوظة",active:"نشط",removeConn:"إزالة الاتصال",switchConn:"تبديل",items:"عناصر",tagline:"عميل IPTV الشخصي · اتصل بخدمتك القانونية",pasteRaw:"الصق نصاً أو روابط أو إعدادات",detected:"تم الكشف",clickToFill:"← اضغط للتعبئة",noConnsDetected:"لم يتم الكشف عن اتصالات في النص الملصق.",advancedOpts:"خيارات متقدمة",hideAdvanced:"إخفاء المتقدمة",serialNumber:"الرقم التسلسلي",deviceId:"معرّف الجهاز",deviceId2:"معرّف الجهاز 2",showCategory:"إظهار الفئة",hideCategory:"إخفاء الفئة",filterToThis:"تصفية لهذه",page:"صفحة",of:"من",synced:"مُزامَن",justNow:"الآن",noSeasonsFound:"لم يتم العثور على مواسم لهذا المسلسل.",loadingSeasons:"جارٍ تحميل المواسم…",hlsPlayNote:"شغّل أي بث HLS أو رابط M3U8 فوراً — بدون حساب.",chooseCategory:"اختر فئة من القائمة أعلاه لتحميل المحتوى.",stalkerHint:"تصفح بوابة Stalker يتطلب وكيل خلفي.",connectToPopulate:"اتصل عبر Xtream Codes أو M3U لملء دليل التلفزيون.",epgLoadHint:"الصق رابط EPG XMLTV أعلاه واضغط تحميل EPG.",loadMoviesFirst:"حمّل أفلامك أو مسلسلاتك أولاً.",categories:"فئات",episode:"حلقة",season:"موسم",language:"اللغة",loadMore:"تحميل المزيد"},
-pt:{discover:"Descobrir",live:"TV ao Vivo",movies:"Filmes",series:"Séries",favorites:"Favoritos",continueWatching:"Continuar Assistindo",tvGuide:"Guia TV",globalSearch:"Busca Global",directPlay:"Reprodução Direta",watch:"Assistir",tools:"Ferramentas",savedConns:"Conexões Salvas",orAddNew:"ou adicionar nova",connect:"Conectar",connectArrow:"Conectar →",disconnect:"Desconectar",feedback:"Feedback",send:"Enviar",cancel:"Cancelar",close:"Fechar",refresh:"Atualizar",search:"Buscar",prev:"Anterior",next:"Próximo",fav:"Fav",pip:"PiP",play:"Reproduzir",go:"Ir",playPause:"Reproduzir/Pausar",fullscreen:"Tela Cheia",mute:"Mudo",channels:"Canais",volume:"Volume",portalURL:"URL do Portal",macAddress:"Endereço MAC",serverURL:"URL do Servidor",username:"Usuário",password:"Senha",playlistURL:"URL da Playlist",connFailed:"Falha na conexão",connecting:"Conectando…",import:"Importar",xtreamCodes:"Xtream Codes",m3uPlaylist:"Playlist M3U",stalkerPortal:"Portal Stalker",directHLS:"HLS Direto",noChannels:"Nenhum canal encontrado",loading:"Carregando…",loadingSection:"Carregando {0}…",playbackErr:"Erro de Reprodução",networkErr:"Erro de Rede",streamNotFound:"Transmissão Não Encontrada",accessDenied:"Acesso Negado",serverErr:"Erro do Servidor",noContent:"Nenhum conteúdo encontrado",selectCategory:"Selecione uma categoria",fetchingItems:"Buscando itens do portal.",tryDifferent:"Tente outra categoria ou limpe sua busca.",now:"Agora",loadEPG:"Carregar EPG",noChannelsLoaded:"Nenhum canal carregado",noEPGData:"Sem dados EPG",filterChannels:"Filtrar canais…",sendFeedback:"Enviar Feedback",thankYou:"Obrigado!",feedbackReceived:"Seu feedback foi recebido.",feedbackHint:"Relatos de bugs, solicitações de recursos ou comentários gerais",feedbackPlaceholder:"O que está em sua mente?",sending:"Enviando...",noFavsYet:"Nenhum favorito ainda",favHint:"Clique no ícone ♡ em qualquer canal ou filme para adicioná-lo aqui.",liveTV:"TV ao Vivo",nothingStarted:"Nada iniciado ainda",resumeHint:"Assista a algum conteúdo e ele aparecerá aqui para retomar facilmente.",resumeWatching:"Retomar",recentlyWatched:"Assistidos Recentemente",searchEverything:"Buscar tudo",searchHint:"Digite acima para buscar em TV ao Vivo, Filmes e Séries.",noResults:'Nenhum resultado para "{0}"',searchAll:"Buscar tudo — TV ao Vivo, Filmes, Séries…",discoverTrending:"Descobrir Tendências",trendingWeek:"Tendências da Semana",popularMovies:"Filmes Populares",popularTV:"Séries Populares",notInLibrary:"Não está na sua biblioteca",matchesInLib:"{0} correspondência(s) na sua biblioteca",inLibPlay:"Na sua biblioteca — clique para reproduzir",changeApiKey:"Alterar Chave API",hlsDesc:"Insira qualquer URL HLS (.m3u8), DASH ou mídia direta.",publicTests:"Transmissões de teste públicas",connections:"Conexões",addConnection:"+ Adicionar Conexão",noSavedConns:"Nenhuma conexão salva",active:"Ativo",removeConn:"Remover conexão",switchConn:"Trocar",items:"itens",tagline:"Seu cliente IPTV pessoal · Conecte seu próprio serviço legal",pasteRaw:"Cole texto, URLs ou configuração",detected:"Detectado",clickToFill:"Clique para preencher →",noConnsDetected:"Nenhuma conexão detectada no texto colado.",advancedOpts:"Opções avançadas",hideAdvanced:"Ocultar avançadas",serialNumber:"Número de Série",deviceId:"ID do Dispositivo",deviceId2:"ID do Dispositivo 2",showCategory:"Mostrar categoria",hideCategory:"Ocultar categoria",filterToThis:"Filtrar para esta",page:"Página",of:"de",synced:"Sincronizado",justNow:"agora",noSeasonsFound:"Nenhuma temporada encontrada para esta série.",loadingSeasons:"Carregando temporadas…",hlsPlayNote:"Reproduza qualquer transmissão HLS, URL M3U8 ou mídia direta instantaneamente.",chooseCategory:"Escolha uma categoria da lista acima para carregar o conteúdo.",stalkerHint:"A navegação Stalker requer um proxy backend.",connectToPopulate:"Conecte via Xtream Codes ou M3U para preencher o Guia TV.",epgLoadHint:"Cole sua URL EPG XMLTV acima e clique em Carregar EPG.",loadMoviesFirst:"Carregue seus Filmes ou Séries primeiro.",categories:"categorias",episode:"Episódio",season:"Temporada",language:"Idioma",loadMore:"Carregar Mais"},
-hi:{discover:"खोजें",live:"लाइव टीवी",movies:"फ़िल्में",series:"सीरीज़",favorites:"पसंदीदा",continueWatching:"देखना जारी रखें",tvGuide:"टीवी गाइड",globalSearch:"वैश्विक खोज",directPlay:"डायरेक्ट प्ले",watch:"देखें",tools:"उपकरण",savedConns:"सहेजे गए कनेक्शन",orAddNew:"या नया जोड़ें",connect:"कनेक्ट",connectArrow:"कनेक्ट →",disconnect:"डिस्कनेक्ट",feedback:"प्रतिक्रिया",send:"भेजें",cancel:"रद्द करें",close:"बंद करें",refresh:"रीफ़्रेश",search:"खोजें",prev:"पिछला",next:"अगला",fav:"पसंद",pip:"PiP",play:"चलाएँ",go:"जाएँ",playPause:"चलाएँ/रोकें",fullscreen:"फ़ुलस्क्रीन",mute:"म्यूट",channels:"चैनल",volume:"ध्वनि",portalURL:"पोर्टल URL",macAddress:"MAC पता",serverURL:"सर्वर URL",username:"उपयोगकर्ता",password:"पासवर्ड",playlistURL:"प्लेलिस्ट URL",connFailed:"कनेक्शन विफल",connecting:"कनेक्ट हो रहा है…",import:"आयात",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U प्लेलिस्ट",stalkerPortal:"Stalker पोर्टल",directHLS:"डायरेक्ट HLS",noChannels:"कोई चैनल नहीं मिला",loading:"लोड हो रहा है…",loadingSection:"{0} लोड हो रहा है…",playbackErr:"प्लेबैक त्रुटि",networkErr:"नेटवर्क त्रुटि",streamNotFound:"स्ट्रीम नहीं मिली",accessDenied:"पहुँच अस्वीकृत",serverErr:"सर्वर त्रुटि",noContent:"कोई सामग्री नहीं मिली",selectCategory:"एक श्रेणी चुनें",fetchingItems:"पोर्टल से आइटम प्राप्त हो रहे हैं।",tryDifferent:"कोई अन्य श्रेणी आज़माएँ या खोज साफ़ करें।",now:"अभी",loadEPG:"EPG लोड करें",noChannelsLoaded:"कोई चैनल लोड नहीं हुआ",noEPGData:"कोई EPG डेटा नहीं",filterChannels:"चैनल फ़िल्टर करें…",sendFeedback:"प्रतिक्रिया भेजें",thankYou:"धन्यवाद!",feedbackReceived:"आपकी प्रतिक्रिया प्राप्त हो गई है।",feedbackHint:"बग रिपोर्ट, फ़ीचर अनुरोध, या सामान्य टिप्पणियाँ",feedbackPlaceholder:"आपके मन में क्या है?",sending:"भेजा जा रहा है...",noFavsYet:"अभी तक कोई पसंदीदा नहीं",favHint:"किसी भी चैनल या फ़िल्म पर ♡ आइकन पर क्लिक करें।",liveTV:"लाइव टीवी",nothingStarted:"अभी तक कुछ शुरू नहीं हुआ",resumeHint:"कुछ सामग्री देखें और वह यहाँ दिखाई देगी।",resumeWatching:"फिर से देखें",recentlyWatched:"हाल ही में देखा गया",searchEverything:"सब कुछ खोजें",searchHint:"लाइव टीवी, फ़िल्मों और सीरीज़ में एक साथ खोजने के लिए ऊपर टाइप करें।",noResults:'"{0}" के लिए कोई परिणाम नहीं',searchAll:"सब खोजें — लाइव, फ़िल्में, सीरीज़…",discoverTrending:"ट्रेंडिंग सामग्री खोजें",trendingWeek:"इस सप्ताह ट्रेंडिंग",popularMovies:"लोकप्रिय फ़िल्में",popularTV:"लोकप्रिय टीवी शो",notInLibrary:"आपकी लाइब्रेरी में नहीं",matchesInLib:"आपकी लाइब्रेरी में {0} मिलान",inLibPlay:"आपकी लाइब्रेरी में — चलाने के लिए क्लिक करें",changeApiKey:"API कुंजी बदलें",hlsDesc:"कोई भी HLS, DASH या डायरेक्ट मीडिया URL दर्ज करें।",publicTests:"सार्वजनिक टेस्ट स्ट्रीम",connections:"कनेक्शन",addConnection:"+ कनेक्शन जोड़ें",noSavedConns:"कोई सहेजा गया कनेक्शन नहीं",active:"सक्रिय",removeConn:"कनेक्शन हटाएँ",switchConn:"बदलें",items:"आइटम",tagline:"आपका व्यक्तिगत IPTV क्लाइंट · अपनी कानूनी सेवा कनेक्ट करें",pasteRaw:"कच्चा टेक्स्ट, URLs, या कॉन्फ़िग पेस्ट करें",detected:"पहचाना गया",clickToFill:"भरने के लिए क्लिक करें →",noConnsDetected:"पेस्ट किए गए टेक्स्ट में कोई कनेक्शन नहीं मिला।",advancedOpts:"उन्नत विकल्प",hideAdvanced:"उन्नत छुपाएँ",serialNumber:"सीरियल नंबर",deviceId:"डिवाइस ID",deviceId2:"डिवाइस ID 2",showCategory:"श्रेणी दिखाएँ",hideCategory:"श्रेणी छुपाएँ",filterToThis:"इसमें फ़िल्टर करें",page:"पृष्ठ",of:"का",synced:"सिंक किया",justNow:"अभी",noSeasonsFound:"इस सीरीज़ के लिए कोई सीज़न नहीं मिला।",loadingSeasons:"सीज़न लोड हो रहे हैं…",hlsPlayNote:"कोई भी HLS स्ट्रीम, M3U8 URL या डायरेक्ट मीडिया URL तुरंत चलाएँ।",chooseCategory:"सामग्री लोड करने के लिए ऊपर की सूची से एक श्रेणी चुनें।",stalkerHint:"Stalker पोर्टल ब्राउज़िंग के लिए बैकएंड प्रॉक्सी चाहिए।",connectToPopulate:"टीवी गाइड भरने के लिए Xtream Codes या M3U से कनेक्ट करें।",epgLoadHint:"अपना XMLTV EPG URL ऊपर पेस्ट करें और EPG लोड करें पर क्लिक करें।",loadMoviesFirst:"पहले अपनी फ़िल्में या सीरीज़ लोड करें।",categories:"श्रेणियाँ",episode:"एपिसोड",season:"सीज़न",language:"भाषा",loadMore:"और लोड करें"},
-ur:{discover:"دریافت کریں",live:"لائیو ٹی وی",movies:"فلمیں",series:"سیریز",favorites:"پسندیدہ",continueWatching:"دیکھنا جاری رکھیں",tvGuide:"ٹی وی گائیڈ",globalSearch:"عالمی تلاش",directPlay:"براہ راست چلائیں",watch:"دیکھیں",tools:"ٹولز",savedConns:"محفوظ کنکشنز",orAddNew:"یا نیا شامل کریں",connect:"جوڑیں",connectArrow:"← جوڑیں",disconnect:"منقطع کریں",feedback:"رائے",send:"بھیجیں",cancel:"منسوخ",close:"بند کریں",refresh:"تازہ کریں",search:"تلاش",prev:"پچھلا",next:"اگلا",fav:"پسند",pip:"PiP",play:"چلائیں",go:"جائیں",playPause:"چلائیں/روکیں",fullscreen:"فل سکرین",mute:"خاموش",channels:"چینلز",volume:"آواز",portalURL:"پورٹل URL",macAddress:"MAC ایڈریس",serverURL:"سرور URL",username:"صارف نام",password:"پاسورڈ",playlistURL:"پلے لسٹ URL",connFailed:"کنکشن ناکام",connecting:"جوڑ رہے ہیں…",import:"درآمد",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U پلے لسٹ",stalkerPortal:"Stalker پورٹل",directHLS:"براہ راست HLS",noChannels:"کوئی چینل نہیں ملا",loading:"لوڈ ہو رہا ہے…",loadingSection:"{0} لوڈ ہو رہا ہے…",playbackErr:"پلے بیک خرابی",networkErr:"نیٹ ورک خرابی",streamNotFound:"سٹریم نہیں ملی",accessDenied:"رسائی سے انکار",serverErr:"سرور خرابی",noContent:"کوئی مواد نہیں ملا",selectCategory:"زمرہ منتخب کریں",fetchingItems:"پورٹل سے آئٹمز حاصل ہو رہے ہیں۔",tryDifferent:"دوسرا زمرہ آزمائیں یا تلاش صاف کریں۔",now:"ابھی",loadEPG:"EPG لوڈ کریں",noChannelsLoaded:"کوئی چینل لوڈ نہیں ہوا",noEPGData:"کوئی EPG ڈیٹا نہیں",filterChannels:"چینلز فلٹر کریں…",sendFeedback:"رائے بھیجیں",thankYou:"شکریہ!",feedbackReceived:"آپ کی رائے موصول ہو گئی ہے۔",feedbackHint:"بگ رپورٹس، فیچر درخواستیں، یا عمومی تبصرے",feedbackPlaceholder:"آپ کے ذہن میں کیا ہے؟",sending:"بھیج رہے ہیں...",noFavsYet:"ابھی تک کوئی پسندیدہ نہیں",favHint:"کسی بھی چینل یا فلم پر ♡ آئیکن پر کلک کریں۔",liveTV:"لائیو ٹی وی",nothingStarted:"ابھی تک کچھ شروع نہیں ہوا",resumeHint:"کچھ مواد دیکھیں اور یہ یہاں دکھائی دے گا۔",resumeWatching:"دوبارہ دیکھیں",recentlyWatched:"حال ہی میں دیکھا گیا",searchEverything:"سب تلاش کریں",searchHint:"لائیو ٹی وی، فلمیں اور سیریز میں بیک وقت تلاش کرنے کے لیے اوپر ٹائپ کریں۔",noResults:'"{0}" کے لیے کوئی نتیجہ نہیں',searchAll:"سب تلاش کریں — لائیو، فلمیں، سیریز…",discoverTrending:"رجحان سازی دریافت کریں",trendingWeek:"اس ہفتے رجحان میں",popularMovies:"مقبول فلمیں",popularTV:"مقبول ٹی وی شوز",notInLibrary:"آپ کی لائبریری میں نہیں",matchesInLib:"آپ کی لائبریری میں {0} مماثلت",inLibPlay:"آپ کی لائبریری میں — چلانے کے لیے کلک کریں",changeApiKey:"API کلید تبدیل کریں",hlsDesc:"کوئی بھی HLS، DASH یا براہ راست میڈیا URL درج کریں۔",publicTests:"عوامی ٹیسٹ سٹریمز",connections:"الاتصالات",addConnection:"+ کنکشن شامل کریں",noSavedConns:"کوئی محفوظ کنکشن نہیں",active:"فعال",removeConn:"کنکشن ہٹائیں",switchConn:"تبدیل کریں",items:"آئٹمز",tagline:"آپ کا ذاتی IPTV کلائنٹ · اپنی قانونی سروس سے جوڑیں",pasteRaw:"خام متن، URLs، یا ترتیب پیسٹ کریں",detected:"شناخت شدہ",clickToFill:"← بھرنے کے لیے کلک کریں",noConnsDetected:"پیسٹ شدہ متن میں کوئی کنکشن نہیں ملا۔",advancedOpts:"جدید اختیارات",hideAdvanced:"جدید چھپائیں",serialNumber:"سیریل نمبر",deviceId:"ڈیوائس ID",deviceId2:"ڈیوائس ID 2",showCategory:"زمرہ دکھائیں",hideCategory:"زمرہ چھپائیں",filterToThis:"اس میں فلٹر کریں",page:"صفحہ",of:"میں سے",synced:"مطابقت شدہ",justNow:"ابھی",noSeasonsFound:"اس سیریز کے لیے کوئی سیزن نہیں ملا۔",loadingSeasons:"سیزن لوڈ ہو رہے ہیں…",hlsPlayNote:"کوئی بھی HLS سٹریم، M3U8 URL یا براہ راست میڈیا URL فوری چلائیں۔",chooseCategory:"مواد لوڈ کرنے کے لیے اوپر کی فہرست سے ایک زمرہ منتخب کریں۔",stalkerHint:"Stalker پورٹل براؤزنگ کے لیے بیک اینڈ پراکسی درکار ہے۔",connectToPopulate:"ٹی وی گائیڈ بھرنے کے لیے Xtream Codes یا M3U سے جوڑیں۔",epgLoadHint:"اوپر اپنا XMLTV EPG URL پیسٹ کریں اور EPG لوڈ کریں پر کلک کریں۔",loadMoviesFirst:"پہلے اپنی فلمیں یا سیریز لوڈ کریں۔",categories:"زمرہ جات",episode:"ایپیسوڈ",season:"سیزن",language:"زبان",loadMore:"مزید لوڈ کریں"}};
+es:{discover:"Descubrir",live:"TV en Vivo",movies:"Películas",series:"Series",favorites:"Favoritos",continueWatching:"Seguir Viendo",tvGuide:"Guía TV",globalSearch:"Búsqueda Global",directPlay:"Reproducción Directa",watch:"Ver",tools:"Herramientas",savedConns:"Conexiones Guardadas",orAddNew:"o agregar nueva",connect:"Conectar",connectArrow:"Conectar →",disconnect:"Desconectar",feedback:"Comentarios",send:"Enviar",cancel:"Cancelar",close:"Cerrar",refresh:"Actualizar",search:"Buscar",prev:"Anterior",next:"Siguiente",fav:"Fav",pip:"PiP",play:"Reproducir",go:"Ir",playPause:"Reproducir/Pausa",fullscreen:"Pantalla Completa",mute:"Silenciar",channels:"Canales",volume:"Volumen",portalURL:"URL del Portal",macAddress:"Dirección MAC",serverURL:"URL del Servidor",username:"Usuario",password:"Contraseña",playlistURL:"URL de Lista",connFailed:"Conexión fallida",connecting:"Conectando…",import:"Importar",xtreamCodes:"Xtream Codes",m3uPlaylist:"Lista M3U",stalkerPortal:"Portal Stalker",directHLS:"HLS Directo",noChannels:"No se encontraron canales",loading:"Cargando…",loadingSection:"Cargando {0}…",playbackErr:"Error de Reproducción",networkErr:"Error de Red",streamNotFound:"Transmisión No Encontrada",accessDenied:"Acceso Denegado",serverErr:"Error del Servidor",noContent:"No se encontró contenido",selectCategory:"Seleccionar categoría",fetchingItems:"Obteniendo elementos del portal.",tryDifferent:"Pruebe otra categoría o borre su búsqueda.",now:"Ahora",loadEPG:"Cargar EPG",noChannelsLoaded:"No hay canales cargados",noEPGData:"Sin datos EPG",filterChannels:"Filtrar canales…",sendFeedback:"Enviar Comentarios",thankYou:"¡Gracias!",feedbackReceived:"Su comentario ha sido recibido.",feedbackHint:"Reportes de errores, solicitudes o comentarios generales",feedbackPlaceholder:"¿Qué tienes en mente?",sending:"Enviando...",noFavsYet:"Aún no hay favoritos",favHint:"Haga clic en el icono ♡ en cualquier canal o película para agregarlo aquí.",liveTV:"TV en Vivo",nothingStarted:"Nada iniciado aún",resumeHint:"Mire contenido y aparecerá aquí para continuar fácilmente.",resumeWatching:"Continuar Viendo",recentlyWatched:"Visto Recientemente",searchEverything:"Buscar todo",searchHint:"Escriba arriba para buscar en TV en Vivo, Películas y Series simultáneamente.",noResults:'Sin resultados para "{0}"',searchAll:"Buscar todo — TV en Vivo, Películas, Series…",discoverTrending:"Descubrir Contenido en Tendencia",trendingWeek:"Tendencia de la Semana",popularMovies:"Películas Populares",popularTV:"Series Populares",notInLibrary:"No está en tu biblioteca",matchesInLib:"{0} coincidencia(s) en tu biblioteca",inLibPlay:"En tu biblioteca — clic para reproducir",changeApiKey:"Cambiar Clave API",hlsDesc:"Ingrese cualquier URL de HLS (.m3u8), DASH o medio directo.",publicTests:"Transmisiones de prueba públicas",connections:"Conexiones",addConnection:"+ Agregar Conexión",noSavedConns:"Sin conexiones guardadas",active:"Activo",removeConn:"Eliminar conexión",switchConn:"Cambiar",items:"elementos",tagline:"Tu cliente IPTV personal · Conecta tu propio servicio legal",pasteRaw:"Pegar texto, URLs o configuración",detected:"Detectado",clickToFill:"Clic para llenar →",noConnsDetected:"No se detectaron conexiones en el texto pegado.",advancedOpts:"Opciones avanzadas",hideAdvanced:"Ocultar avanzadas",serialNumber:"Número de Serie",deviceId:"ID de Dispositivo",deviceId2:"ID de Dispositivo 2",showCategory:"Mostrar categoría",hideCategory:"Ocultar categoría",filterToThis:"Filtrar a esta",page:"Página",of:"de",synced:"Sincronizado",justNow:"ahora mismo",noSeasonsFound:"No se encontraron temporadas para esta serie.",loadingSeasons:"Cargando temporadas…",hlsPlayNote:"Reproduzca cualquier transmisión HLS, URL M3U8 o URL de medio directo al instante.",chooseCategory:"Elija una categoría de la lista anterior para cargar contenido.",stalkerHint:"La navegación del portal Stalker requiere un proxy backend.",connectToPopulate:"Conéctese vía Xtream Codes o M3U para llenar la Guía TV.",epgLoadHint:"Pegue su URL EPG XMLTV arriba y haga clic en Cargar EPG.",loadMoviesFirst:"Cargue sus Películas o Series primero.",categories:"categorías",episode:"Episodio",season:"Temporada",language:"Idioma",loadMore:"Cargar Más",editConnection:"Editar Conexión",connectionName:"Nombre de Conexión",apply:"Aplicar"},
+fr:{discover:"Découvrir",live:"TV en Direct",movies:"Films",series:"Séries",favorites:"Favoris",continueWatching:"Continuer à Regarder",tvGuide:"Guide TV",globalSearch:"Recherche Globale",directPlay:"Lecture Directe",watch:"Regarder",tools:"Outils",savedConns:"Connexions Enregistrées",orAddNew:"ou ajouter nouvelle",connect:"Connecter",connectArrow:"Connecter →",disconnect:"Déconnecter",feedback:"Commentaires",send:"Envoyer",cancel:"Annuler",close:"Fermer",refresh:"Actualiser",search:"Rechercher",prev:"Préc.",next:"Suiv.",fav:"Fav",pip:"PiP",play:"Lecture",go:"Go",playPause:"Lecture/Pause",fullscreen:"Plein Écran",mute:"Muet",channels:"Chaînes",volume:"Volume",portalURL:"URL du Portail",macAddress:"Adresse MAC",serverURL:"URL du Serveur",username:"Identifiant",password:"Mot de passe",playlistURL:"URL de la Playlist",connFailed:"Échec de connexion",connecting:"Connexion…",import:"Importer",xtreamCodes:"Xtream Codes",m3uPlaylist:"Playlist M3U",stalkerPortal:"Portail Stalker",directHLS:"HLS Direct",noChannels:"Aucune chaîne trouvée",loading:"Chargement…",loadingSection:"Chargement de {0}…",playbackErr:"Erreur de Lecture",networkErr:"Erreur Réseau",streamNotFound:"Flux Introuvable",accessDenied:"Accès Refusé",serverErr:"Erreur Serveur",noContent:"Aucun contenu trouvé",selectCategory:"Sélectionner une catégorie",fetchingItems:"Récupération des éléments du portail.",tryDifferent:"Essayez une autre catégorie ou effacez votre recherche.",now:"Maintenant",loadEPG:"Charger EPG",noChannelsLoaded:"Aucune chaîne chargée",noEPGData:"Pas de données EPG",filterChannels:"Filtrer les chaînes…",sendFeedback:"Envoyer un Commentaire",thankYou:"Merci !",feedbackReceived:"Votre commentaire a été reçu.",feedbackHint:"Rapports de bugs, demandes de fonctionnalités ou commentaires généraux",feedbackPlaceholder:"Qu'avez-vous en tête ?",sending:"Envoi...",noFavsYet:"Pas encore de favoris",favHint:"Cliquez sur l'icône ♡ sur une chaîne ou un film pour l'ajouter ici.",liveTV:"TV en Direct",nothingStarted:"Rien commencé",resumeHint:"Regardez du contenu et il apparaîtra ici pour reprendre facilement.",resumeWatching:"Reprendre",recentlyWatched:"Vus Récemment",searchEverything:"Tout rechercher",searchHint:"Tapez ci-dessus pour rechercher dans TV en Direct, Films et Séries.",noResults:'Aucun résultat pour « {0} »',searchAll:"Rechercher tout — TV en Direct, Films, Séries…",discoverTrending:"Découvrir les Tendances",trendingWeek:"Tendances de la Semaine",popularMovies:"Films Populaires",popularTV:"Séries Populaires",notInLibrary:"Pas dans votre bibliothèque",matchesInLib:"{0} correspondance(s) dans votre bibliothèque",inLibPlay:"Dans votre bibliothèque — cliquez pour lire",changeApiKey:"Changer la Clé API",hlsDesc:"Entrez une URL HLS (.m3u8), DASH ou média direct.",publicTests:"Flux de test publics",connections:"Connexions",addConnection:"+ Ajouter Connexion",noSavedConns:"Aucune connexion enregistrée",active:"Actif",removeConn:"Supprimer la connexion",switchConn:"Changer",items:"éléments",tagline:"Votre client IPTV personnel · Connectez votre propre service légal",pasteRaw:"Collez du texte, des URLs ou une configuration",detected:"Détecté",clickToFill:"Cliquez pour remplir →",noConnsDetected:"Aucune connexion détectée dans le texte collé.",advancedOpts:"Options avancées",hideAdvanced:"Masquer avancées",serialNumber:"Numéro de Série",deviceId:"ID d'Appareil",deviceId2:"ID d'Appareil 2",showCategory:"Afficher la catégorie",hideCategory:"Masquer la catégorie",filterToThis:"Filtrer ici",page:"Page",of:"de",synced:"Synchronisé",justNow:"à l'instant",noSeasonsFound:"Aucune saison trouvée pour cette série.",loadingSeasons:"Chargement des saisons…",hlsPlayNote:"Lisez n'importe quel flux HLS, URL M3U8 ou média direct instantanément.",chooseCategory:"Choisissez une catégorie dans la liste ci-dessus.",stalkerHint:"La navigation Stalker nécessite un proxy backend.",connectToPopulate:"Connectez-vous via Xtream Codes ou M3U pour remplir le Guide TV.",epgLoadHint:"Collez votre URL EPG XMLTV ci-dessus et cliquez sur Charger EPG.",loadMoviesFirst:"Chargez d'abord vos Films ou Séries.",categories:"catégories",episode:"Épisode",season:"Saison",language:"Langue",loadMore:"Charger Plus",editConnection:"Edit Connection",connectionName:"Connection Name",apply:"Apply"},
+ar:{discover:"اكتشف",live:"البث المباشر",movies:"أفلام",series:"مسلسلات",favorites:"المفضلة",continueWatching:"متابعة المشاهدة",tvGuide:"دليل التلفزيون",globalSearch:"بحث شامل",directPlay:"تشغيل مباشر",watch:"مشاهدة",tools:"أدوات",savedConns:"الاتصالات المحفوظة",orAddNew:"أو أضف جديد",connect:"اتصال",connectArrow:"← اتصال",disconnect:"قطع الاتصال",feedback:"ملاحظات",send:"إرسال",cancel:"إلغاء",close:"إغلاق",refresh:"تحديث",search:"بحث",prev:"السابق",next:"التالي",fav:"مفضلة",pip:"صورة في صورة",play:"تشغيل",go:"انطلق",playPause:"تشغيل/إيقاف",fullscreen:"ملء الشاشة",mute:"كتم الصوت",channels:"القنوات",volume:"الصوت",portalURL:"رابط البوابة",macAddress:"عنوان MAC",serverURL:"رابط الخادم",username:"اسم المستخدم",password:"كلمة المرور",playlistURL:"رابط قائمة التشغيل",connFailed:"فشل الاتصال",connecting:"جارٍ الاتصال…",import:"استيراد",xtreamCodes:"Xtream Codes",m3uPlaylist:"قائمة M3U",stalkerPortal:"بوابة Stalker",directHLS:"HLS مباشر",noChannels:"لم يتم العثور على قنوات",loading:"جارٍ التحميل…",loadingSection:"جارٍ تحميل {0}…",playbackErr:"خطأ في التشغيل",networkErr:"خطأ في الشبكة",streamNotFound:"البث غير موجود",accessDenied:"الوصول مرفوض",serverErr:"خطأ في الخادم",noContent:"لم يتم العثور على محتوى",selectCategory:"اختر فئة",fetchingItems:"جارٍ جلب العناصر من البوابة.",tryDifferent:"جرّب فئة أخرى أو امسح البحث.",now:"الآن",loadEPG:"تحميل EPG",noChannelsLoaded:"لا توجد قنوات محمّلة",noEPGData:"لا توجد بيانات EPG",filterChannels:"تصفية القنوات…",sendFeedback:"إرسال ملاحظات",thankYou:"شكراً لك!",feedbackReceived:"تم استلام ملاحظاتك.",feedbackHint:"تقارير الأخطاء أو طلبات الميزات أو التعليقات العامة",feedbackPlaceholder:"ما الذي يدور في ذهنك؟",sending:"جارٍ الإرسال...",noFavsYet:"لا توجد مفضلات بعد",favHint:"اضغط على أيقونة ♡ على أي قناة أو فيلم لإضافته هنا.",liveTV:"البث المباشر",nothingStarted:"لم تبدأ شيئاً بعد",resumeHint:"شاهد بعض المحتوى وسيظهر هنا لاستئنافه بسهولة.",resumeWatching:"استئناف المشاهدة",recentlyWatched:"شوهد مؤخراً",searchEverything:"بحث في كل شيء",searchHint:"اكتب أعلاه للبحث في البث المباشر والأفلام والمسلسلات.",noResults:'لا توجد نتائج لـ "{0}"',searchAll:"بحث في كل المحتوى — مباشر، أفلام، مسلسلات…",discoverTrending:"اكتشف المحتوى الرائج",trendingWeek:"الرائج هذا الأسبوع",popularMovies:"أفلام شائعة",popularTV:"مسلسلات شائعة",notInLibrary:"غير موجود في مكتبتك",matchesInLib:"{0} تطابق(ات) في مكتبتك",inLibPlay:"في مكتبتك — اضغط للتشغيل",changeApiKey:"تغيير مفتاح API",hlsDesc:"أدخل أي رابط HLS أو DASH أو وسائط مباشرة.",publicTests:"بث تجريبي عام",connections:"الاتصالات",addConnection:"+ إضافة اتصال",noSavedConns:"لا توجد اتصالات محفوظة",active:"نشط",removeConn:"إزالة الاتصال",switchConn:"تبديل",items:"عناصر",tagline:"عميل IPTV الشخصي · اتصل بخدمتك القانونية",pasteRaw:"الصق نصاً أو روابط أو إعدادات",detected:"تم الكشف",clickToFill:"← اضغط للتعبئة",noConnsDetected:"لم يتم الكشف عن اتصالات في النص الملصق.",advancedOpts:"خيارات متقدمة",hideAdvanced:"إخفاء المتقدمة",serialNumber:"الرقم التسلسلي",deviceId:"معرّف الجهاز",deviceId2:"معرّف الجهاز 2",showCategory:"إظهار الفئة",hideCategory:"إخفاء الفئة",filterToThis:"تصفية لهذه",page:"صفحة",of:"من",synced:"مُزامَن",justNow:"الآن",noSeasonsFound:"لم يتم العثور على مواسم لهذا المسلسل.",loadingSeasons:"جارٍ تحميل المواسم…",hlsPlayNote:"شغّل أي بث HLS أو رابط M3U8 فوراً — بدون حساب.",chooseCategory:"اختر فئة من القائمة أعلاه لتحميل المحتوى.",stalkerHint:"تصفح بوابة Stalker يتطلب وكيل خلفي.",connectToPopulate:"اتصل عبر Xtream Codes أو M3U لملء دليل التلفزيون.",epgLoadHint:"الصق رابط EPG XMLTV أعلاه واضغط تحميل EPG.",loadMoviesFirst:"حمّل أفلامك أو مسلسلاتك أولاً.",categories:"فئات",episode:"حلقة",season:"موسم",language:"اللغة",loadMore:"تحميل المزيد",editConnection:"تعديل الاتصال",connectionName:"اسم الاتصال",apply:"تطبيق"},
+pt:{discover:"Descobrir",live:"TV ao Vivo",movies:"Filmes",series:"Séries",favorites:"Favoritos",continueWatching:"Continuar Assistindo",tvGuide:"Guia TV",globalSearch:"Busca Global",directPlay:"Reprodução Direta",watch:"Assistir",tools:"Ferramentas",savedConns:"Conexões Salvas",orAddNew:"ou adicionar nova",connect:"Conectar",connectArrow:"Conectar →",disconnect:"Desconectar",feedback:"Feedback",send:"Enviar",cancel:"Cancelar",close:"Fechar",refresh:"Atualizar",search:"Buscar",prev:"Anterior",next:"Próximo",fav:"Fav",pip:"PiP",play:"Reproduzir",go:"Ir",playPause:"Reproduzir/Pausar",fullscreen:"Tela Cheia",mute:"Mudo",channels:"Canais",volume:"Volume",portalURL:"URL do Portal",macAddress:"Endereço MAC",serverURL:"URL do Servidor",username:"Usuário",password:"Senha",playlistURL:"URL da Playlist",connFailed:"Falha na conexão",connecting:"Conectando…",import:"Importar",xtreamCodes:"Xtream Codes",m3uPlaylist:"Playlist M3U",stalkerPortal:"Portal Stalker",directHLS:"HLS Direto",noChannels:"Nenhum canal encontrado",loading:"Carregando…",loadingSection:"Carregando {0}…",playbackErr:"Erro de Reprodução",networkErr:"Erro de Rede",streamNotFound:"Transmissão Não Encontrada",accessDenied:"Acesso Negado",serverErr:"Erro do Servidor",noContent:"Nenhum conteúdo encontrado",selectCategory:"Selecione uma categoria",fetchingItems:"Buscando itens do portal.",tryDifferent:"Tente outra categoria ou limpe sua busca.",now:"Agora",loadEPG:"Carregar EPG",noChannelsLoaded:"Nenhum canal carregado",noEPGData:"Sem dados EPG",filterChannels:"Filtrar canais…",sendFeedback:"Enviar Feedback",thankYou:"Obrigado!",feedbackReceived:"Seu feedback foi recebido.",feedbackHint:"Relatos de bugs, solicitações de recursos ou comentários gerais",feedbackPlaceholder:"O que está em sua mente?",sending:"Enviando...",noFavsYet:"Nenhum favorito ainda",favHint:"Clique no ícone ♡ em qualquer canal ou filme para adicioná-lo aqui.",liveTV:"TV ao Vivo",nothingStarted:"Nada iniciado ainda",resumeHint:"Assista a algum conteúdo e ele aparecerá aqui para retomar facilmente.",resumeWatching:"Retomar",recentlyWatched:"Assistidos Recentemente",searchEverything:"Buscar tudo",searchHint:"Digite acima para buscar em TV ao Vivo, Filmes e Séries.",noResults:'Nenhum resultado para "{0}"',searchAll:"Buscar tudo — TV ao Vivo, Filmes, Séries…",discoverTrending:"Descobrir Tendências",trendingWeek:"Tendências da Semana",popularMovies:"Filmes Populares",popularTV:"Séries Populares",notInLibrary:"Não está na sua biblioteca",matchesInLib:"{0} correspondência(s) na sua biblioteca",inLibPlay:"Na sua biblioteca — clique para reproduzir",changeApiKey:"Alterar Chave API",hlsDesc:"Insira qualquer URL HLS (.m3u8), DASH ou mídia direta.",publicTests:"Transmissões de teste públicas",connections:"Conexões",addConnection:"+ Adicionar Conexão",noSavedConns:"Nenhuma conexão salva",active:"Ativo",removeConn:"Remover conexão",switchConn:"Trocar",items:"itens",tagline:"Seu cliente IPTV pessoal · Conecte seu próprio serviço legal",pasteRaw:"Cole texto, URLs ou configuração",detected:"Detectado",clickToFill:"Clique para preencher →",noConnsDetected:"Nenhuma conexão detectada no texto colado.",advancedOpts:"Opções avançadas",hideAdvanced:"Ocultar avançadas",serialNumber:"Número de Série",deviceId:"ID do Dispositivo",deviceId2:"ID do Dispositivo 2",showCategory:"Mostrar categoria",hideCategory:"Ocultar categoria",filterToThis:"Filtrar para esta",page:"Página",of:"de",synced:"Sincronizado",justNow:"agora",noSeasonsFound:"Nenhuma temporada encontrada para esta série.",loadingSeasons:"Carregando temporadas…",hlsPlayNote:"Reproduza qualquer transmissão HLS, URL M3U8 ou mídia direta instantaneamente.",chooseCategory:"Escolha uma categoria da lista acima para carregar o conteúdo.",stalkerHint:"A navegação Stalker requer um proxy backend.",connectToPopulate:"Conecte via Xtream Codes ou M3U para preencher o Guia TV.",epgLoadHint:"Cole sua URL EPG XMLTV acima e clique em Carregar EPG.",loadMoviesFirst:"Carregue seus Filmes ou Séries primeiro.",categories:"categorias",episode:"Episódio",season:"Temporada",language:"Idioma",loadMore:"Carregar Mais",editConnection:"Editar Conexão",connectionName:"Nome da Conexão",apply:"Aplicar"},
+hi:{discover:"खोजें",live:"लाइव टीवी",movies:"फ़िल्में",series:"सीरीज़",favorites:"पसंदीदा",continueWatching:"देखना जारी रखें",tvGuide:"टीवी गाइड",globalSearch:"वैश्विक खोज",directPlay:"डायरेक्ट प्ले",watch:"देखें",tools:"उपकरण",savedConns:"सहेजे गए कनेक्शन",orAddNew:"या नया जोड़ें",connect:"कनेक्ट",connectArrow:"कनेक्ट →",disconnect:"डिस्कनेक्ट",feedback:"प्रतिक्रिया",send:"भेजें",cancel:"रद्द करें",close:"बंद करें",refresh:"रीफ़्रेश",search:"खोजें",prev:"पिछला",next:"अगला",fav:"पसंद",pip:"PiP",play:"चलाएँ",go:"जाएँ",playPause:"चलाएँ/रोकें",fullscreen:"फ़ुलस्क्रीन",mute:"म्यूट",channels:"चैनल",volume:"ध्वनि",portalURL:"पोर्टल URL",macAddress:"MAC पता",serverURL:"सर्वर URL",username:"उपयोगकर्ता",password:"पासवर्ड",playlistURL:"प्लेलिस्ट URL",connFailed:"कनेक्शन विफल",connecting:"कनेक्ट हो रहा है…",import:"आयात",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U प्लेलिस्ट",stalkerPortal:"Stalker पोर्टल",directHLS:"डायरेक्ट HLS",noChannels:"कोई चैनल नहीं मिला",loading:"लोड हो रहा है…",loadingSection:"{0} लोड हो रहा है…",playbackErr:"प्लेबैक त्रुटि",networkErr:"नेटवर्क त्रुटि",streamNotFound:"स्ट्रीम नहीं मिली",accessDenied:"पहुँच अस्वीकृत",serverErr:"सर्वर त्रुटि",noContent:"कोई सामग्री नहीं मिली",selectCategory:"एक श्रेणी चुनें",fetchingItems:"पोर्टल से आइटम प्राप्त हो रहे हैं।",tryDifferent:"कोई अन्य श्रेणी आज़माएँ या खोज साफ़ करें।",now:"अभी",loadEPG:"EPG लोड करें",noChannelsLoaded:"कोई चैनल लोड नहीं हुआ",noEPGData:"कोई EPG डेटा नहीं",filterChannels:"चैनल फ़िल्टर करें…",sendFeedback:"प्रतिक्रिया भेजें",thankYou:"धन्यवाद!",feedbackReceived:"आपकी प्रतिक्रिया प्राप्त हो गई है।",feedbackHint:"बग रिपोर्ट, फ़ीचर अनुरोध, या सामान्य टिप्पणियाँ",feedbackPlaceholder:"आपके मन में क्या है?",sending:"भेजा जा रहा है...",noFavsYet:"अभी तक कोई पसंदीदा नहीं",favHint:"किसी भी चैनल या फ़िल्म पर ♡ आइकन पर क्लिक करें।",liveTV:"लाइव टीवी",nothingStarted:"अभी तक कुछ शुरू नहीं हुआ",resumeHint:"कुछ सामग्री देखें और वह यहाँ दिखाई देगी।",resumeWatching:"फिर से देखें",recentlyWatched:"हाल ही में देखा गया",searchEverything:"सब कुछ खोजें",searchHint:"लाइव टीवी, फ़िल्मों और सीरीज़ में एक साथ खोजने के लिए ऊपर टाइप करें।",noResults:'"{0}" के लिए कोई परिणाम नहीं',searchAll:"सब खोजें — लाइव, फ़िल्में, सीरीज़…",discoverTrending:"ट्रेंडिंग सामग्री खोजें",trendingWeek:"इस सप्ताह ट्रेंडिंग",popularMovies:"लोकप्रिय फ़िल्में",popularTV:"लोकप्रिय टीवी शो",notInLibrary:"आपकी लाइब्रेरी में नहीं",matchesInLib:"आपकी लाइब्रेरी में {0} मिलान",inLibPlay:"आपकी लाइब्रेरी में — चलाने के लिए क्लिक करें",changeApiKey:"API कुंजी बदलें",hlsDesc:"कोई भी HLS, DASH या डायरेक्ट मीडिया URL दर्ज करें।",publicTests:"सार्वजनिक टेस्ट स्ट्रीम",connections:"कनेक्शन",addConnection:"+ कनेक्शन जोड़ें",noSavedConns:"कोई सहेजा गया कनेक्शन नहीं",active:"सक्रिय",removeConn:"कनेक्शन हटाएँ",switchConn:"बदलें",items:"आइटम",tagline:"आपका व्यक्तिगत IPTV क्लाइंट · अपनी कानूनी सेवा कनेक्ट करें",pasteRaw:"कच्चा टेक्स्ट, URLs, या कॉन्फ़िग पेस्ट करें",detected:"पहचाना गया",clickToFill:"भरने के लिए क्लिक करें →",noConnsDetected:"पेस्ट किए गए टेक्स्ट में कोई कनेक्शन नहीं मिला।",advancedOpts:"उन्नत विकल्प",hideAdvanced:"उन्नत छुपाएँ",serialNumber:"सीरियल नंबर",deviceId:"डिवाइस ID",deviceId2:"डिवाइस ID 2",showCategory:"श्रेणी दिखाएँ",hideCategory:"श्रेणी छुपाएँ",filterToThis:"इसमें फ़िल्टर करें",page:"पृष्ठ",of:"का",synced:"सिंक किया",justNow:"अभी",noSeasonsFound:"इस सीरीज़ के लिए कोई सीज़न नहीं मिला।",loadingSeasons:"सीज़न लोड हो रहे हैं…",hlsPlayNote:"कोई भी HLS स्ट्रीम, M3U8 URL या डायरेक्ट मीडिया URL तुरंत चलाएँ।",chooseCategory:"सामग्री लोड करने के लिए ऊपर की सूची से एक श्रेणी चुनें।",stalkerHint:"Stalker पोर्टल ब्राउज़िंग के लिए बैकएंड प्रॉक्सी चाहिए।",connectToPopulate:"टीवी गाइड भरने के लिए Xtream Codes या M3U से कनेक्ट करें।",epgLoadHint:"अपना XMLTV EPG URL ऊपर पेस्ट करें और EPG लोड करें पर क्लिक करें।",loadMoviesFirst:"पहले अपनी फ़िल्में या सीरीज़ लोड करें।",categories:"श्रेणियाँ",episode:"एपिसोड",season:"सीज़न",language:"भाषा",loadMore:"और लोड करें",editConnection:"कनेक्शन संपादित करें",connectionName:"कनेक्शन का नाम",apply:"लागू करें"},
+ur:{discover:"دریافت کریں",live:"لائیو ٹی وی",movies:"فلمیں",series:"سیریز",favorites:"پسندیدہ",continueWatching:"دیکھنا جاری رکھیں",tvGuide:"ٹی وی گائیڈ",globalSearch:"عالمی تلاش",directPlay:"براہ راست چلائیں",watch:"دیکھیں",tools:"ٹولز",savedConns:"محفوظ کنکشنز",orAddNew:"یا نیا شامل کریں",connect:"جوڑیں",connectArrow:"← جوڑیں",disconnect:"منقطع کریں",feedback:"رائے",send:"بھیجیں",cancel:"منسوخ",close:"بند کریں",refresh:"تازہ کریں",search:"تلاش",prev:"پچھلا",next:"اگلا",fav:"پسند",pip:"PiP",play:"چلائیں",go:"جائیں",playPause:"چلائیں/روکیں",fullscreen:"فل سکرین",mute:"خاموش",channels:"چینلز",volume:"آواز",portalURL:"پورٹل URL",macAddress:"MAC ایڈریس",serverURL:"سرور URL",username:"صارف نام",password:"پاسورڈ",playlistURL:"پلے لسٹ URL",connFailed:"کنکشن ناکام",connecting:"جوڑ رہے ہیں…",import:"درآمد",xtreamCodes:"Xtream Codes",m3uPlaylist:"M3U پلے لسٹ",stalkerPortal:"Stalker پورٹل",directHLS:"براہ راست HLS",noChannels:"کوئی چینل نہیں ملا",loading:"لوڈ ہو رہا ہے…",loadingSection:"{0} لوڈ ہو رہا ہے…",playbackErr:"پلے بیک خرابی",networkErr:"نیٹ ورک خرابی",streamNotFound:"سٹریم نہیں ملی",accessDenied:"رسائی سے انکار",serverErr:"سرور خرابی",noContent:"کوئی مواد نہیں ملا",selectCategory:"زمرہ منتخب کریں",fetchingItems:"پورٹل سے آئٹمز حاصل ہو رہے ہیں۔",tryDifferent:"دوسرا زمرہ آزمائیں یا تلاش صاف کریں۔",now:"ابھی",loadEPG:"EPG لوڈ کریں",noChannelsLoaded:"کوئی چینل لوڈ نہیں ہوا",noEPGData:"کوئی EPG ڈیٹا نہیں",filterChannels:"چینلز فلٹر کریں…",sendFeedback:"رائے بھیجیں",thankYou:"شکریہ!",feedbackReceived:"آپ کی رائے موصول ہو گئی ہے۔",feedbackHint:"بگ رپورٹس، فیچر درخواستیں، یا عمومی تبصرے",feedbackPlaceholder:"آپ کے ذہن میں کیا ہے؟",sending:"بھیج رہے ہیں...",noFavsYet:"ابھی تک کوئی پسندیدہ نہیں",favHint:"کسی بھی چینل یا فلم پر ♡ آئیکن پر کلک کریں۔",liveTV:"لائیو ٹی وی",nothingStarted:"ابھی تک کچھ شروع نہیں ہوا",resumeHint:"کچھ مواد دیکھیں اور یہ یہاں دکھائی دے گا۔",resumeWatching:"دوبارہ دیکھیں",recentlyWatched:"حال ہی میں دیکھا گیا",searchEverything:"سب تلاش کریں",searchHint:"لائیو ٹی وی، فلمیں اور سیریز میں بیک وقت تلاش کرنے کے لیے اوپر ٹائپ کریں۔",noResults:'"{0}" کے لیے کوئی نتیجہ نہیں',searchAll:"سب تلاش کریں — لائیو، فلمیں، سیریز…",discoverTrending:"رجحان سازی دریافت کریں",trendingWeek:"اس ہفتے رجحان میں",popularMovies:"مقبول فلمیں",popularTV:"مقبول ٹی وی شوز",notInLibrary:"آپ کی لائبریری میں نہیں",matchesInLib:"آپ کی لائبریری میں {0} مماثلت",inLibPlay:"آپ کی لائبریری میں — چلانے کے لیے کلک کریں",changeApiKey:"API کلید تبدیل کریں",hlsDesc:"کوئی بھی HLS، DASH یا براہ راست میڈیا URL درج کریں۔",publicTests:"عوامی ٹیسٹ سٹریمز",connections:"الاتصالات",addConnection:"+ کنکشن شامل کریں",noSavedConns:"کوئی محفوظ کنکشن نہیں",active:"فعال",removeConn:"کنکشن ہٹائیں",switchConn:"تبدیل کریں",items:"آئٹمز",tagline:"آپ کا ذاتی IPTV کلائنٹ · اپنی قانونی سروس سے جوڑیں",pasteRaw:"خام متن، URLs، یا ترتیب پیسٹ کریں",detected:"شناخت شدہ",clickToFill:"← بھرنے کے لیے کلک کریں",noConnsDetected:"پیسٹ شدہ متن میں کوئی کنکشن نہیں ملا۔",advancedOpts:"جدید اختیارات",hideAdvanced:"جدید چھپائیں",serialNumber:"سیریل نمبر",deviceId:"ڈیوائس ID",deviceId2:"ڈیوائس ID 2",showCategory:"زمرہ دکھائیں",hideCategory:"زمرہ چھپائیں",filterToThis:"اس میں فلٹر کریں",page:"صفحہ",of:"میں سے",synced:"مطابقت شدہ",justNow:"ابھی",noSeasonsFound:"اس سیریز کے لیے کوئی سیزن نہیں ملا۔",loadingSeasons:"سیزن لوڈ ہو رہے ہیں…",hlsPlayNote:"کوئی بھی HLS سٹریم، M3U8 URL یا براہ راست میڈیا URL فوری چلائیں۔",chooseCategory:"مواد لوڈ کرنے کے لیے اوپر کی فہرست سے ایک زمرہ منتخب کریں۔",stalkerHint:"Stalker پورٹل براؤزنگ کے لیے بیک اینڈ پراکسی درکار ہے۔",connectToPopulate:"ٹی وی گائیڈ بھرنے کے لیے Xtream Codes یا M3U سے جوڑیں۔",epgLoadHint:"اوپر اپنا XMLTV EPG URL پیسٹ کریں اور EPG لوڈ کریں پر کلک کریں۔",loadMoviesFirst:"پہلے اپنی فلمیں یا سیریز لوڈ کریں۔",categories:"زمرہ جات",episode:"ایپیسوڈ",season:"سیزن",language:"زبان",loadMore:"مزید لوڈ کریں",editConnection:"کنکشن ترمیم کریں",connectionName:"کنکشن کا نام",apply:"نافذ کریں"}};
 function _t(lang, key, ...args) { const s = LANGS[lang]?.[key] ?? LANGS.en[key] ?? key; return args.length ? s.replace(/\{(\d+)\}/g, (_, i) => args[i] ?? "") : s; }
 
 // ══════════════════════════════════════════════════════════════════
@@ -567,17 +675,45 @@ function proxyFetch(url) {
   return fetch(`${API}/proxy?url=${encodeURIComponent(url)}`);
 }
 
+async function safeJsonFetch(res) {
+  const text = await res.text();
+  if (!res.ok) {
+    // Try to parse error message if it's JSON
+    try {
+      const errData = JSON.parse(text);
+      if (errData.error) throw new Error(errData.error);
+    } catch (e) {
+      if (e.message.startsWith("Server returned")) throw e; // Already a good error
+    }
+    throw new Error(`Server error (HTTP ${res.status})`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    if (text.trim().startsWith("<")) {
+      throw new Error("Server returned HTML/XML instead of JSON. Check if your URL and credentials are correct.");
+    }
+    throw new Error("Invalid response from server (Not JSON)");
+  }
+}
+
 function makeXtreamAPI(server, user, pass) {
   const base = `${server}/player_api.php?username=${user}&password=${pass}`;
+  
+  const fetchJson = async (url) => {
+    const res = await proxyFetch(url);
+    return safeJsonFetch(res);
+  };
+
   return {
-    auth: () => proxyFetch(base).then(r => r.json()),
-    getLiveCategories: () => proxyFetch(`${base}&action=get_live_categories`).then(r => r.json()),
-    getLive: () => proxyFetch(`${base}&action=get_live_streams`).then(r => r.json()),
-    getVODCategories: () => proxyFetch(`${base}&action=get_vod_categories`).then(r => r.json()),
-    getVOD: () => proxyFetch(`${base}&action=get_vod_streams`).then(r => r.json()),
-    getSeriesCategories: () => proxyFetch(`${base}&action=get_series_categories`).then(r => r.json()),
-    getSeries: () => proxyFetch(`${base}&action=get_series`).then(r => r.json()),
-    getSeriesInfo: (id) => proxyFetch(`${base}&action=get_series_info&series_id=${id}`).then(r => r.json()),
+    auth: () => fetchJson(base),
+    getLiveCategories: () => fetchJson(`${base}&action=get_live_categories`),
+    getLive: () => fetchJson(`${base}&action=get_live_streams`),
+    getVODCategories: () => fetchJson(`${base}&action=get_vod_categories`),
+    getVOD: () => fetchJson(`${base}&action=get_vod_streams`),
+    getSeriesCategories: () => fetchJson(`${base}&action=get_series_categories`),
+    getSeries: () => fetchJson(`${base}&action=get_series`),
+    getSeriesInfo: (id) => fetchJson(`${base}&action=get_series_info&series_id=${id}`),
     liveURL: id => `${server}/live/${user}/${pass}/${id}.ts`,
     vodURL: (id, ext="mp4") => `${server}/movie/${user}/${pass}/${id}.${ext}`,
     seriesStreamURL: (id, ext="mp4") => `${server}/series/${user}/${pass}/${id}.${ext}`,
@@ -1222,7 +1358,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onRemoveConn, authUser, isGuest, onLogout, t: st }) {
+function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -1607,6 +1743,10 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
                       {diagLoading[c.id] ? "..." : "🩺"}
                     </button>
                     <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>{loading ? "..." : t("connectArrow")}</span>
+                    <button onClick={e => { e.stopPropagation(); onEdit(c); }}
+                      style={{background:"none",border:"none",color:"var(--t2)",cursor:"pointer",fontSize:".85rem",padding:"2px 6px",
+                        borderRadius:"4px",lineHeight:1,flexShrink:0}}
+                      title="Edit connection">✎</button>
                     <button onClick={e => { e.stopPropagation(); if(confirm(`Delete "${c.label}"?`)) onRemoveConn?.(c.id); }}
                       style={{background:"none",border:"none",color:"var(--t3)",cursor:"pointer",fontSize:".85rem",padding:"2px 6px",
                         borderRadius:"4px",lineHeight:1,flexShrink:0}}
@@ -1846,7 +1986,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 // ══════════════════════════════════════════════════════════════════
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, authUser, isGuest, onLogout, t: ct }) {
+const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onEdit, onClose, authUser, isGuest, onLogout, t: ct }) {
   const t = ct || ((k) => k);
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
@@ -1958,6 +2098,330 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
 });
 
 // ══════════════════════════════════════════════════════════════════
+// EDIT CONNECTION MODAL
+// ══════════════════════════════════════════════════════════════════
+const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
+  const [type, setType] = useState(conn.type);
+  const [label, setLabel] = useState(conn.label);
+  const [form, setForm] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (conn.type === "stalker") {
+      setForm({
+        server: conn.config.server || "",
+        mac: conn.config.mac || "",
+        serial: conn.config.serial || "",
+        deviceId: conn.config.deviceId || "",
+        deviceId2: conn.config.deviceId2 || ""
+      });
+    } else if (conn.type === "xtream") {
+      setForm({
+        server: conn.config.server || "",
+        user: conn.config.user || "",
+        pass: conn.config.pass || ""
+      });
+    } else if (conn.type === "m3u") {
+      setForm({
+        url: conn.config.url || ""
+      });
+    }
+  }, [conn]);
+
+  const handleSave = async () => {
+    setErr(""); setLoading(true);
+    try {
+      let finalConfig = {};
+      if (type === "xtream") {
+        if (!form.server || !form.user || !form.pass) throw new Error("All fields required");
+        const server = form.server.trim().replace(/\/$/, "");
+        const api = makeXtreamAPI(server, form.user, form.pass);
+        const data = await api.auth();
+        if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
+        finalConfig = { type, server, user: form.user, pass: form.pass, info: data?.user_info };
+      } else if (type === "m3u") {
+        if (!form.url) throw new Error("Playlist URL required");
+        const res = await proxyFetch(form.url.trim());
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
+        const channels = parseM3U(text);
+        if (!channels.length) throw new Error("No channels found");
+        finalConfig = { type, url: form.url, channels };
+      } else if (type === "stalker") {
+        if (!form.server || !form.mac) throw new Error("Portal URL and MAC required");
+        const server = form.server.trim().replace(/\/$/, "");
+        const macTrimmed = form.mac.trim();
+        const serialTrimmed = form.serial?.trim() || undefined;
+        const deviceIdTrimmed = form.deviceId?.trim() || undefined;
+        const deviceId2Trimmed = (form.deviceId2?.trim() || form.deviceId?.trim()) || undefined;
+
+        const validateBody = JSON.stringify({
+          portal: server, mac: macTrimmed,
+          serial: serialTrimmed, deviceId: deviceIdTrimmed, deviceId2: deviceId2Trimmed
+        });
+
+        const vRes = await fetch(`${API}/stalker/validate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID },
+          body: validateBody
+        });
+        const v = await vRes.json();
+
+        if (v.error && !v.portalReachable) throw new Error(v.error);
+        if (v.status === "expired") throw new Error(`Account expired${v.expiry ? ` on ${v.expiry}` : ""}. Contact your provider.`);
+        if (v.status === "blocked") throw new Error("Account is blocked. Contact your provider.");
+        if (v.status === "suspended") throw new Error("Account is suspended. Contact your provider.");
+        if (v.status === "unregistered") throw new Error("MAC address is not registered with this portal.");
+
+        finalConfig = {
+          server: server, mac: macTrimmed,
+          serial: serialTrimmed, deviceId: deviceIdTrimmed, deviceId2: deviceId2Trimmed,
+          accountInfo: v
+        };
+      }
+
+      const updatedConn = {
+        ...conn,
+        label: label,
+        type: type,
+        config: finalConfig
+      };
+
+      onSave(updatedConn);
+      onClose();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-ov" onClick={e => e.target === e.currentTarget && !loading && onClose()}>
+      <div className="modal" style={{ maxWidth: "440px" }}>
+        <div className="modal-title">{t("editConnection")}</div>
+        {err && <div className="err" style={{ marginBottom: "1rem" }}>⚠ {err}</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginBottom: "1rem", opacity: loading ? 0.6 : 1, pointerEvents: loading ? "none" : "auto" }}>
+          <div>
+            <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>{t("connectionName")}</label>
+            <input
+              type="text"
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              style={{
+                width: "100%",
+                padding: ".5rem",
+                border: "1px solid var(--b2)",
+                borderRadius: "6px",
+                background: "var(--s2)",
+                color: "var(--t1)",
+                fontSize: ".8rem"
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>{t("connectionType")}</label>
+            <select
+              value={type}
+              onChange={e => setType(e.target.value)}
+              style={{
+                width: "100%",
+                padding: ".5rem",
+                border: "1px solid var(--b2)",
+                borderRadius: "6px",
+                background: "var(--s2)",
+                color: "var(--t1)",
+                fontSize: ".8rem"
+              }}
+            >
+              <option value="stalker">Stalker</option>
+              <option value="xtream">Xtream</option>
+              <option value="m3u">M3U</option>
+            </select>
+          </div>
+
+          {type === "stalker" && (
+            <>
+              <div>
+                <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Server URL</label>
+                <input
+                  type="text"
+                  value={form.server}
+                  onChange={e => setForm({ ...form, server: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: ".5rem",
+                    border: "1px solid var(--b2)",
+                    borderRadius: "6px",
+                    background: "var(--s2)",
+                    color: "var(--t1)",
+                    fontSize: ".8rem"
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>MAC Address</label>
+                <input
+                  type="text"
+                  value={form.mac}
+                  onChange={e => setForm({ ...form, mac: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: ".5rem",
+                    border: "1px solid var(--b2)",
+                    borderRadius: "6px",
+                    background: "var(--s2)",
+                    color: "var(--t1)",
+                    fontSize: ".8rem"
+                  }}
+                />
+              </div>
+              {(form.serial || form.deviceId || form.deviceId2) && (
+                <>
+                  <div>
+                    <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Serial</label>
+                    <input
+                      type="text"
+                      value={form.serial || ""}
+                      onChange={e => setForm({ ...form, serial: e.target.value })}
+                      style={{
+                        width: "100%",
+                        padding: ".5rem",
+                        border: "1px solid var(--b2)",
+                        borderRadius: "6px",
+                        background: "var(--s2)",
+                        color: "var(--t1)",
+                        fontSize: ".8rem"
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Device ID</label>
+                    <input
+                      type="text"
+                      value={form.deviceId || ""}
+                      onChange={e => setForm({ ...form, deviceId: e.target.value })}
+                      style={{
+                        width: "100%",
+                        padding: ".5rem",
+                        border: "1px solid var(--b2)",
+                        borderRadius: "6px",
+                        background: "var(--s2)",
+                        color: "var(--t1)",
+                        fontSize: ".8rem"
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Device ID 2</label>
+                    <input
+                      type="text"
+                      value={form.deviceId2 || ""}
+                      onChange={e => setForm({ ...form, deviceId2: e.target.value })}
+                      style={{
+                        width: "100%",
+                        padding: ".5rem",
+                        border: "1px solid var(--b2)",
+                        borderRadius: "6px",
+                        background: "var(--s2)",
+                        color: "var(--t1)",
+                        fontSize: ".8rem"
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {type === "xtream" && (
+            <>
+              <div>
+                <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Server URL</label>
+                <input
+                  type="text"
+                  value={form.server}
+                  onChange={e => setForm({ ...form, server: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: ".5rem",
+                    border: "1px solid var(--b2)",
+                    borderRadius: "6px",
+                    background: "var(--s2)",
+                    color: "var(--t1)",
+                    fontSize: ".8rem"
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Username</label>
+                <input
+                  type="text"
+                  value={form.user}
+                  onChange={e => setForm({ ...form, user: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: ".5rem",
+                    border: "1px solid var(--b2)",
+                    borderRadius: "6px",
+                    background: "var(--s2)",
+                    color: "var(--t1)",
+                    fontSize: ".8rem"
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Password</label>
+                <input
+                  type="password"
+                  value={form.pass}
+                  onChange={e => setForm({ ...form, pass: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: ".5rem",
+                    border: "1px solid var(--b2)",
+                    borderRadius: "6px",
+                    background: "var(--s2)",
+                    color: "var(--t1)",
+                    fontSize: ".8rem"
+                  }}
+                />
+              </div>
+            </>
+          )}
+
+          {type === "m3u" && (
+            <div>
+              <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>M3U URL</label>
+              <input
+                type="text"
+                value={form.url}
+                onChange={e => setForm({ ...form, url: e.target.value })}
+                style={{
+                  width: "100%",
+                  padding: ".5rem",
+                  border: "1px solid var(--b2)",
+                  borderRadius: "6px",
+                  background: "var(--s2)",
+                  color: "var(--t1)",
+                  fontSize: ".8rem"
+                }}
+              />
+            </div>
+          )}
+        </div>
+        <div className="modal-btns">
+          <button className="btn-cancel" onClick={onClose} disabled={loading}>{t("cancel")}</button>
+          <button className="btn-confirm" onClick={handleSave} disabled={loading}>{loading ? t("connecting") : t("apply")}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
 // CARD HELPERS
 // ══════════════════════════════════════════════════════════════════
 function FavBtn({ on, onClick, style={} }) {
@@ -1990,9 +2454,21 @@ export default function App() {
   const [authUser, setAuthUser] = useState(null); // { id, username, role, limits }
   const [authLoading, setAuthLoading] = useState(true);
   const [isGuest, setIsGuest] = useState(false);
+  const [resetToken, setResetToken] = useState(null);
 
   // Check stored token on mount
   useEffect(() => {
+    // Check for query params (activation, reset-password)
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get("action");
+    const tokenParam = params.get("token");
+
+    if (action === "reset-password" && tokenParam) {
+      setResetToken(tokenParam);
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     const token = getAuthToken();
     const wasGuest = localStorage.getItem("sv-guest-mode") === "1";
     if (wasGuest && !token) { setIsGuest(true); setAuthLoading(false); return; }
@@ -2972,6 +3448,61 @@ export default function App() {
 
   useEffect(() => { setPage(1); }, [cat, search, section]);
 
+  function handleEditConnection(updatedConn) {
+    // Update connections array
+    const newConns = connections.map(c =>
+      c.id === updatedConn.id ? updatedConn : c
+    );
+    setConnections(newConns);
+    db.set("sv-connections", newConns);
+
+    // If this is the active connection, update the current conn
+    if (activeConnId === updatedConn.id) {
+      setConn(updatedConn.config);
+    }
+
+    // Sync to server if logged in
+    if (authUser) {
+      syncConnectionsToServer(newConns);
+    }
+
+    // Only reload if we have a valid connection config
+    if (updatedConn.type === "stalker" && updatedConn.config?.server && updatedConn.config?.mac) {
+      setChannels([]);
+      setVod([]);
+      setSeries([]);
+      setStalkerVodCats([]);
+      setStalkerSeriesCats([]);
+      fetchingCatRef.current.clear();
+      setCat(null);
+
+      // Reload Live TV
+      fetchStalkerChannels(true);
+
+      // Reload Movies
+      loadStalkerCats("vod", true);
+
+      // Reload Series
+      loadStalkerCats("series", true);
+    } else if (updatedConn.type === "xtream" && updatedConn.config?.server && updatedConn.config?.user) {
+      // For Xtream, just clear data without reloading since the API will handle it
+      setVod([]);
+      setSeries([]);
+      setStalkerVodCats([]);
+      setStalkerSeriesCats([]);
+      fetchingCatRef.current.clear();
+      setCat(null);
+    } else if (updatedConn.type === "m3u" && updatedConn.config?.url) {
+      // For M3U, just clear data without reloading
+      setVod([]);
+      setSeries([]);
+      setStalkerVodCats([]);
+      setStalkerSeriesCats([]);
+      fetchingCatRef.current.clear();
+      setCat(null);
+    }
+  }
+
   function disconnect() {
     setConn(null); setChannels([]); setVod([]); setSeries([]);
     setStalkerVodCats([]); setStalkerSeriesCats([]);
@@ -3104,12 +3635,18 @@ export default function App() {
 
   // Auth gate: show login/register before anything else
   if (authLoading) return (<><style>{genCSS(THEMES[themeName])}</style><div className="setup"><div className="card" style={{textAlign:"center",padding:"3rem"}}><div className="spinner" /></div></div></>);
-  if (!authUser && !isGuest) return (<><style>{genCSS(THEMES[themeName])}</style><AuthScreen onAuth={handleAuth} onGuest={handleGuest} /></>);
+  if (!authUser && !isGuest) return (
+    <>
+      <style>{genCSS(THEMES[themeName])}</style>
+      <AuthScreen onAuth={handleAuth} onGuest={handleGuest} />
+      {resetToken && createPortal(<ResetPasswordModal token={resetToken} onClose={() => setResetToken(null)} />, document.body)}
+    </>
+  );
 
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} onImportMultiple={handleImportMultiple} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} authUser={authUser} isGuest={isGuest} onLogout={handleLogout} t={t} />
+      <Setup onConnect={handleConnect} onImportMultiple={handleImportMultiple} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} onEdit={setEditingConn} authUser={authUser} isGuest={isGuest} onLogout={handleLogout} t={t} />
       {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
@@ -3150,6 +3687,14 @@ export default function App() {
             )}
           </div>
         </div>
+      , document.body)}
+      {editingConn && createPortal(
+        <EditConnectionModal
+          conn={editingConn}
+          onClose={() => setEditingConn(null)}
+          onSave={handleEditConnection}
+          t={t}
+        />
       , document.body)}
     </>
   );
@@ -3410,7 +3955,7 @@ export default function App() {
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="settings" ? (
           <SettingsView connections={connections} favs={favs} history={history}
-            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId} t={t} />
+            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId} onAuth={handleAuth} t={t} />
         ) : section==="hls" ? (
           <DirectHLSView />
         ) : section==="epg" ? (
@@ -3802,10 +4347,20 @@ export default function App() {
           onSwitch={switchConnection}
           onRemove={removeConnection}
           onAddNew={addNewConnection}
+          onEdit={setEditingConn}
           onClose={() => setShowConnManager(false)}
           authUser={authUser}
           isGuest={isGuest}
           onLogout={handleLogout}
+          t={t}
+        />
+      )}
+
+      {editingConn && (
+        <EditConnectionModal
+          conn={editingConn}
+          onClose={() => setEditingConn(null)}
+          onSave={handleEditConnection}
           t={t}
         />
       )}
@@ -4130,12 +4685,37 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
   );
 });
 
-// ── Settings View — Import/Export ──
-function SettingsView({ connections, favs, history, authUser, isGuest, activeConnId, t: st }) {
+// ── Settings View ──
+function SettingsView({ connections, favs, history, authUser, isGuest, activeConnId, onAuth, t: st }) {
   const t = st || (k => k);
+  const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
   const [importOk, setImportOk] = useState("");
+  const [emailInput, setEmailInput] = useState(authUser?.email || "");
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailMsg, setEmailMsg] = useState("");
   const fileRef = useRef(null);
+
+  async function updateProfile() {
+    setEmailMsg(""); setEmailLoading(true);
+    try {
+      const res = await fetch(`${API}/api/user/profile`, {
+        method: "POST", headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${getAuthToken()}`
+        },
+        body: JSON.stringify({ email: emailInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setEmailMsg("Recovery email updated successfully!");
+      if (onAuth) onAuth({ ...authUser, email: emailInput });
+    } catch (e) {
+      setEmailMsg(`⚠ ${e.message}`);
+    } finally {
+      setEmailLoading(false);
+    }
+  }
 
   async function exportData() {
     const data = {
@@ -4233,53 +4813,88 @@ function SettingsView({ connections, favs, history, authUser, isGuest, activeCon
   }
 
   return (
-    <div className="c-body" style={{padding:"1.5rem",maxWidth:600}}>
+    <div className="c-body" style={{padding:"1.5rem",maxWidth:640}}>
       <h3 style={{margin:"0 0 1.2rem",fontSize:"1.1rem",fontWeight:600}}>Settings</h3>
 
-      {/* Account info */}
-      <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem",marginBottom:"1.2rem"}}>
-        <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Account</div>
-        {authUser ? (
-          <div style={{display:"flex",alignItems:"center",gap:".6rem"}}>
-            <span style={{fontSize:"1.2rem"}}>👤</span>
-            <div>
-              <div style={{fontWeight:600,fontSize:".9rem"}}>{authUser.username}</div>
-              <div style={{fontSize:".7rem",color:"var(--t3)",textTransform:"capitalize"}}>{authUser.role} account</div>
+      <div className="tabs" style={{marginBottom:"1.5rem",justifyContent:"flex-start"}}>
+        <button className={`tab ${tab==="general"?"on":""}`} onClick={()=>setTab("general")}>General</button>
+        <button className={`tab ${tab==="account"?"on":""}`} onClick={()=>setTab("account")}>Account</button>
+        <button className={`tab ${tab==="data"?"on":""}`} onClick={()=>setTab("data")}>Data</button>
+      </div>
+
+      {tab === "account" && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.2rem"}}>
+          <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1.2rem"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".8rem",fontWeight:600}}>Profile</div>
+            {authUser ? (
+              <div style={{display:"flex",alignItems:"center",gap:".8rem",marginBottom:"1.2rem"}}>
+                <div style={{width:48,height:48,borderRadius:"50%",background:"var(--accent-22)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.2rem",color:"var(--accent)",fontWeight:700}}>
+                  {authUser.username?.[0]?.toUpperCase()}
+                </div>
+                <div>
+                  <div style={{fontWeight:600,fontSize:"1rem"}}>{authUser.username}</div>
+                  <div style={{fontSize:".75rem",color:"var(--t3)",textTransform:"capitalize"}}>{authUser.role} account</div>
+                </div>
+              </div>
+            ) : (
+              <div style={{fontSize:".85rem",color:"var(--t2)",marginBottom:"1rem"}}>You are currently using Guest mode. Log in to enable cloud sync and password recovery.</div>
+            )}
+
+            <div className="fg">
+              <label className="fl">Recovery Email</label>
+              <div style={{display:"flex",gap:".5rem"}}>
+                <input className="fi" type="email" placeholder="email@example.com" 
+                  value={emailInput} onChange={e=>setEmailInput(e.target.value)} 
+                  disabled={!authUser || emailLoading} />
+                <button className="btn-go" onClick={updateProfile} disabled={!authUser || emailLoading || !emailInput} style={{padding:"0 1.2rem"}}>
+                  {emailLoading ? "..." : "Save"}
+                </button>
+              </div>
+              <div className="fhint">Used for password recovery and account security.</div>
+            </div>
+            {emailMsg && <div style={{marginTop:".8rem",fontSize:".8rem",color:emailMsg.includes("⚠")?"var(--danger)":"var(--accent)"}}>{emailMsg}</div>}
+          </div>
+        </div>
+      )}
+
+      {tab === "general" && (
+        <div style={{color:"var(--t2)",fontSize:".9rem"}}>
+          <p>Language and theme settings are available in the sidebar.</p>
+          <div style={{marginTop:"1rem",padding:"1rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem"}}>Active Connection</div>
+            <div style={{fontSize:".85rem",color:"var(--t1)"}}>
+              {connections.find(c=>c.id===activeConnId)?.label || "None"}
             </div>
           </div>
-        ) : (
-          <div style={{fontSize:".85rem",color:"var(--t3)"}}>Guest mode — login to sync across devices</div>
-        )}
-      </div>
-
-      {/* Export */}
-      <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem",marginBottom:"1.2rem"}}>
-        <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Export Data</div>
-        <div style={{fontSize:".78rem",color:"var(--t2)",marginBottom:".7rem"}}>
-          Download all your data: connections, favorites, watch history, preferences.
         </div>
-        <button className="btn-primary" style={{padding:".5rem 1.2rem",fontSize:".82rem"}} onClick={exportData}>
-          Download Backup (.json)
-        </button>
-      </div>
+      )}
 
-      {/* Import */}
-      <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem",marginBottom:"1.2rem"}}>
-        <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Import Data</div>
-        <div style={{fontSize:".78rem",color:"var(--t2)",marginBottom:".7rem"}}>
-          Restore from a previous backup. Existing data is preserved — only missing items are added.
+      {tab === "data" && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.2rem"}}>
+          {/* Export */}
+          <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Export Data</div>
+            <div style={{fontSize:".78rem",color:"var(--t2)",marginBottom:".7rem"}}>
+              Download all your data: connections, favorites, watch history, preferences.
+            </div>
+            <button className="btn-primary" style={{padding:".5rem 1.2rem",fontSize:".82rem"}} onClick={exportData}>
+              Download Backup (.json)
+            </button>
+          </div>
+
+          {/* Import */}
+          <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Import Data</div>
+            <div style={{fontSize:".78rem",color:"var(--t2)",marginBottom:".7rem"}}>
+              Restore from a previous backup. Existing data is preserved — only missing items are added.
+            </div>
+            <input ref={fileRef} type="file" accept=".json" onChange={importData}
+              style={{fontSize:".8rem",color:"var(--t2)"}} />
+            {importErr && <div className="err" style={{marginTop:".5rem",fontSize:".78rem"}}>⚠ {importErr}</div>}
+            {importOk && <div style={{marginTop:".5rem",fontSize:".78rem",color:"var(--accent)"}}>{importOk}</div>}
+          </div>
         </div>
-        <input ref={fileRef} type="file" accept=".json" onChange={importData}
-          style={{fontSize:".8rem",color:"var(--t2)"}} />
-        {importErr && <div className="err" style={{marginTop:".5rem",fontSize:".78rem"}}>⚠ {importErr}</div>}
-        {importOk && <div style={{marginTop:".5rem",fontSize:".78rem",color:"var(--accent)"}}>{importOk}</div>}
-      </div>
-
-      {/* Info */}
-      <div style={{fontSize:".68rem",color:"var(--t3)",lineHeight:1.6}}>
-        <div>Connections: {connections?.length || 0}</div>
-        <div>Export includes: connections, favorites, watch history, theme, language, EPG URL, hidden categories</div>
-      </div>
+      )}
     </div>
   );
 }

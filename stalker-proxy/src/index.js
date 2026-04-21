@@ -6,6 +6,7 @@ const compression = require("compression");
 const cookieParser = require("cookie-parser");
 const cache       = require("./cache");
 const auth        = require("./auth");
+const email       = require("./email");
 const { Transform } = require("stream");
 
 const helmet    = require("helmet");
@@ -100,6 +101,8 @@ app.use(helmet({
 // Rate limiting
 app.use("/api/auth/login", rateLimit({ windowMs: 15 * 60000, max: 10, message: { error: "Too many login attempts. Try again in 15 minutes." } }));
 app.use("/api/auth/register", rateLimit({ windowMs: 60 * 60000, max: 5, message: { error: "Too many registrations. Try again later." } }));
+app.use("/api/auth/forgot-password", rateLimit({ windowMs: 60 * 60000, max: 3, message: { error: "Too many reset requests. Try again in an hour." } }));
+app.use("/api/auth/reset-password", rateLimit({ windowMs: 60 * 60000, max: 5, message: { error: "Too many reset attempts. Try again later." } }));
 app.use("/api/feedback", rateLimit({ windowMs: 60000, max: 10, message: { error: "Too many feedback submissions" } }));
 app.use("/api/", rateLimit({ windowMs: 60000, max: 60, message: { error: "Too many requests" } }));
 app.use("/stalker/", rateLimit({ windowMs: 60000, max: 600, message: { error: "Too many requests" } }));
@@ -1616,8 +1619,8 @@ app.post("/api/auth/register", express.json(), async (req, res) => {
   const open = process.env.REGISTRATION_OPEN !== "false";
   if (!open) return res.status(403).json({ error: "Registration is currently closed" });
   try {
-    const { username, password } = req.body;
-    await auth.createUser(username, password);
+    const { username, password, email: userEmail } = req.body;
+    await auth.createUser(username, password, undefined, userEmail);
     const session = await auth.authenticate(username, password);
     setAuthCookie(res, session.token);
     res.json(session);
@@ -1667,9 +1670,49 @@ app.put("/api/auth/password", auth.requireAuth, express.json(), async (req, res)
   }
 });
 
+// ── POST /api/auth/forgot-password ──
+app.post("/api/auth/forgot-password", express.json(), async (req, res) => {
+  try {
+    const { email: userEmail } = req.body;
+    if (!userEmail) return res.status(400).json({ error: "Email is required" });
+    const result = auth.requestPasswordReset(userEmail);
+    if (result) {
+      const { user, token } = result;
+      await email.sendPasswordReset(user.email, user.username, token);
+    }
+    // Always return success to prevent email enumeration
+    res.json({ ok: true, message: "If an account with that email exists, a reset link has been sent." });
+  } catch (e) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/auth/reset-password ──
+app.post("/api/auth/reset-password", express.json(), async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) return res.status(400).json({ error: "Token and password required" });
+    await auth.resetPassword(token, password);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ── Admin: user management ──
 app.get("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
   res.json(auth.listUsers());
+});
+
+// ── User: profile management ──
+app.post("/api/user/profile", auth.requireAuth, express.json(), async (req, res) => {
+  try {
+    const { email } = req.body;
+    auth.updateUserEmail(req.user.id, email);
+    res.json({ ok: true, message: "Profile updated" });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.post("/api/admin/users", auth.requireAuth, auth.requireRole("admin"), express.json(), async (req, res) => {

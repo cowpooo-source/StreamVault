@@ -354,11 +354,27 @@ function requireRole(...roles) {
   };
 }
 
+function updateUserEmail(userId, email) {
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Invalid email address format");
+  }
+
+  // Check if email is already taken by another user
+  if (email) {
+    const existing = db.prepare("SELECT id FROM users WHERE email = ? AND id != ?").get(email, userId);
+    if (existing) throw new Error("Email address already in use by another account");
+  }
+
+  db.prepare("UPDATE users SET email = ? WHERE id = ?").run(email, userId);
+}
+
 module.exports = {
-  init, ROLE_LIMITS, DEFAULT_ROLE,
+  init,
+  SALT_ROUNDS, ROLE_LIMITS, DEFAULT_ROLE,
   createUser, authenticate, verifyToken, revokeToken, revokeAllUserTokens,
   listUsers, getUser, updateUser, deleteUser, changePassword, cleanupSessions,
   requireAuth, optionalAuth, requireRole,
   createEmailToken, verifyEmailToken, consumeEmailToken, activateEmail,
   requestPasswordReset, resetPassword,
+  updateUserEmail,
 };
