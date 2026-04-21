@@ -102,7 +102,7 @@ Open `http://localhost:5173` — login, register, or continue as guest.
 ### Automated
 
 ```bash
-./deploy.sh your-domain.com
+./deploy-vps.sh your-domain.com
 ```
 
 Sets up Node.js, Nginx, SSL (Let's Encrypt), PM2 — fully automated for RHEL/CentOS/Ubuntu.
@@ -229,7 +229,7 @@ Portal Heaven/
 │   ├── src/cache.js             # SQLite cache + analytics
 │   ├── src/email.js             # Email module (Resend, disabled)
 │   └── src/analytics.html       # Admin dashboard
-├── deploy.sh                    # Automated VPS deployment script
+├── deploy-vps.sh                # Automated VPS deployment script
 └── README.md
 ```
 

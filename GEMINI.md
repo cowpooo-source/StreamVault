@@ -19,7 +19,7 @@ This project is an IPTV client architecture optimized for self-hosting on a VPS.
    - Data Storage: Uses SQLite (`better-sqlite3`) for user data and caching.
 
 ## Deployment
-Typically deployed using the provided `deploy.sh` script to a VPS environment.
+Typically deployed using the provided `deploy-vps.sh` script to a VPS environment.
 
 ## Recent Progress (April 7, 2026)
 - **Branch Strategy**: Locked development focus to the `vps/self-hosted` branch.
