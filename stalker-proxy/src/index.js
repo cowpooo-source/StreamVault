@@ -127,17 +127,25 @@ function safeCompare(a, b) {
 app.use((req, res, next) => {
   const p = req.path;
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
-  if (p !== "/health" && p !== "/analytics" && p !== "/api/analytics") {
-    if (p.startsWith("/stalker/")) cache.trackRequest("stalker");
-    else if (p === "/stream") cache.trackRequest("stream");
-    else if (p === "/proxy") cache.trackRequest("proxy");
-    else cache.trackRequest("other");
-    cache.trackVisitor(ip);
-    // Track guest
-    const guestId = req.headers["x-guest-id"];
-    if (guestId) cache.trackGuest(guestId, ip);
-  }
-  // Track portal usage
+  const start = Date.now();
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (p !== "/health" && p !== "/analytics" && p !== "/api/analytics") {
+      let type = "other";
+      if (p.startsWith("/stalker/")) type = "stalker";
+      else if (p === "/stream") type = "stream";
+      else if (p === "/proxy") type = "proxy";
+      
+      cache.trackRequest(type, res.statusCode, duration);
+      cache.trackVisitor(ip);
+      
+      const guestId = req.headers["x-guest-id"];
+      if (guestId) cache.trackGuest(guestId, ip);
+    }
+  });
+
+  // Track portal usage (pre-extraction)
   if (p.startsWith("/stalker/") && req.query.portal && req.query.mac) {
     const type = p.includes("/vod") ? "vod" : p.includes("/series") ? "series" : p.includes("/epg") ? "epg" : "live";
     cache.trackPortal(req.query.portal, req.query.mac, type);
@@ -1490,11 +1498,14 @@ app.get("/proxy", async (req, res) => {
   if (!url) return res.status(400).json({ error: "url required" });
   if (!(await isUrlAllowed(url))) return res.status(403).json({ error: "URL not allowed" });
 
+  const start = Date.now();
   const tt = transferTimeout(60000); // 60s total transfer limit
   try {
     const upstream = await fetch(url, { timeout: 30000, signal: tt.signal, headers: { "User-Agent": "StreamVault/1.0" } });
-    const contentType = upstream.headers.get("content-type") || "";
+    const duration = Date.now() - start;
+    cache.trackRequest("proxy", upstream.status, duration);
 
+    const contentType = upstream.headers.get("content-type") || "";
     if (contentType.includes("json")) {
       const data = await upstream.json();
       tt.clear();
@@ -1504,8 +1515,28 @@ app.get("/proxy", async (req, res) => {
       upstream.body.on("end", tt.clear).on("error", tt.clear).pipe(res);
     }
   } catch (e) {
+    const duration = Date.now() - start;
+    cache.trackRequest("proxy", 502, duration);
     console.error("Proxy error:", e.message);
     res.status(502).json({ error: "Proxy request failed" });
+  }
+});
+
+// ── GET /stalker — proxy Stalker API requests
+app.get("/stalker", async (req, res) => {
+  const { portal, mac, action, ...params } = req.query;
+  if (!portal || !mac) return res.status(400).json({ error: "Portal and MAC required" });
+  const start = Date.now();
+
+  try {
+    const data = await doStalkerHandshake(portal, mac, action, params);
+    const duration = Date.now() - start;
+    cache.trackRequest("stalker", 200, duration);
+    res.json(data);
+  } catch (e) {
+    const duration = Date.now() - start;
+    cache.trackRequest("stalker", 502, duration);
+    res.status(502).json({ error: e.message });
   }
 });
 

@@ -106,21 +106,26 @@ function cacheKey(portal, mac, endpoint, extra = "") {
 
 // ── Request & visitor tracking ──
 let cacheHits = 0, cacheMisses = 0;
+const activeUsers = new Map(); // guestId -> lastSeen
 
 function trackCacheHit() { cacheHits++; }
 function trackCacheMiss() { cacheMisses++; }
 
-function trackRequest(type) {
+function trackRequest(type, status = 200, duration = 0) {
   const today = new Date().toISOString().slice(0, 10);
-  stmtTrackRequest.run(today, type);
+  // Detailed logs for the last 30 days
+  db.prepare(`INSERT INTO requests (date, type, count) VALUES (?, ?, 1)
+    ON CONFLICT(date, type) DO UPDATE SET count = count + 1`).run(today, type);
+  
+  // Track errors and latency in a separate small table for health monitoring
+  db.exec("CREATE TABLE IF NOT EXISTS health_logs (ts INTEGER, type TEXT, status INTEGER, duration INTEGER)");
+  db.prepare("INSERT INTO health_logs (ts, type, status, duration) VALUES (?, ?, ?, ?)").run(Math.floor(Date.now()/1000), type, status, duration);
 }
 
 function maskIp(ip) {
   if (!ip) return "unknown";
-  // IPv4: zero last 2 octets (1.2.3.4 → 1.2.0.0)
   const v4 = ip.match(/^(\d+\.\d+)\.\d+\.\d+$/);
   if (v4) return `${v4[1]}.0.0`;
-  // IPv6: keep first 3 groups
   if (ip.includes(":")) return ip.split(":").slice(0, 3).join(":") + "::";
   return "unknown";
 }
@@ -140,6 +145,16 @@ function getStats() {
   const now = Date.now();
   const nowSec = Math.floor(now / 1000);
   const today = new Date().toISOString().slice(0, 10);
+
+  // Active Now (last 5 mins)
+  let activeCount = 0;
+  for (const [gid, lastSeen] of activeUsers.entries()) {
+    if (now - lastSeen < 5 * 60000) activeCount++;
+    else activeUsers.delete(gid);
+  }
+
+  // Health stats (last 24h)
+  const health = db.prepare("SELECT AVG(duration) as avg_lat, COUNT(*) filter (where status >= 400) as errs, COUNT(*) as total FROM health_logs WHERE ts > ?").get(nowSec - 86400);
 
   // Cache stats
   const cacheTotal = db.prepare("SELECT COUNT(*) AS cnt FROM cache").get().cnt;
@@ -211,7 +226,8 @@ function getStats() {
   return {
     cacheTotal, cacheValid, cacheSizeMB: Math.round(cacheSize / 1024 / 1024 * 100) / 100,
     cacheHits, cacheMisses, cacheHitRate: cacheHits + cacheMisses > 0 ? Math.round(cacheHits / (cacheHits + cacheMisses) * 100) : 0,
-    todayReqs, daily, cacheBreakdown,
+    todayReqs, daily, cacheBreakdown, activeNow: activeCount,
+    health: { avg_latency: Math.round(health.avg_lat || 0), error_rate: health.total ? Math.round(health.errs / health.total * 100) : 0 },
     visitors: { total: totalVisitors, active_1h: active1h, active_24h: active24h, active_7d: active7d },
     recentVisitors, portals, portalsByType,
     guests: { total: totalGuests }, recentGuests, mostWatched,
@@ -220,14 +236,17 @@ function getStats() {
 
 function trackGuest(guestId, ip) {
   if (!guestId) return;
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now();
+  activeUsers.set(guestId, now); // In-memory update
+  const nowSec = Math.floor(now / 1000);
   const masked = maskIp(ip);
-  stmtTrackGuest.run(guestId, masked, now, now, now, masked);
+  stmtTrackGuest.run(guestId, masked, nowSec, nowSec, nowSec, masked);
 }
 
 const GUEST_ACTIVITY_FIELDS = new Set(["connections", "favorites", "history"]);
 function trackGuestActivity(guestId, field) {
   if (!guestId || !GUEST_ACTIVITY_FIELDS.has(field)) return;
+  activeUsers.set(guestId, Date.now());
   db.prepare(`UPDATE guests SET ${field} = ${field} + 1, last_seen = ? WHERE guest_id = ?`)
     .run(Math.floor(Date.now() / 1000), guestId);
 }
@@ -249,6 +268,7 @@ function getFeedback() {
 
 function saveGuestData(guestId, connId, type, data) {
   if (!guestId || !connId) return;
+  activeUsers.set(guestId, Date.now());
   const now = Math.floor(Date.now() / 1000);
   stmtSaveGuestData.run(guestId, connId, type, JSON.stringify(data), now);
 }
@@ -268,8 +288,14 @@ function cleanupGuestData() {
   stmtCleanupGuests.run(cutoff);
 }
 
+function cleanupDetailedLogs() {
+  const cutoff = Math.floor(Date.now() / 1000) - 30 * 24 * 60 * 60;
+  db.prepare("DELETE FROM health_logs WHERE ts < ?").run(cutoff);
+  // Keep daily totals in 'requests' but delete detailed rows from potential future audit tables
+}
+
 // Cleanup expired entries every hour
-setInterval(() => { cleanup(); cleanupGuestData(); }, 60 * 60 * 1000);
+setInterval(() => { cleanup(); cleanupGuestData(); cleanupDetailedLogs(); }, 60 * 60 * 1000);
 
 // Run initial cleanup
 cleanup();
