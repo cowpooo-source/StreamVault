@@ -5376,11 +5376,26 @@ function SettingsView({ connections, favs, history, authUser, isGuest, activeCon
 
   return (
     <div className="c-body" style={{padding:"1.5rem",maxWidth:640}}>
-      <div className="tabs" style={{marginBottom:"1.5rem",justifyContent:"flex-start"}}>
-        <button className={`tab ${tab==="general"?"on":""}`} onClick={()=>setTab("general")}>General</button>
-        <button className={`tab ${tab==="account"?"on":""}`} onClick={()=>setTab("account")}>Account</button>
-        <button className={`tab ${tab==="data"?"on":""}`} onClick={()=>setTab("data")}>Data</button>
-      </div>
+        <div className="tabs-v">
+          <button
+            className={`tab ${tab === "general" ? "on" : ""}`}
+             onClick={() => setTab("general")}
+          >
+            General
+          </button>
+          <button
+            className={`tab ${tab === "account" ? "on" : ""}`}
+            onClick={() => setTab("account")}
+          >
+            Account
+          </button>
+          <button
+            className={`tab ${tab === "data" ? "on" : ""}`}
+            onClick={() => setTab("data")}
+          >
+            Data
+          </button>
+        </div>
 
       {tab === "account" && (
         <div style={{display:"flex",flexDirection:"column",gap:"1.2rem"}}>

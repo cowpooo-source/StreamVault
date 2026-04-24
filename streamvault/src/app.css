@@ -23,6 +23,8 @@ html{height:100%}
   -webkit-text-fill-color:transparent;background-clip:text;margin-bottom:.2rem}
 .tagline{color:var(--t2);font-size:.82rem;margin-bottom:2rem}
 .tabs{display:flex;gap:.3rem;background:var(--s2);padding:4px;border-radius:10px;margin-bottom:1.5rem}
+.tabs-v{display:flex;flex-direction:column;gap:.5rem;width:fit-content;margin-bottom:1.5rem}
+.tabs-v .tab{text-align:left;padding:10px 20px}
 .tab{flex:1;padding:.42rem .2rem;background:none;border:none;border-radius:7px;color:var(--t2);
   font-family:'DM Sans',sans-serif;font-size:.7rem;font-weight:500;cursor:pointer;transition:all .2s;text-align:center;white-space:nowrap}
 .tab.on{background:var(--s3);color:var(--accent);box-shadow:0 2px 8px var(--shadow)}
@@ -525,6 +527,8 @@ html{height:100%}
   .fi{padding:.7rem .8rem;font-size:1rem;min-height:44px}
   .btn-primary{padding:.85rem;font-size:1.05rem;min-height:48px}
   .tabs{flex-wrap:wrap}
+  .tabs-v{flex-direction:row;width:100%;overflow-x:auto}
+  .tabs-v .tab{text-align:center;padding:.5rem .3rem}
   .tab{padding:.5rem .3rem;font-size:.72rem;min-height:40px}
 
   /* 6. Content padding */
