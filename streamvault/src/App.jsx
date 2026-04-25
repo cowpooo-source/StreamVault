@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
 
-const API = import.meta.env.VITE_API_URL || "";
+const API = ""; // Force relative path for production
 const EXOCLICK_VAST_URL = import.meta.env.VITE_EXOCLICK_VAST_URL || "https://s.magsrv.com/v1/vast.php?idzone=5903402";
 
 // Proxy portal images to avoid mixed-content / broken SSL cert issues
@@ -3011,6 +3011,44 @@ const NAV = [
   { key:"settings",  icon:"⚙",  tKey:"settings",          sKey:"tools" },
 ];
 
+// ── TV Guide Row ──
+const TVGuideRow = memo(function TVGuideRow({ channel, epgNow, onPlay, onToggleFav, isFav, t }) {
+  const pct = epgNow ? Math.max(0, Math.min(100, ((Date.now() - epgNow.start) / (epgNow.stop - epgNow.start)) * 100)) : 0;
+  const fmtT = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div className="tv-row" onClick={() => onPlay(channel)}>
+      <div className="tv-ch-info">
+        {channel.logo ? <img src={imgSrc(channel.logo)} className="tv-logo" loading="lazy" onError={e=>e.target.style.display="none"} /> : <div className="tv-logo-ph">📺</div>}
+        <div className="tv-ch-text">
+          <div className="tv-ch-name">{channel.name}</div>
+          {channel.num && <div className="tv-ch-num">CH {channel.num}</div>}
+        </div>
+      </div>
+      <div className="tv-epg-info">
+        {epgNow ? (
+          <>
+            <div className="tv-epg-title">
+              <span className="tv-live-icon">▶</span> {epgNow.title}
+            </div>
+            <div className="tv-epg-time">
+              {fmtT(epgNow.start)} – {fmtT(epgNow.stop)}
+            </div>
+            <div className="tv-progress-bg">
+              <div className="tv-progress-fill" style={{width: `${pct}%`}} />
+            </div>
+          </>
+        ) : (
+          <div className="tv-no-epg">{t("noProgramInfo")}</div>
+        )}
+      </div>
+      <div className="tv-actions">
+        <FavBtn on={isFav} onClick={(e) => { e.stopPropagation(); onToggleFav(channel); }} />
+      </div>
+    </div>
+  );
+});
+
 export default function App() {
   // ── auth state
   const [authUser, setAuthUser] = useState(null); // { id, username, role, limits }
@@ -3125,7 +3163,19 @@ export default function App() {
   const PAGE_SIZE = 50;
   const [globalQ, setGlobalQ] = useState("");
   const [playing, setPlaying] = useState(null);
+  const [visibleLimit, setVisibleLimit] = useState(20);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
+  const [now, setNow]         = useState(Date.now());
+
+  useEffect(() => {
+    setVisibleLimit(20);
+  }, [cat, section]);
+
+  // Update "now" every minute to refresh progress bars and EPG
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   // ── theme
   const [themeName, setThemeName] = useState("Dark");
@@ -3681,11 +3731,25 @@ export default function App() {
     finally { setEpgLoading(false); }
   }
 
+  // ── load EPG when connection is active
+  useEffect(() => {
+    if (conn?.type === "stalker") loadStalkerEPG();
+  }, [activeConnId]);
+
   async function loadStalkerEPG() {
     if (!conn || conn.type !== "stalker") return;
     setEpgLoading(true);
     try {
-      const res = await fetch(`${API}/stalker/epg?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&period=4`);
+      const params = new URLSearchParams({
+        portal: conn.server,
+        mac: conn.mac,
+        period: 24, // request 24 hours of data
+      });
+      if (conn.serial) params.set("serial", conn.serial);
+      if (conn.deviceId) params.set("deviceId", conn.deviceId);
+      if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
+      
+      const res = await fetch(`${API}/stalker/epg?${params.toString()}`);
       const data = await res.json();
       if (data.programs) setEpgData(data.programs);
     } catch(e) { console.error("Stalker EPG error:", e); }
@@ -4601,23 +4665,25 @@ export default function App() {
                   </div>
                 )}
                 {section==="live" ? (
-                  <div className="ch-grid">
-                    {paginatedItems.map((ch,i) => {
-                      const faved = isFav(ch);
-                      const epgNow = getEPGNow(epgData, ch.epgId);
-                      return (
-                        <div key={ch.id||i} className={`ch-card ${playing?.id===ch.id?"playing":""}`}
-                          onClick={() => playItem(ch)}>
-                          {ch.logo
-                            ? <img className="ch-logo" loading="lazy" src={imgSrc(ch.logo)} alt="" onError={e=>e.target.style.display="none"} />
-                            : <div className="ch-logo-ph">📺</div>}
-                          <div className="ch-name">{ch.name}</div>
-                          {ch.num && <div className="ch-num">CH {ch.num}</div>}
-                          {epgNow && <div className="ch-meta">▶ {epgNow.title}</div>}
-                          <FavBtn on={faved} onClick={() => toggleFav(ch)} />
-                        </div>
-                      );
-                    })}
+                  <div className="tv-guide">
+                    {paginatedItems.slice(0, visibleLimit).map((ch,i) => (
+                      <TVGuideRow
+                        key={ch.id||i}
+                        channel={ch}
+                        epgNow={getEPGNow(epgData, ch.epgId)}
+                        onPlay={playItem}
+                        onToggleFav={toggleFav}
+                        isFav={isFav(ch)}
+                        t={t}
+                      />
+                    ))}
+                    {visibleLimit < paginatedItems.length && (
+                      <div style={{display:"flex",justifyContent:"center",padding:"1.5rem 0"}}>
+                        <button className="c-btn" onClick={()=>setVisibleLimit(prev=>prev+20)}>
+                          {t("loadMore")} ({Math.min(visibleLimit, paginatedItems.length)}/{paginatedItems.length})
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="vod-grid">

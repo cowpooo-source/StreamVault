@@ -98,6 +98,7 @@ app.use(cors({
 app.use(helmet({
   contentSecurityPolicy: false, // too restrictive for our inline scripts
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
 // Rate limiting
@@ -1480,6 +1481,7 @@ app.get("/img", async (req, res) => {
     const ct = upstream.headers.get("content-type") || "image/jpeg";
     res.set("Content-Type", ct);
     res.set("Cache-Control", "public, max-age=86400"); // cache 24h
+    res.set("Cross-Origin-Resource-Policy", "cross-origin");
     upstream.body.pipe(res);
   } catch {
     res.status(502).end();

@@ -51,6 +51,7 @@ try { db.exec("ALTER TABLE visitors ADD COLUMN country TEXT DEFAULT 'Unknown'");
 try { db.exec("ALTER TABLE visitors ADD COLUMN device TEXT DEFAULT 'Unknown'"); } catch {}
 try { db.exec("ALTER TABLE portals ADD COLUMN avg_latency INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE portals ADD COLUMN errors INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE watch_log ADD COLUMN last_watched INTEGER"); } catch {}
 db.exec(`CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, guest_id TEXT,
   user_agent TEXT, ip TEXT, created_at INTEGER
