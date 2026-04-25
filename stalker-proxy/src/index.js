@@ -8,6 +8,8 @@ const cache       = require("./cache");
 const auth        = require("./auth");
 const email       = require("./email");
 const { Transform } = require("stream");
+const os          = require("os");
+const { execSync } = require("child_process");
 
 const helmet    = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -138,7 +140,7 @@ app.use((req, res, next) => {
       else if (p === "/proxy") type = "proxy";
       
       cache.trackRequest(type, res.statusCode, duration);
-      cache.trackVisitor(ip);
+      cache.trackVisitor(ip, req.headers["user-agent"]);
       
       const guestId = req.headers["x-guest-id"];
       if (guestId) cache.trackGuest(guestId, ip);
@@ -694,10 +696,13 @@ app.post("/stalker/handshake", async (req, res) => {
   const { portal, mac, serial, deviceId, deviceId2 } = req.body;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
+  const start = Date.now();
   try {
     const session = await getSession(portal, mac, { serial });
+    cache.trackPortalHealth(portal, Date.now() - start, 200);
     res.json({ token: session.token });
   } catch (e) {
+    cache.trackPortalHealth(portal, Date.now() - start, 502);
     console.error("Handshake error:", e.message);
     res.status(502).json({ error: safeError(e) });
   }
@@ -830,7 +835,8 @@ app.get("/stalker/channels", async (req, res) => {
   const { portal, mac, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
-  const ck = cache.cacheKey(portal, mac, "channels");
+  // Use portal-level cache (MAC independent)
+  const ck = `portal-channels:${portal}`;
   if (!refresh) {
     const cached = cache.get(ck);
     if (cached) return res.json(cached);
@@ -857,8 +863,8 @@ app.get("/stalker/channels", async (req, res) => {
       type:  "live",
     }));
 
-    const data = { channels: result, total: result.length };
-    cache.set(ck, data);
+    const data = { channels: result, total: result.length, refreshed_at: Date.now() };
+    cache.set(ck, data, 24 * 60 * 60 * 1000);
     res.json(data);
   } catch (e) {
     console.error("Channels error:", e.message);
@@ -1017,6 +1023,7 @@ app.get("/stalker/play", async (req, res) => {
     if (start) linkParams.start = start;
     if (end) linkParams.end = end;
     const data = await portalFetchRetry(session, linkParams);
+    cache.trackPortalHealth(portal, Date.now() - start, 200);
     const streamUrl = data?.js?.cmd;
     if (!streamUrl) throw new Error("No stream URL returned");
     let cleanUrl = streamUrl.replace(/^ffmpeg\s+/, "").trim();
@@ -1029,6 +1036,10 @@ app.get("/stalker/play", async (req, res) => {
     if (req.query.resolve === "1") {
       return res.json({ url: cleanUrl });
     }
+    // Track what's being watched
+    const watchName = req.query.name || cmd || "Unknown";
+    cache.trackWatch(watchName, content_type === "vod" ? "vod" : content_type === "series" ? "series" : "live");
+
     // Try to pipe the stream (same IP as create_link) with the same Stalker session context
     const fetchHeaders = buildStalkerStreamHeaders(session, req.headers);
     const upstream = await fetch(cleanUrl, { headers: fetchHeaders, redirect: "follow" });
@@ -1307,10 +1318,12 @@ app.get("/stalker/epg", async (req, res) => {
   const { portal, mac, period = 4, refresh, serial, deviceId, deviceId2 } = req.query;
   if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
-  // EPG cached for 4 hours (not 7 days — program data changes frequently)
-  const EPG_TTL = 4 * 60 * 60 * 1000;
-  const ck = cache.cacheKey(portal, mac, "epg");
-  if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
+  // Use portal-level cache (MAC independent)
+  const ck = `portal-epg:${portal}`;
+  if (!refresh) {
+    const cached = cache.get(ck);
+    if (cached) return res.json(cached);
+  }
 
   try {
     const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
@@ -1329,8 +1342,8 @@ app.get("/stalker/epg", async (req, res) => {
       }));
     }
 
-    const result = { programs };
-    cache.set(ck, result, EPG_TTL);
+    const result = { programs, refreshed_at: Date.now() };
+    cache.set(ck, result, 24 * 60 * 60 * 1000); // 24h TTL
     res.json(result);
   } catch (e) {
     console.error("EPG error:", e.message);
@@ -1504,6 +1517,7 @@ app.get("/proxy", async (req, res) => {
     const upstream = await fetch(url, { timeout: 30000, signal: tt.signal, headers: { "User-Agent": "StreamVault/1.0" } });
     const duration = Date.now() - start;
     cache.trackRequest("proxy", upstream.status, duration);
+    cache.trackPortalHealth(url, duration, upstream.status);
 
     const contentType = upstream.headers.get("content-type") || "";
     if (contentType.includes("json")) {
@@ -1540,10 +1554,11 @@ app.get("/stalker", async (req, res) => {
   }
 });
 
+let lastNetStat = { rx: 0, tx: 0, ts: Date.now() };
+
 // Read network bandwidth from /proc/net/dev (Linux only)
 function getNetworkStats() {
   try {
-    const fs = require("fs");
     const data = fs.readFileSync("/proc/net/dev", "utf8");
     const lines = data.split("\n");
     let totalRx = 0, totalTx = 0;
@@ -1557,6 +1572,18 @@ function getNetworkStats() {
       }
     }
     return { rx_bytes: totalRx, tx_bytes: totalTx, rx_gb: Math.round(totalRx / 1073741824 * 100) / 100, tx_gb: Math.round(totalTx / 1073741824 * 100) / 100 };
+  } catch { return null; }
+}
+
+function getDiskUsage() {
+  try {
+    // df -k / outputs KB. Column 2: Total, 3: Used, 4: Available
+    const out = execSync("df -k /").toString().split("\n")[1].trim().split(/\s+/);
+    return {
+      total_gb: Math.round(parseInt(out[1]) / 1024 / 1024),
+      used_gb: Math.round(parseInt(out[2]) / 1024 / 1024),
+      percent: parseInt(out[4].replace("%", ""))
+    };
   } catch { return null; }
 }
 
@@ -1582,6 +1609,7 @@ app.get("/api/analytics", (req, res) => {
   const stats = cache.getStats();
   const mem = process.memoryUsage();
   const net = getNetworkStats();
+  const now = Date.now();
 
   // Calculate today's bandwidth
   const today = new Date().toISOString().slice(0, 10);
@@ -1595,9 +1623,52 @@ app.get("/api/analytics", (req, res) => {
     todayBw.total_gb = Math.round((todayBw.rx_gb + todayBw.tx_gb) * 100) / 100;
   }
 
+  // Real-time network speed (Mbps)
+  let networkSpeed = { rx_mbps: 0, tx_mbps: 0 };
+  if (net && lastNetStat) {
+    const dt = (now - lastNetStat.ts) / 1000; // seconds
+    if (dt > 0) {
+      const rxDiff = net.rx_bytes - lastNetStat.rx;
+      const txDiff = net.tx_bytes - lastNetStat.tx;
+      // bytes -> bits / 1,000,000
+      networkSpeed.rx_mbps = Math.round((rxDiff * 8 / 1000000 / dt) * 10) / 10;
+      networkSpeed.tx_mbps = Math.round((txDiff * 8 / 1000000 / dt) * 10) / 10;
+    }
+  }
+  lastNetStat = { rx: net?.rx_bytes || 0, tx: net?.tx_bytes || 0, ts: now };
+
+  // Calculate monthly bandwidth
+  let monthlyBw = { rx_gb: 0, tx_gb: 0, total_gb: 0 };
+  const allBwKeys = cache.db.prepare("SELECT key, value FROM cache WHERE key LIKE 'bw:%:start'").all();
+  allBwKeys.forEach(k => {
+    const dayStart = JSON.parse(k.value);
+    const dateStr = k.key.split(":")[1];
+    const dayCurrent = cache.get(`bw:${dateStr}:current`) || dayStart;
+    monthlyBw.rx_gb += (dayCurrent.rx - dayStart.rx) / 1073741824;
+    monthlyBw.tx_gb += (dayCurrent.tx - dayStart.tx) / 1073741824;
+  });
+  monthlyBw.rx_gb = Math.round(monthlyBw.rx_gb * 100) / 100;
+  monthlyBw.tx_gb = Math.round(monthlyBw.tx_gb * 100) / 100;
+  monthlyBw.total_gb = Math.round((monthlyBw.rx_gb + monthlyBw.tx_gb) * 100) / 100;
+
   trackDailyBandwidth(); // ensure current snapshot
 
   res.json({
+    activeNow: stats.activeNow,
+    health: stats.health,
+    security: auth.getAuthStats(),
+    hardware: {
+      cpu_load: os.loadavg(),
+      cpu_cores: os.cpus().length,
+      ram: {
+        total_gb: Math.round(os.totalmem() / 1073741824 * 10) / 10,
+        free_gb: Math.round(os.freemem() / 1073741824 * 10) / 10,
+        used_gb: Math.round((os.totalmem() - os.freemem()) / 1073741824 * 10) / 10,
+        percent: Math.round((os.totalmem() - os.freemem()) / os.totalmem() * 100),
+      },
+      disk: getDiskUsage(),
+      network_speed: networkSpeed,
+    },
     server: {
       uptime_hours: Math.round(process.uptime() / 3600 * 10) / 10,
       memory_mb: Math.round(mem.rss / 1024 / 1024),
@@ -1613,9 +1684,11 @@ app.get("/api/analytics", (req, res) => {
     recent_visitors: stats.recentVisitors,
     guests: stats.guests,
     recent_guests: stats.recentGuests,
-    most_watched: stats.mostWatched,
+    most_watched: stats.most_watched,
     portals: { connections: stats.portals, by_type: stats.portalsByType },
+    engagement: stats.engagement,
     cache: {
+
       total_entries: stats.cacheTotal,
       valid_entries: stats.cacheValid,
       size_mb: stats.cacheSizeMB,

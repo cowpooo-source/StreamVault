@@ -8,51 +8,19 @@ const TOKEN_EXPIRY = "7d";
 
 // Role limits
 const ROLE_LIMITS = {
-  admin:   { maxConnections: 999, maxVod: Infinity, epg: true, sync: true },
-  regular: { maxConnections: 5,   maxVod: Infinity, epg: true, sync: true },
-  free:    { maxConnections: 2,   maxVod: 500,      epg: true, sync: true },
-  guest:   { maxConnections: 2,   maxVod: 500,      epg: true, sync: false },
+  admin:   { maxConnections: 999, maxVod: Infinity, epg: true, sync: true, maxLogins: 999 },
+  pro:     { maxConnections: 10,  maxVod: Infinity, epg: true, sync: true, maxLogins: 5 },
+  regular: { maxConnections: 5,   maxVod: Infinity, epg: true, sync: true, maxLogins: 3 },
+  free:    { maxConnections: 2,   maxVod: 500,      epg: true, sync: true, maxLogins: 1 },
+  guest:   { maxConnections: 2,   maxVod: 500,      epg: true, sync: false, maxLogins: 1 },
 };
 
 // Promo: new registrations get this role (validated against allowed set)
-const ALLOWED_DEFAULT_ROLES = new Set(["regular", "free"]);
+const ALLOWED_DEFAULT_ROLES = new Set(["pro", "regular", "free"]);
 const DEFAULT_ROLE = ALLOWED_DEFAULT_ROLES.has(process.env.DEFAULT_ROLE) ? process.env.DEFAULT_ROLE : "regular";
 
 let db;
 let jwtSecret;
-
-// Login attempt tracking (in-memory, resets on restart)
-const loginAttempts = new Map(); // username -> { count, lockedUntil }
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_MINUTES = 15;
-
-function checkLockout(username) {
-  const entry = loginAttempts.get(username.toLowerCase());
-  if (!entry) return null;
-  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
-    const mins = Math.ceil((entry.lockedUntil - Date.now()) / 60000);
-    return `Account locked. Try again in ${mins} minute${mins > 1 ? "s" : ""}.`;
-  }
-  if (entry.lockedUntil && Date.now() >= entry.lockedUntil) {
-    loginAttempts.delete(username.toLowerCase());
-  }
-  return null;
-}
-
-function recordFailedLogin(username) {
-  const key = username.toLowerCase();
-  const entry = loginAttempts.get(key) || { count: 0, lockedUntil: null };
-  entry.count++;
-  if (entry.count >= MAX_ATTEMPTS) {
-    entry.lockedUntil = Date.now() + LOCKOUT_MINUTES * 60000;
-    entry.count = 0;
-  }
-  loginAttempts.set(key, entry);
-}
-
-function clearFailedLogins(username) {
-  loginAttempts.delete(username.toLowerCase());
-}
 
 // Prepared statements
 let stmts = {};
@@ -66,7 +34,9 @@ function init(database) {
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     email TEXT UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'free' CHECK(role IN ('admin','regular','free')),
+    role TEXT NOT NULL DEFAULT 'free' CHECK(role IN ('admin','pro','regular','free')),
+    subscription_cycle TEXT CHECK(subscription_cycle IN ('monthly', 'yearly')),
+    subscription_expires_at INTEGER,
     max_connections INTEGER NOT NULL DEFAULT 2,
     created_at INTEGER NOT NULL,
     last_login INTEGER,
@@ -77,6 +47,8 @@ function init(database) {
   // Add columns if upgrading from older schema
   try { db.exec("ALTER TABLE users ADD COLUMN email TEXT"); } catch {}
   try { db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN subscription_cycle TEXT"); } catch {}
+  try { db.exec("ALTER TABLE users ADD COLUMN subscription_expires_at INTEGER"); } catch {}
   try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL"); } catch {}
 
   db.exec(`CREATE TABLE IF NOT EXISTS email_tokens (
@@ -96,14 +68,20 @@ function init(database) {
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)");
 
+  db.exec(`CREATE TABLE IF NOT EXISTS failed_logins (
+    ip TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt INTEGER NOT NULL
+  )`);
+
   // Prepare statements
   stmts.getUserByUsername = db.prepare("SELECT * FROM users WHERE username = ?");
   stmts.getUserByEmail = db.prepare("SELECT * FROM users WHERE email = ?");
-  stmts.getUserById = db.prepare("SELECT id, username, email, role, max_connections, created_at, last_login, disabled, email_verified FROM users WHERE id = ?");
+  stmts.getUserById = db.prepare("SELECT id, username, email, role, subscription_cycle, subscription_expires_at, max_connections, created_at, last_login, disabled, email_verified FROM users WHERE id = ?");
   stmts.createUser = db.prepare("INSERT INTO users (username, email, password_hash, role, max_connections, created_at) VALUES (?, ?, ?, ?, ?, ?)");
   stmts.updateLastLogin = db.prepare("UPDATE users SET last_login = ? WHERE id = ?");
-  stmts.listUsers = db.prepare("SELECT id, username, email, role, max_connections, created_at, last_login, disabled, email_verified FROM users ORDER BY created_at DESC");
-  stmts.updateUser = db.prepare("UPDATE users SET role = ?, max_connections = ?, disabled = ? WHERE id = ?");
+  stmts.listUsers = db.prepare("SELECT id, username, email, role, subscription_cycle, subscription_expires_at, max_connections, created_at, last_login, disabled, email_verified FROM users ORDER BY created_at DESC");
+  stmts.updateUser = db.prepare("UPDATE users SET role = ?, max_connections = ?, disabled = ?, subscription_cycle = ?, subscription_expires_at = ? WHERE id = ?");
   stmts.deleteUser = db.prepare("DELETE FROM users WHERE id = ?");
   stmts.countUsers = db.prepare("SELECT COUNT(*) as cnt FROM users");
   stmts.changePassword = db.prepare("UPDATE users SET password_hash = ? WHERE id = ?");
@@ -121,6 +99,12 @@ function init(database) {
   stmts.deleteSession = db.prepare("DELETE FROM sessions WHERE token = ?");
   stmts.deleteUserSessions = db.prepare("DELETE FROM sessions WHERE user_id = ?");
   stmts.cleanupSessions = db.prepare("DELETE FROM sessions WHERE expires_at <= ?");
+  stmts.countActiveUserSessions = db.prepare("SELECT COUNT(*) as cnt FROM sessions WHERE user_id = ? AND expires_at > ?");
+
+  stmts.trackFailedLogin = db.prepare("INSERT INTO failed_logins (ip, attempts, last_attempt) VALUES (?, 1, ?) ON CONFLICT(ip) DO UPDATE SET attempts = attempts + 1, last_attempt = ?");
+  stmts.getFailedLogins = db.prepare("SELECT * FROM failed_logins WHERE ip = ?");
+  stmts.clearFailedLogins = db.prepare("DELETE FROM failed_logins WHERE ip = ?");
+  stmts.cleanupFailedLogins = db.prepare("DELETE FROM failed_logins WHERE last_attempt < ?");
 
   // JWT secret: from env, or generate and store in DB
   jwtSecret = process.env.JWT_SECRET;
@@ -217,21 +201,30 @@ async function resetPassword(token, newPassword) {
   return stmts.getUserById.get(row.user_id);
 }
 
-async function authenticate(username, password) {
-  // Check lockout before anything else
-  const lockMsg = checkLockout(username);
-  if (lockMsg) throw new Error(lockMsg);
-
+async function authenticate(username, password, ip = "unknown") {
   const user = stmts.getUserByUsername.get(username);
-  if (!user) { recordFailedLogin(username); throw new Error("Invalid username or password"); }
+  if (!user) {
+    stmts.trackFailedLogin.run(ip, Date.now(), Date.now());
+    throw new Error("Invalid username or password");
+  }
+  
   if (user.disabled) throw new Error("Account is disabled");
+
   if (!(await bcrypt.compare(password, user.password_hash))) {
-    recordFailedLogin(username);
+    stmts.trackFailedLogin.run(ip, Date.now(), Date.now());
     throw new Error("Invalid username or password");
   }
 
-  // Success — clear failed attempts
-  clearFailedLogins(username);
+  // Check concurrent login limits
+  const limits = ROLE_LIMITS[user.role] || ROLE_LIMITS.free;
+  const activeSessions = stmts.countActiveUserSessions.get(user.id, Date.now()).cnt;
+  
+  if (activeSessions >= (limits.maxLogins || 1)) {
+    throw new Error(`Maximum concurrent logins reached (${limits.maxLogins}). Please log out from another device.`);
+  }
+
+  // Success — clear failed attempts for this IP
+  stmts.clearFailedLogins.run(ip);
 
   stmts.updateLastLogin.run(Date.now(), user.id);
 
@@ -246,12 +239,37 @@ async function authenticate(username, password) {
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   stmts.createSession.run(tokenHash, user.id, Date.now(), decoded.exp * 1000);
 
-  const limits = ROLE_LIMITS[user.role] || ROLE_LIMITS.free;
   return {
     token,
     user: {
       id: user.id, username: user.username, email: user.email, role: user.role,
-      maxConnections: user.max_connections, emailVerified: !!user.email_verified, limits,
+      maxConnections: user.max_connections, emailVerified: !!user.email_verified,
+      subscription_cycle: user.subscription_cycle, subscription_expires_at: user.subscription_expires_at,
+      limits,
+    }
+  };
+}
+
+function getAuthStats() {
+  const now = Date.now();
+  const oneHourAgo = now - 3600000;
+
+  const activeSessions = stmts.countActiveUserSessions.all ? 0 : db.prepare("SELECT COUNT(*) as cnt FROM sessions WHERE expires_at > ?").get(now).cnt;
+  const roles = db.prepare("SELECT role, COUNT(*) as cnt FROM users GROUP BY role").all();
+  const unactivated = db.prepare("SELECT COUNT(*) as cnt FROM users WHERE email_verified = 0 AND role != 'admin'").get().cnt;
+  const totalGuests = db.prepare("SELECT COUNT(*) as cnt FROM guests").get().cnt;
+  const failed = db.prepare("SELECT SUM(attempts) as total, COUNT(ip) as ips FROM failed_logins WHERE last_attempt > ?").get(oneHourAgo);
+
+  const roleDist = Object.fromEntries(roles.map(r => [r.role, r.cnt]));
+  roleDist.guest = totalGuests;
+  roleDist.unactivated = unactivated;
+
+  return {
+    active_sessions: activeSessions,
+    role_distribution: roleDist,
+    failed_logins_1h: {
+      total_attempts: failed.total || 0,
+      unique_ips: failed.ips || 0
     }
   };
 }
@@ -373,6 +391,7 @@ module.exports = {
   SALT_ROUNDS, ROLE_LIMITS, DEFAULT_ROLE,
   createUser, authenticate, verifyToken, revokeToken, revokeAllUserTokens,
   listUsers, getUser, updateUser, deleteUser, changePassword, cleanupSessions,
+  getAuthStats,
   requireAuth, optionalAuth, requireRole,
   createEmailToken, verifyEmailToken, consumeEmailToken, activateEmail,
   requestPasswordReset, resetPassword,

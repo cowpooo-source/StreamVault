@@ -3,6 +3,8 @@
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
+const fetch = require("node-fetch");
+const os = require("os");
 
 const DB_PATH = process.env.CACHE_DB || path.join(__dirname, "../data/cache.db");
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -24,7 +26,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS requests (
   PRIMARY KEY (date, type)
 )`);
 db.exec(`CREATE TABLE IF NOT EXISTS visitors (
-  ip TEXT PRIMARY KEY, first_seen INTEGER, last_seen INTEGER, hits INTEGER DEFAULT 0
+  ip TEXT PRIMARY KEY, country TEXT DEFAULT 'Unknown', device TEXT DEFAULT 'Unknown',
+  first_seen INTEGER, last_seen INTEGER, hits INTEGER DEFAULT 0
 )`);
 db.exec(`CREATE TABLE IF NOT EXISTS guests (
   guest_id TEXT PRIMARY KEY, ip TEXT, created_at INTEGER, last_seen INTEGER,
@@ -36,8 +39,18 @@ db.exec(`CREATE TABLE IF NOT EXISTS watch_log (
 )`);
 db.exec(`CREATE TABLE IF NOT EXISTS portals (
   key TEXT PRIMARY KEY, portal TEXT, mac TEXT, type TEXT,
-  first_seen INTEGER, last_seen INTEGER, hits INTEGER DEFAULT 0
+  first_seen INTEGER, last_seen INTEGER, hits INTEGER DEFAULT 0,
+  avg_latency INTEGER DEFAULT 0, errors INTEGER DEFAULT 0
 )`);
+db.exec(`CREATE TABLE IF NOT EXISTS ip_cache (
+  ip TEXT PRIMARY KEY, country TEXT, expires INTEGER
+)`);
+
+// Add columns if upgrading
+try { db.exec("ALTER TABLE visitors ADD COLUMN country TEXT DEFAULT 'Unknown'"); } catch {}
+try { db.exec("ALTER TABLE visitors ADD COLUMN device TEXT DEFAULT 'Unknown'"); } catch {}
+try { db.exec("ALTER TABLE portals ADD COLUMN avg_latency INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE portals ADD COLUMN errors INTEGER DEFAULT 0"); } catch {}
 db.exec(`CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, guest_id TEXT,
   user_agent TEXT, ip TEXT, created_at INTEGER
@@ -47,6 +60,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS guest_data (
   data TEXT NOT NULL, updated_at INTEGER NOT NULL,
   PRIMARY KEY (guest_id, conn_id, type)
 )`);
+db.exec("CREATE TABLE IF NOT EXISTS health_logs (ts INTEGER, type TEXT, status INTEGER, duration INTEGER)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_health_ts ON health_logs(ts)");
 
 // ── Prepared statements (reusable, much faster than parsing each time) ──
 const stmtGet = db.prepare("SELECT value FROM cache WHERE key = ? AND expires > ?");
@@ -55,14 +70,21 @@ const stmtDel = db.prepare("DELETE FROM cache WHERE key = ?");
 const stmtCleanup = db.prepare("DELETE FROM cache WHERE expires <= ?");
 const stmtTrackRequest = db.prepare(`INSERT INTO requests (date, type, count) VALUES (?, ?, 1)
   ON CONFLICT(date, type) DO UPDATE SET count = count + 1`);
-const stmtTrackVisitor = db.prepare(`INSERT INTO visitors (ip, first_seen, last_seen, hits) VALUES (?, ?, ?, 1)
-  ON CONFLICT(ip) DO UPDATE SET last_seen = ?, hits = hits + 1`);
-const stmtTrackPortal = db.prepare(`INSERT INTO portals (key, portal, mac, type, first_seen, last_seen, hits) VALUES (?, ?, ?, ?, ?, ?, 1)
-  ON CONFLICT(key) DO UPDATE SET last_seen = ?, hits = hits + 1, type = ?`);
+const stmtTrackVisitor = db.prepare(`INSERT INTO visitors (ip, country, device, first_seen, last_seen, hits) VALUES (?, ?, ?, ?, ?, 1)
+  ON CONFLICT(ip) DO UPDATE SET last_seen = ?, hits = hits + 1,
+    country = CASE WHEN excluded.country != 'Unknown' THEN excluded.country ELSE country END,
+    device = CASE WHEN excluded.device != 'Unknown' THEN excluded.device ELSE device END`);
+const stmtTrackPortal = db.prepare(`INSERT INTO portals (key, portal, mac, type, first_seen, last_seen, hits, avg_latency, errors) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+  ON CONFLICT(key) DO UPDATE SET last_seen = ?, hits = hits + 1, type = excluded.type,
+    avg_latency = (avg_latency * hits + excluded.avg_latency) / (hits + 1),
+    errors = errors + excluded.errors`);
 const stmtTrackGuest = db.prepare(`INSERT INTO guests (guest_id, ip, created_at, last_seen) VALUES (?, ?, ?, ?)
   ON CONFLICT(guest_id) DO UPDATE SET last_seen = ?, ip = ?`);
 const stmtTrackWatch = db.prepare(`INSERT INTO watch_log (name, type, plays) VALUES (?, ?, 1)
   ON CONFLICT(name, type) DO UPDATE SET plays = plays + 1`);
+
+const stmtGetIpCache = db.prepare("SELECT country FROM ip_cache WHERE ip = ? AND expires > ?");
+const stmtSetIpCache = db.prepare("INSERT OR REPLACE INTO ip_cache (ip, country, expires) VALUES (?, ?, ?)");
 const stmtSaveFeedback = db.prepare("INSERT INTO feedback (message, guest_id, user_agent, ip, created_at) VALUES (?, ?, ?, ?, ?)");
 const stmtGetFeedback = db.prepare("SELECT id, message, guest_id, user_agent, ip, created_at FROM feedback ORDER BY created_at DESC LIMIT 100");
 const stmtSaveGuestData = db.prepare("INSERT OR REPLACE INTO guest_data (guest_id, conn_id, type, data, updated_at) VALUES (?, ?, ?, ?, ?)");
@@ -118,7 +140,6 @@ function trackRequest(type, status = 200, duration = 0) {
     ON CONFLICT(date, type) DO UPDATE SET count = count + 1`).run(today, type);
   
   // Track errors and latency in a separate small table for health monitoring
-  db.exec("CREATE TABLE IF NOT EXISTS health_logs (ts INTEGER, type TEXT, status INTEGER, duration INTEGER)");
   db.prepare("INSERT INTO health_logs (ts, type, status, duration) VALUES (?, ?, ?, ?)").run(Math.floor(Date.now()/1000), type, status, duration);
 }
 
@@ -130,15 +151,56 @@ function maskIp(ip) {
   return "unknown";
 }
 
-function trackVisitor(ip) {
-  const now = Math.floor(Date.now() / 1000);
-  stmtTrackVisitor.run(maskIp(ip), now, now, now);
+function parseDevice(ua) {
+  if (!ua) return "Unknown";
+  const lowUA = ua.toLowerCase();
+  if (lowUA.includes("smarttv") || lowUA.includes("smart-tv") || lowUA.includes("hbbtv") || lowUA.includes("appletv") || lowUA.includes("aftt") || lowUA.includes("aftb") || lowUA.includes("googletv")) return "Smart TV";
+  if (lowUA.includes("mag250") || lowUA.includes("mag254") || lowUA.includes("stbapp")) return "STB";
+  if (lowUA.includes("android") && !lowUA.includes("mobile")) return "Smart TV/Box";
+  if (lowUA.includes("iphone") || lowUA.includes("android") || lowUA.includes("mobile")) return "Mobile";
+  if (lowUA.includes("ipad") || lowUA.includes("tablet")) return "Tablet";
+  if (lowUA.includes("windows") || lowUA.includes("macintosh") || lowUA.includes("linux")) return "Desktop";
+  return "Other";
 }
 
-function trackPortal(portal, mac, type) {
+async function resolveCountry(ip) {
+  if (!ip || ip === "127.0.0.1" || ip === "::1" || ip.startsWith("10.") || ip.startsWith("192.168.")) return "Internal";
+  
+  const now = Math.floor(Date.now() / 1000);
+  const cached = stmtGetIpCache.get(ip, now);
+  if (cached) return cached.country;
+
+  try {
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=countryCode`, { timeout: 3000 });
+    const data = await res.json();
+    const country = data.countryCode || "Unknown";
+    stmtSetIpCache.run(ip, country, now + 7 * 86400); // cache 7 days
+    return country;
+  } catch {
+    return "Unknown";
+  }
+}
+
+async function trackVisitor(ip, ua) {
+  const now = Math.floor(Date.now() / 1000);
+  const country = await resolveCountry(ip);
+  const device = parseDevice(ua);
+  stmtTrackVisitor.run(maskIp(ip), country, device, now, now, now);
+}
+
+function trackPortal(portal, mac, type, latency = 0, status = 200) {
   const now = Math.floor(Date.now() / 1000);
   const key = `${portal}|${mac}`;
-  stmtTrackPortal.run(key, portal, mac, type, now, now, now, type);
+  const errors = status >= 400 ? 1 : 0;
+  stmtTrackPortal.run(key, portal, mac, type, now, now, latency, errors, now);
+}
+
+function trackPortalHealth(portal, latency = 0, status = 200) {
+  const now = Math.floor(Date.now() / 1000);
+  const errors = status >= 400 ? 1 : 0;
+  // We use a dummy mac to update global portal stats if mac is unknown
+  const key = `${portal}|global`;
+  stmtTrackPortal.run(key, portal, "global", "api", now, now, latency, errors, now);
 }
 
 function getStats() {
@@ -154,7 +216,7 @@ function getStats() {
   }
 
   // Health stats (last 24h)
-  const health = db.prepare("SELECT AVG(duration) as avg_lat, COUNT(*) filter (where status >= 400) as errs, COUNT(*) as total FROM health_logs WHERE ts > ?").get(nowSec - 86400);
+  const health = db.prepare("SELECT COALESCE(AVG(duration), 0) as avg_lat, COUNT(*) filter (where status >= 400) as errs, COUNT(*) as total FROM health_logs WHERE ts > ?").get(nowSec - 86400);
 
   // Cache stats
   const cacheTotal = db.prepare("SELECT COUNT(*) AS cnt FROM cache").get().cnt;
@@ -193,19 +255,26 @@ function getStats() {
   const totalVisitors = db.prepare("SELECT COUNT(*) AS cnt FROM visitors").get().cnt;
   const active1h = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ?").get(nowSec - 3600).cnt;
   const active24h = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ?").get(nowSec - 86400).cnt;
+  const active24h_ago = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ? AND last_seen < ?").get(nowSec - 172800, nowSec - 86400).cnt;
   const active7d = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ?").get(nowSec - 7 * 86400).cnt;
 
   // Recent visitors
-  const recentRows = db.prepare("SELECT ip, first_seen, last_seen, hits FROM visitors ORDER BY last_seen DESC LIMIT 15").all();
-  const recentVisitors = recentRows.map(({ ip, first_seen, last_seen, hits }) => ({
+  const recentRows = db.prepare("SELECT ip, country, device, first_seen, last_seen, hits FROM visitors ORDER BY last_seen DESC LIMIT 15").all();
+  const recentVisitors = recentRows.map(({ ip, country, device, first_seen, last_seen, hits }) => ({
     ip: ip.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '$1.$2.***.$4'),
-    first_seen, last_seen, hits,
+    country, device, first_seen, last_seen, hits,
   }));
 
-  // Portal stats
-  const portalRows = db.prepare("SELECT portal, mac, type, first_seen, last_seen, hits FROM portals ORDER BY last_seen DESC LIMIT 20").all();
-  const portals = portalRows.map(({ portal, mac, type, first_seen, last_seen, hits }) => ({
+  // Engagement stats
+  const geoDist = db.prepare("SELECT country, COUNT(*) as cnt FROM visitors GROUP BY country ORDER BY cnt DESC LIMIT 10").all();
+  const deviceDist = db.prepare("SELECT device, COUNT(*) as cnt FROM visitors GROUP BY device ORDER BY cnt DESC").all();
+
+  // Portal health leaderboard
+  const portalRows = db.prepare("SELECT portal, mac, type, first_seen, last_seen, hits, avg_latency, errors FROM portals ORDER BY avg_latency ASC LIMIT 50").all();
+  const portals = portalRows.map(({ portal, mac, type, first_seen, last_seen, hits, avg_latency, errors }) => ({
     portal, mac: mac.substring(0, 8) + ":**:**:**", type, first_seen, last_seen, hits,
+    avg_latency: Math.round(avg_latency),
+    error_rate: hits > 0 ? Math.round((errors / hits) * 100) : 0,
   }));
   const portalsByType = {};
   const ptRows = db.prepare("SELECT type, COUNT(*) AS cnt FROM portals GROUP BY type").all();
@@ -228,9 +297,13 @@ function getStats() {
     cacheHits, cacheMisses, cacheHitRate: cacheHits + cacheMisses > 0 ? Math.round(cacheHits / (cacheHits + cacheMisses) * 100) : 0,
     todayReqs, daily, cacheBreakdown, activeNow: activeCount,
     health: { avg_latency: Math.round(health.avg_lat || 0), error_rate: health.total ? Math.round(health.errs / health.total * 100) : 0 },
-    visitors: { total: totalVisitors, active_1h: active1h, active_24h: active24h, active_7d: active7d },
+    visitors: { total: totalVisitors, active_1h: active1h, active_24h: active24h, active_24h_ago: active24h_ago, active_7d: active7d },
     recentVisitors, portals, portalsByType,
     guests: { total: totalGuests }, recentGuests, mostWatched,
+    engagement: {
+      geo: Object.fromEntries(geoDist.map(r => [r.country, r.cnt])),
+      devices: Object.fromEntries(deviceDist.map(r => [r.device, r.cnt])),
+    }
   };
 }
 
@@ -253,7 +326,9 @@ function trackGuestActivity(guestId, field) {
 
 function trackWatch(name, type) {
   if (!name) return;
-  stmtTrackWatch.run(name, type || "live");
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(`INSERT INTO watch_log (name, type, plays, last_watched) VALUES (?, ?, 1, ?)
+    ON CONFLICT(name, type) DO UPDATE SET plays = plays + 1, last_watched = ?`).run(name, type || "live", now, now);
 }
 
 function saveFeedback(message, guestId, userAgent, ip) {
@@ -303,4 +378,4 @@ cleanup();
 // Backward-compatible ready export (sync init, but consumers may still .then() on it)
 const ready = Promise.resolve();
 
-module.exports = { db, get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };
+module.exports = { db, get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackPortalHealth, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };

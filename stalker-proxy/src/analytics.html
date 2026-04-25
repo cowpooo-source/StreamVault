@@ -52,6 +52,10 @@
   .tag-stream{background:rgba(0,212,255,0.15);color:var(--accent)}
   .tag-proxy{background:rgba(0,232,150,0.15);color:var(--green)}
   
+  /* Progress Bars */
+  .progress-bg{width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:10px;margin-top:.8rem;overflow:hidden}
+  .progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .5s ease-in-out}
+
   /* Buttons */
   .refresh{background:var(--card);border:1px solid var(--border);color:var(--accent);padding:.5rem 1rem;border-radius:8px;cursor:pointer;font-size:.75rem;font-weight:600;transition:all .2s}
   .refresh:hover{background:var(--border);transform:translateY(-1px)}
@@ -117,6 +121,98 @@
       <div class="card-label">Today's Traffic</div>
       <div class="card-value"><span id="v-bw-today">0</span><span class="card-unit">GB</span></div>
       <div class="sub">Total throughput</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Monthly Traffic</div>
+      <div class="card-value"><span id="v-bw-month">0</span><span class="card-unit">GB</span></div>
+      <div class="sub">Last 30 days</div>
+    </div>
+  </div>
+
+  <!-- Hardware Performance -->
+  <div class="section">
+    <div class="section-title">Hardware Performance</div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">CPU Load (1m)</div>
+        <div class="card-value"><span id="v-cpu-load">0.00</span></div>
+        <div id="v-cpu-cores" class="sub">0 cores detected</div>
+      </div>
+      <div class="card">
+        <div class="card-label">RAM Usage</div>
+        <div class="card-value"><span id="v-ram-percent">0</span><span class="card-unit">%</span></div>
+        <div id="v-ram-sub" class="sub">0 GB / 0 GB</div>
+        <div class="progress-bg"><div id="v-ram-bar" class="progress-fill" style="width:0%"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Network Speed</div>
+        <div class="card-value" style="font-size:1.4rem;flex-direction:column;align-items:flex-start;gap:0">
+          <div style="display:flex;align-items:baseline;gap:.5rem">
+            <span style="color:var(--green);font-size:1.1rem">↓</span>
+            <span id="v-net-rx">0.0</span> <span class="card-unit">Mbps</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:.5rem">
+            <span style="color:var(--orange);font-size:1.1rem">↑</span>
+            <span id="v-net-tx">0.0</span> <span class="card-unit">Mbps</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Disk Usage</div>
+        <div class="card-value"><span id="v-disk-percent">0</span><span class="card-unit">%</span></div>
+        <div id="v-disk-sub" class="sub">0 GB / 0 GB</div>
+        <div class="progress-bg"><div id="v-disk-bar" class="progress-fill" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Security & Authentication -->
+  <div class="section">
+    <div class="section-title">Security & Authentication</div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">Active Sessions</div>
+        <div class="card-value"><span id="v-active-sessions">0</span></div>
+        <div class="sub">Valid JWT tokens issued</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Failed Logins (1h)</div>
+        <div id="v-failed-total" class="card-value text-green">0</div>
+        <div id="v-failed-ips" class="sub">0 unique IPs involved</div>
+      </div>
+      <div class="card" style="grid-column: span 2">
+        <div class="card-label">User Role Distribution</div>
+        <div id="v-role-dist" style="display:flex;gap:1.5rem;margin-top:.5rem">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- User Engagement & Portal Health -->
+  <div class="grid" style="grid-template-columns: 1fr 2fr; gap: 1rem">
+    <div class="section" style="margin-bottom:0">
+      <div class="section-title">User Engagement</div>
+      <div class="card" style="height: 180px; margin-bottom: 1rem">
+        <div class="card-label">Device Distribution</div>
+        <canvas id="deviceChart"></canvas>
+      </div>
+      <div class="table-wrapper">
+        <table id="v-country-table">
+          <thead><tr><th>Country</th><th>Users</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section" style="margin-bottom:0">
+      <div class="section-title">Portal Health Leaderboard</div>
+      <div class="table-wrapper" style="height: 380px; overflow-y: auto">
+        <table id="v-portal-health-table">
+          <thead><tr><th>Portal</th><th>Type</th><th>Latency</th><th>Reliability</th><th>Hits</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -250,16 +346,66 @@ function updateSummary(d) {
   document.getElementById('v-active-now').textContent = d.activeNow || 0;
   document.getElementById('v-latency').textContent = d.health.avg_latency || 0;
   document.getElementById('v-bw-today').textContent = d.bandwidth?.today?.total_gb || 0;
+  document.getElementById('v-bw-month').textContent = d.bandwidth?.monthly?.total_gb || 0;
   
   const errRate = d.health.error_rate || 0;
   const hStatus = document.getElementById('v-health-status');
   hStatus.textContent = errRate > 15 ? 'Critical' : errRate > 5 ? 'Warning' : 'Optimal';
   hStatus.className = 'card-value ' + (errRate > 15 ? 'text-red' : errRate > 5 ? 'text-orange' : 'text-green');
-  document.getElementById('v-error-rate').textContent = errRate + '% error rate (24h)';
+  
+  const v24h = d.visitors.active_24h || 0;
+  const v24h_ago = d.visitors.active_24h_ago || 0;
+  const diff = v24h - v24h_ago;
+  const diffStr = diff >= 0 ? `+${diff}` : `${diff}`;
+  document.getElementById('v-error-rate').innerHTML = `${errRate}% errors | 24h: <b>${v24h}</b> (<span class="${diff >= 0 ? 'text-green' : 'text-red'}">${diffStr}</span> vs yesterday)`;
   
   document.getElementById('v-cache-hit').textContent = d.cache.hit_rate + '%';
   document.getElementById('v-cache-valid').textContent = d.cache.valid_entries;
   
+  // Hardware Metrics
+  const hw = d.hardware;
+  if (hw) {
+    document.getElementById('v-cpu-load').textContent = hw.cpu_load[0].toFixed(2);
+    document.getElementById('v-cpu-cores').textContent = `${hw.cpu_cores} cores detected`;
+    
+    if (hw.ram) {
+      document.getElementById('v-ram-percent').textContent = hw.ram.percent;
+      document.getElementById('v-ram-sub').textContent = `${hw.ram.used_gb} GB / ${hw.ram.total_gb} GB`;
+      document.getElementById('v-ram-bar').style.width = hw.ram.percent + '%';
+    }
+
+    document.getElementById('v-net-rx').textContent = hw.network_speed.rx_mbps.toFixed(1);
+    document.getElementById('v-net-tx').textContent = hw.network_speed.tx_mbps.toFixed(1);
+    
+    if (hw.disk) {
+      document.getElementById('v-disk-percent').textContent = hw.disk.percent;
+      document.getElementById('v-disk-sub').textContent = `${hw.disk.used_gb} GB / ${hw.disk.total_gb} GB`;
+      document.getElementById('v-disk-bar').style.width = hw.disk.percent + '%';
+    }
+  }
+
+  // Security Metrics
+  const sec = d.security;
+  if (sec) {
+    document.getElementById('v-active-sessions').textContent = sec.active_sessions || 0;
+    
+    const failed = sec.failed_logins_1h;
+    const fStatus = document.getElementById('v-failed-total');
+    fStatus.textContent = failed.total_attempts || 0;
+    fStatus.className = 'card-value ' + (failed.total_attempts > 20 ? 'text-red' : failed.total_attempts > 0 ? 'text-orange' : 'text-green');
+    document.getElementById('v-failed-ips').textContent = `${failed.unique_ips || 0} unique IPs involved`;
+
+    const rDist = document.getElementById('v-role-dist');
+    const roles = ['admin', 'pro', 'regular', 'free', 'guest', 'unactivated'];
+    const rColors = { admin: 'var(--red)', pro: 'var(--purple)', regular: 'var(--accent)', free: 'var(--t2)', guest: 'var(--green)', unactivated: 'var(--orange)' };
+    rDist.innerHTML = roles.map(r => `
+      <div style="display:flex;flex-direction:column;align-items:center">
+        <div style="font-size:1.2rem;font-weight:700;color:${rColors[r]}">${sec.role_distribution[r] || 0}</div>
+        <div class="tag" style="background:rgba(255,255,255,0.05);color:var(--t2);font-size:.6rem">${r.toUpperCase()}</div>
+      </div>
+    `).join('');
+  }
+
   const sTable = document.getElementById('v-server-table');
   sTable.innerHTML = `
     <tr><td>Uptime</td><td><code>${d.server.uptime_hours}h</code></td></tr>
@@ -302,6 +448,31 @@ function updateCharts(d) {
     }
   });
 
+  // Device breakdown donut
+  if (d.engagement && d.engagement.devices) {
+    const ctxDevice = document.getElementById('deviceChart').getContext('2d');
+    const devLabels = Object.keys(d.engagement.devices);
+    const devData = Object.values(d.engagement.devices);
+    
+    if(charts.device) charts.device.destroy();
+    charts.device = new Chart(ctxDevice, {
+      type: 'doughnut',
+      data: {
+        labels: devLabels,
+        datasets: [{
+          data: devData,
+          backgroundColor: ['#7c3aed', '#00d4ff', '#00e896', '#ff6b35', '#8080aa'],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'right', labels: { color: '#8080aa', boxWidth: 10, font: { size: 9 } } } },
+        cutout: '65%'
+      }
+    });
+  }
+
   // Cache breakdown donut
   const ctxCache = document.getElementById('cacheChart').getContext('2d');
   const cacheLabels = Object.keys(d.cache.breakdown);
@@ -327,6 +498,37 @@ function updateCharts(d) {
 }
 
 function updateTables(d) {
+  // Countries
+  if (d.engagement && d.engagement.geo) {
+    const cBody = document.querySelector('#v-country-table tbody');
+    cBody.innerHTML = Object.entries(d.engagement.geo).sort((a,b) => b[1]-a[1]).slice(0, 5).map(([c, count]) => `
+      <tr>
+        <td style="font-weight:600;display:flex;align-items:center;gap:.5rem">
+          <span style="font-size:1rem">${c === 'Unknown' ? '🌐' : c === 'Internal' ? '🏠' : ''}</span> ${c}
+        </td>
+        <td class="text-green">${count}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Portal Health
+  const pBody = document.querySelector('#v-portal-health-table tbody');
+  pBody.innerHTML = (d.portals.connections || []).map(p => {
+    const rel = 100 - (p.error_rate || 0);
+    const relColor = rel > 95 ? 'var(--green)' : rel > 80 ? 'var(--orange)' : 'var(--red)';
+    return `
+      <tr>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.portal)}">
+          ${esc(p.portal.replace(/^https?:\/\//, ''))}
+        </td>
+        <td><span class="tag" style="background:rgba(255,255,255,0.05);color:var(--t2)">${p.type || 'api'}</span></td>
+        <td><code>${p.avg_latency}ms</code></td>
+        <td style="color:${relColor};font-weight:700">${rel}%</td>
+        <td style="color:var(--t3)">${p.hits}</td>
+      </tr>
+    `;
+  }).join('');
+
   const gBody = document.querySelector('#v-guest-table tbody');
   gBody.innerHTML = (d.recent_guests || []).map(g => `
     <tr>
