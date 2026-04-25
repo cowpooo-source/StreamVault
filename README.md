@@ -65,14 +65,15 @@ SQLite (better-sqlite3)
 
 ## User Tiers
 
-| | Guest | Free | Regular (default) | Admin |
-|---|---|---|---|---|
-| IPTV connections | 2 | 2 | 5 | Unlimited |
-| VOD/Series items | 500 | 500 | Unlimited | Unlimited |
-| EPG | Yes | Yes | Yes | Yes |
-| Server sync | No | Yes | Yes | Yes |
-| Analytics | No | No | No | Yes |
-| User management | No | No | No | Yes |
+| | Guest | Free | Regular (default) | Pro | Admin |
+|---|---|---|---|---|---|
+| IPTV connections | 2 | 2 | 5 | 10 | Unlimited |
+| Concurrent Logins| 1 | 1 | 3 | 5 | Unlimited |
+| VOD/Series items | 500 | 500 | Unlimited | Unlimited | Unlimited |
+| EPG | Yes | Yes | Yes | Yes | Yes |
+| Server sync | No | Yes | Yes | Yes | Yes |
+| Analytics | No | No | No | No | Yes |
+| User management | No | No | No | No | Yes |
 
 New registrations automatically get **Regular** access (promotional).
 

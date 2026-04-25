@@ -21,14 +21,17 @@ This project is an IPTV client architecture optimized for self-hosting on a VPS.
 ## Deployment
 Typically deployed using the provided `deploy-vps.sh` script to a VPS environment.
 
-## Recent Progress (April 7, 2026)
+## Recent Progress (April 25, 2026)
 - **Branch Strategy**: Locked development focus to the `vps/self-hosted` branch.
-- **Architecture Review**: Mapped the interaction between the React frontend and Node.js proxy backend.
+- **Features**: 
+  - Overhauled Live TV navigation with a horizontal scrolling EPG Timeline.
+  - Implemented advanced analytics (Hardware tracking, Active JWT Sessions, User Engagement, Portal Latency Leaderboards).
+  - Introduced Role-Based Concurrent Login Limits (Pro, Regular, Free, Guest).
+- **Performance**: 
+  - Optimized EPG and Channel caching with a 24h TTL and MAC-independent portal-level sharing to dramatically reduce VPS bandwidth.
 - **Bug Fixes**: 
-  - Fixed guest logout visibility in `App.jsx`.
-  - Added an automatic fallback in `mpegts.js` to native `<video>` playback for "Unsupported media type" errors.
+  - Fixed cross-origin image loading (CORP headers).
+  - Resolved `last_watched` database missing column error.
 - **VPS Deployment**:
-  - Successfully deployed to `40.233.113.76`.
-  - Verified with a 43-test security suite (SSRF, Auth, Rate Limiting, etc.).
-  - Established a "Hard Reset" deployment workflow to avoid `dist` folder conflicts.
-- **Documentation**: Created a manual deployment guide for VPS updates.
+  - Successfully deployed all features to `40.233.113.76`.
+  - Refined deployment process with robust `rsync` syncing directly to the Nginx document root.
