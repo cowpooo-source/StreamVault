@@ -595,30 +595,4 @@ html{height:100%}
   .qch{left:.5rem;max-width:calc(100vw - 1rem)}
   .qch-item{padding:.4rem .6rem;min-width:140px}
 }
-.tv-guide{flex:1;display:flex;flex-direction:column;gap:.4rem;align-content:start;overflow-y:auto;padding-right:.5rem}
-.tv-row{background:var(--s1);border:1px solid var(--b1);border-radius:10px;padding:.75rem 1.1rem;
-  cursor:pointer;transition:all .2s;display:grid;grid-template-columns:220px 1fr 60px;align-items:center;gap:1.5rem;position:relative}
-.tv-row:hover{border-color:var(--accent-40);background:var(--accent-10);transform:translateX(4px)}
-.tv-ch-info{display:flex;align-items:center;gap:.9rem;min-width:0}
-.tv-logo{width:36px;height:36px;object-fit:contain;border-radius:6px;background:var(--s2);flex-shrink:0;border:1px solid var(--b1)}
-.tv-logo-ph{width:36px;height:36px;background:var(--s3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
-.tv-ch-text{min-width:0}
-.tv-ch-name{font-size:.88rem;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tv-ch-num{font-size:.65rem;color:var(--accent);font-weight:700;margin-top:.1rem;letter-spacing:.05em}
-.tv-epg-info{min-width:0;display:flex;flex-direction:column;gap:.35rem}
-.tv-epg-title{font-size:.84rem;font-weight:500;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tv-live-icon{color:var(--accent);font-size:.7rem;margin-right:.3rem}
-.tv-progress-bg{height:3px;background:rgba(255,255,255,0.06);border-radius:10px;overflow:hidden;width:100%;max-width:320px}
-.tv-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s ease-out}
-.tv-epg-time{font-size:.68rem;color:var(--t3);font-weight:500}
-.tv-no-epg{font-size:.75rem;color:var(--t3);font-style:italic}
-.tv-actions{display:flex;justify-content:flex-end}
-
-@media (max-width: 767px) {
-  .tv-row{grid-template-columns:1fr 40px;gap:.6rem;padding:.7rem .8rem}
-  .tv-epg-info{grid-column:span 2;margin-top:.2rem;border-top:1px solid var(--b1);padding-top:.5rem}
-  .tv-progress-bg{max-width:none}
-  .tv-ch-info{max-width:180px}
-}
-
 /* Reset */

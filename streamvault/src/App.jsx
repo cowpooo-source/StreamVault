@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
 
@@ -3011,50 +3011,114 @@ const NAV = [
   { key:"settings",  icon:"⚙",  tKey:"settings",          sKey:"tools" },
 ];
 
-// ── TV Guide Row ──
-const TVGuideRow = memo(function TVGuideRow({ channel, epgNow, onPlay, onToggleFav, isFav, t }) {
-  const pct = epgNow ? Math.max(0, Math.min(100, ((Date.now() - epgNow.start) / (epgNow.stop - epgNow.start)) * 100)) : 0;
+// ── MAIN APP ──
+const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epgData, nowMs, onPlay, onPlayCatchup }, outerRef) {
+  const PX_PER_MIN = 3;
+  const TOTAL_HOURS = 8;
+  const TOTAL_MS = TOTAL_HOURS * 3600000;
+  const TOTAL_PX = TOTAL_HOURS * 60 * PX_PER_MIN; // 1440px
+  const CH_COL_W = 160;
+  const ROW_H = 48;
+
+  // Window start = 1 hour before now (recalculates with nowMs)
+  const windowStart = useMemo(() => nowMs - 3600000, [nowMs]);
+  const windowEnd = useMemo(() => windowStart + TOTAL_MS, [windowStart]);
+
+  // Generate time labels every 30 minutes
+  const timeLabels = useMemo(() => {
+    const labels = [];
+    const snapStart = new Date(windowStart);
+    snapStart.setMinutes(snapStart.getMinutes() < 30 ? 0 : 30, 0, 0);
+    let t = snapStart.getTime();
+    if (t < windowStart) t += 1800000;
+    while (t < windowEnd) {
+      const offsetPx = ((t - windowStart) / 60000) * PX_PER_MIN;
+      const d = new Date(t);
+      labels.push({ ms: t, px: offsetPx, label: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
+      t += 1800000;
+    }
+    return labels;
+  }, [windowStart, windowEnd]);
+
+  // Convert ms position to px offset within the grid
+  const msToPx = useCallback((ms) => ((ms - windowStart) / 60000) * PX_PER_MIN, [windowStart]);
+
   const fmtT = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const nowLinePx = msToPx(nowMs);
 
   return (
-    <div className="tv-row" onClick={() => onPlay(channel)}>
-      <div className="tv-ch-info">
-        {channel.logo ? <img src={imgSrc(channel.logo)} className="tv-logo" loading="lazy" onError={e=>e.target.style.display="none"} /> : <div className="tv-logo-ph">📺</div>}
-        <div className="tv-ch-text">
-          <div className="tv-ch-name">{channel.name}</div>
-          {channel.num && <div className="tv-ch-num">CH {channel.num}</div>}
+    <div className="epg-outer" ref={outerRef}>
+      <div className="epg-grid-wrap" style={{width:CH_COL_W+TOTAL_PX,minHeight:channels.length*ROW_H+32}}>
+        {/* Sticky time header */}
+        <div className="epg-time-header">
+          <div className="epg-time-header-pad" />
+          <div className="epg-time-header-track" style={{width:TOTAL_PX,position:"relative"}}>
+            {timeLabels.map(tl => (
+              <div key={tl.ms} className="epg-time-label" style={{left:tl.px}}>{tl.label}</div>
+            ))}
+          </div>
         </div>
-      </div>
-      <div className="tv-epg-info">
-        {epgNow ? (
-          <>
-            <div className="tv-epg-title">
-              <span className="tv-live-icon">▶</span> {epgNow.title}
-            </div>
-            <div className="tv-epg-time">
-              {fmtT(epgNow.start)} – {fmtT(epgNow.stop)}
-            </div>
-            <div className="tv-progress-bg">
-              <div className="tv-progress-fill" style={{width: `${pct}%`}} />
-            </div>
-          </>
-        ) : (
-          <div className="tv-no-epg">{t("noProgramInfo")}</div>
-        )}
-      </div>
-      <div className="tv-actions">
-        <FavBtn on={isFav} onClick={(e) => { e.stopPropagation(); onToggleFav(channel); }} />
+
+        {/* Channel rows + program area */}
+        <div className="epg-body">
+          {/* Sticky channel column */}
+          <div className="epg-ch-col">
+            {channels.map((ch,i) => (
+              <div key={ch.id||i} className="epg-ch-cell" onClick={()=>onPlay(ch)} title={ch.name}>
+                {ch.logo && <img className="epg-ch-logo" loading="lazy" src={imgSrc(ch.logo)} alt="" onError={e=>{e.target.style.display="none";}} />}
+                <span className="epg-ch-name">{ch.name}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Programs area (absolutely positioned blocks) */}
+          <div className="epg-prog-area" style={{width:TOTAL_PX,position:"relative"}}>
+            {channels.map((ch,rowIdx) => {
+              const epgCh = epgLookup(epgData, ch);
+              const progs = epgCh ? epgCh.filter(p => p.start < windowEnd && p.stop > windowStart) : [];
+              return (
+                <div key={ch.id||rowIdx} className="epg-prog-row">
+                  {progs.map((p,pi) => {
+                    const clampStart = Math.max(p.start, windowStart);
+                    const clampEnd = Math.min(p.stop, windowEnd);
+                    const leftPx = msToPx(clampStart);
+                    const widthPx = ((clampEnd - clampStart) / 60000) * PX_PER_MIN;
+                    if (widthPx < 2) return null;
+                    const isNow = p.start <= nowMs && p.stop > nowMs;
+                    const isPast = p.stop <= nowMs;
+                    const cls = `epg-prog-block${isNow?" now":""}${isPast?" past":""}`;
+                    return (
+                      <div key={pi} className={cls}
+                        style={{left:leftPx,width:widthPx}}
+                        onClick={()=> isPast && onPlayCatchup ? onPlayCatchup(ch, p) : onPlay(ch)}
+                        title={`${p.title}\n${fmtT(p.start)} \u2013 ${fmtT(p.stop)}${isPast ? "\nClick to play catchup" : ""}`}>
+                        {widthPx > 50 && <div className="epg-prog-t">{isPast && <span className="epg-catchup-icon">↩</span>}{p.title}</div>}
+                        {widthPx > 90 && <div className="epg-prog-s">{fmtT(p.start)} \u2013 {fmtT(p.stop)}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+
+            {/* Current time red line */}
+            {nowLinePx >= 0 && nowLinePx <= TOTAL_PX && (
+              <div className="epg-now-line" style={{left:nowLinePx}} />
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
-});
-
+}));
 export default function App() {
   // ── auth state
   const [authUser, setAuthUser] = useState(null); // { id, username, role, limits }
   const [authLoading, setAuthLoading] = useState(true);
   const [isGuest, setIsGuest] = useState(false);
   const [resetToken, setResetToken] = useState(null);
+
+  const liveGridRef = useRef(null);
 
   // Check stored token on mount
   useEffect(() => {
@@ -4665,20 +4729,17 @@ export default function App() {
                   </div>
                 )}
                 {section==="live" ? (
-                  <div className="tv-guide">
-                    {paginatedItems.slice(0, visibleLimit).map((ch,i) => (
-                      <TVGuideRow
-                        key={ch.id||i}
-                        channel={ch}
-                        epgNow={getEPGNow(epgData, ch.epgId)}
-                        onPlay={playItem}
-                        onToggleFav={toggleFav}
-                        isFav={isFav(ch)}
-                        t={t}
-                      />
-                    ))}
+                  <div className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <TimelineGrid 
+                      ref={liveGridRef}
+                      channels={paginatedItems.slice(0, visibleLimit)}
+                      epgData={epgData}
+                      nowMs={now}
+                      onPlay={playItem}
+                      onPlayCatchup={playCatchup}
+                    />
                     {visibleLimit < paginatedItems.length && (
-                      <div style={{display:"flex",justifyContent:"center",padding:"1.5rem 0"}}>
+                      <div style={{display:"flex",justifyContent:"center",padding:"1.5rem 0", flexShrink: 0}}>
                         <button className="c-btn" onClick={()=>setVisibleLimit(prev=>prev+20)}>
                           {t("loadMore")} ({Math.min(visibleLimit, paginatedItems.length)}/{paginatedItems.length})
                         </button>
@@ -5126,23 +5187,17 @@ const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggle
   );
 });
 
+
+
 const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
   const PX_PER_MIN = 3;
-  const TOTAL_HOURS = 8;
-  const TOTAL_MS = TOTAL_HOURS * 3600000;
-  const TOTAL_PX = TOTAL_HOURS * 60 * PX_PER_MIN; // 1440px
   const CH_COL_W = 160;
-  const ROW_H = 48;
   const MAX_CHANNELS = 200;
 
   const [urlInput, setUrlInput] = useState(epgURL || "");
   const [search, setSearch] = useState("");
   const [nowMs, setNowMs] = useState(Date.now());
   const outerRef = useRef(null);
-
-  // Window start = 1 hour before now (recalculates with nowMs)
-  const windowStart = useMemo(() => nowMs - 3600000, [nowMs]);
-  const windowEnd = useMemo(() => windowStart + TOTAL_MS, [windowStart]);
 
   // Update current time every 30 seconds
   useEffect(() => {
@@ -5159,38 +5214,11 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
     }
   }, [epgData]);
 
-  // Generate time labels every 30 minutes
-  const timeLabels = useMemo(() => {
-    const labels = [];
-    const snapStart = new Date(windowStart);
-    snapStart.setMinutes(snapStart.getMinutes() < 30 ? 0 : 30, 0, 0);
-    let t = snapStart.getTime();
-    if (t < windowStart) t += 1800000;
-    while (t < windowEnd) {
-      const offsetPx = ((t - windowStart) / 60000) * PX_PER_MIN;
-      const d = new Date(t);
-      labels.push({ ms: t, px: offsetPx, label: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
-      t += 1800000;
-    }
-    return labels;
-  }, [windowStart, windowEnd]);
-
   const filteredChannels = useMemo(() => {
     let chs = channels;
     if (search) { const q = search.toLowerCase(); chs = chs.filter(ch => ch.name?.toLowerCase().includes(q)); }
     return chs.slice(0, MAX_CHANNELS);
   }, [channels, search]);
-
-  // Convert ms position to px offset within the grid
-  const msToPx = useCallback((ms) => ((ms - windowStart) / 60000) * PX_PER_MIN, [windowStart]);
-
-  // Scroll helpers
-  const scrollTo = useCallback((targetMs) => {
-    if (!outerRef.current) return;
-    const px = ((targetMs - (nowMs - 3600000)) / 60000) * PX_PER_MIN;
-    const viewW = outerRef.current.clientWidth;
-    outerRef.current.scrollTo({ left: Math.max(0, CH_COL_W + px - viewW / 3), behavior: "smooth" });
-  }, [nowMs]);
 
   const handleNow = useCallback(() => {
     const fresh = Date.now();
@@ -5207,9 +5235,6 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
     if (!outerRef.current) return;
     outerRef.current.scrollBy({ left: (deltaMs / 60000) * PX_PER_MIN, behavior: "smooth" });
   }, []);
-
-  const fmtT = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const nowLinePx = msToPx(nowMs);
 
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -5238,68 +5263,14 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
       ) : (
         <>
           {/* Scrollable grid */}
-          <div className="epg-outer" ref={outerRef}>
-            <div className="epg-grid-wrap" style={{width:CH_COL_W+TOTAL_PX,minHeight:filteredChannels.length*ROW_H+32}}>
-              {/* Sticky time header */}
-              <div className="epg-time-header">
-                <div className="epg-time-header-pad" />
-                <div className="epg-time-header-track" style={{width:TOTAL_PX,position:"relative"}}>
-                  {timeLabels.map(tl => (
-                    <div key={tl.ms} className="epg-time-label" style={{left:tl.px}}>{tl.label}</div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Channel rows + program area */}
-              <div className="epg-body">
-                {/* Sticky channel column */}
-                <div className="epg-ch-col">
-                  {filteredChannels.map((ch,i) => (
-                    <div key={ch.id||i} className="epg-ch-cell" onClick={()=>onPlay(ch)} title={ch.name}>
-                      {ch.logo && <img className="epg-ch-logo" loading="lazy" src={imgSrc(ch.logo)} alt="" onError={e=>{e.target.style.display="none";}} />}
-                      <span className="epg-ch-name">{ch.name}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Programs area (absolutely positioned blocks) */}
-                <div className="epg-prog-area" style={{width:TOTAL_PX,position:"relative"}}>
-                  {filteredChannels.map((ch,rowIdx) => {
-                    const epgCh = epgLookup(epgData, ch);
-                    const progs = epgCh ? epgCh.filter(p => p.start < windowEnd && p.stop > windowStart) : [];
-                    return (
-                      <div key={ch.id||rowIdx} className="epg-prog-row">
-                        {progs.map((p,pi) => {
-                          const clampStart = Math.max(p.start, windowStart);
-                          const clampEnd = Math.min(p.stop, windowEnd);
-                          const leftPx = msToPx(clampStart);
-                          const widthPx = ((clampEnd - clampStart) / 60000) * PX_PER_MIN;
-                          if (widthPx < 2) return null;
-                          const isNow = p.start <= nowMs && p.stop > nowMs;
-                          const isPast = p.stop <= nowMs;
-                          const cls = `epg-prog-block${isNow?" now":""}${isPast?" past":""}`;
-                          return (
-                            <div key={pi} className={cls}
-                              style={{left:leftPx,width:widthPx}}
-                              onClick={()=> isPast && onPlayCatchup ? onPlayCatchup(ch, p) : onPlay(ch)}
-                              title={`${p.title}\n${fmtT(p.start)} \u2013 ${fmtT(p.stop)}${isPast ? "\nClick to play catchup" : ""}`}>
-                              {widthPx > 50 && <div className="epg-prog-t">{isPast && <span className="epg-catchup-icon">↩</span>}{p.title}</div>}
-                              {widthPx > 90 && <div className="epg-prog-s">{fmtT(p.start)} \u2013 {fmtT(p.stop)}</div>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-
-                  {/* Current time red line */}
-                  {nowLinePx >= 0 && nowLinePx <= TOTAL_PX && (
-                    <div className="epg-now-line" style={{left:nowLinePx}} />
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          <TimelineGrid 
+            ref={outerRef}
+            channels={filteredChannels} 
+            epgData={epgData} 
+            nowMs={nowMs} 
+            onPlay={onPlay} 
+            onPlayCatchup={onPlayCatchup} 
+          />
 
           {/* Navigation bar */}
           <div className="epg-nav">
