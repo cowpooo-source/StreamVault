@@ -302,10 +302,13 @@ export async function handleEpg(url, env) {
   const portal = url.searchParams.get("portal");
   const mac = url.searchParams.get("mac");
   const period = url.searchParams.get("period") || "4";
+  const serial = url.searchParams.get("serial");
+  const deviceId = url.searchParams.get("deviceId");
+  const deviceId2 = url.searchParams.get("deviceId2");
   if (!portal || !mac) return errorResponse("portal and mac required", 400);
 
   try {
-    const session = await getSession(portal, mac, {}, env.SV_CACHE);
+    const session = await getSession(portal, mac, { serial, deviceId, deviceId2 }, env.SV_CACHE);
     const data = await portalFetchRetry(
       session,
       { type: "itv", action: "get_epg_info", period },

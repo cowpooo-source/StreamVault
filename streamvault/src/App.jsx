@@ -4738,13 +4738,6 @@ export default function App() {
                       onPlay={playItem}
                       onPlayCatchup={playCatchup}
                     />
-                    {visibleLimit < paginatedItems.length && (
-                      <div style={{display:"flex",justifyContent:"center",padding:"1.5rem 0", flexShrink: 0}}>
-                        <button className="c-btn" onClick={()=>setVisibleLimit(prev=>prev+20)}>
-                          {t("loadMore")} ({Math.min(visibleLimit, paginatedItems.length)}/{paginatedItems.length})
-                        </button>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div className="vod-grid">

@@ -2,8 +2,10 @@
   "name": "streamvault-worker",
   "version": "1.0.0",
   "private": true,
-  "description": "Cloudflare Worker — IPTV proxy for Stalker, Xtream, M3U (replaces stalker-proxy)",
+  "type": "module",
+  "description": "Cloudflare Worker - IPTV proxy for Stalker, Xtream, M3U (replaces stalker-proxy)",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },

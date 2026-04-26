@@ -29,10 +29,10 @@ function stalkerHeaders(mac, token = "", portalUrl = "", opts = {}) {
   return headers;
 }
 
-async function tryHandshake(base, apiPath, mac, portalUrl) {
+async function tryHandshake(base, apiPath, mac, portalUrl, opts = {}) {
   const qs = `type=stb&action=handshake&prehash=0&token=&JsHttpRequest=1-xml`;
   const url = `${base}${apiPath}?${qs}`;
-  const headers = stalkerHeaders(mac, "", portalUrl);
+  const headers = stalkerHeaders(mac, "", portalUrl, opts);
 
   try {
     const res = await fetch(url, { headers });
@@ -63,7 +63,7 @@ export async function getSession(portal, mac, opts = {}, kvCache = null) {
 
   // If path is known, do a single handshake on the known path
   if (cached) {
-    const result = await tryHandshake(cached.base, cached.apiPath, mac, portal);
+    const result = await tryHandshake(cached.base, cached.apiPath, mac, portal, opts);
     if (result) {
       return makeSession(result.token, cached.base, cached.apiPath, portal, mac, opts, kvCache);
     }
@@ -85,7 +85,7 @@ export async function getSession(portal, mac, opts = {}, kvCache = null) {
   for (const base of bases) {
     for (const path of API_PATHS) {
       try {
-        const result = await tryHandshake(base, path, mac, portal);
+        const result = await tryHandshake(base, path, mac, portal, opts);
         if (result) {
           // Cache the resolved path in KV (6 hour TTL)
           if (kvCache) {
