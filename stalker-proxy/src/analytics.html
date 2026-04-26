@@ -108,6 +108,11 @@
       <div class="sub">Users in last 5 mins</div>
     </div>
     <div class="card">
+      <div class="card-label">Active 24hr ago</div>
+      <div class="card-value"><span id="v-active-24h-ago">0</span></div>
+      <div class="sub">Users active yesterday</div>
+    </div>
+    <div class="card">
       <div class="card-label">Health Status</div>
       <div id="v-health-status" class="card-value text-green">Optimal</div>
       <div id="v-error-rate" class="sub">0% error rate (24h)</div>
@@ -344,6 +349,7 @@ async function load(){
 
 function updateSummary(d) {
   document.getElementById('v-active-now').textContent = d.activeNow || 0;
+  document.getElementById('v-active-24h-ago').textContent = d.visitors?.active_24h_ago || 0;
   document.getElementById('v-latency').textContent = d.health.avg_latency || 0;
   document.getElementById('v-bw-today').textContent = d.bandwidth?.today?.total_gb || 0;
   document.getElementById('v-bw-month').textContent = d.bandwidth?.monthly?.total_gb || 0;

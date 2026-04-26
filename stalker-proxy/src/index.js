@@ -1567,10 +1567,12 @@ function getNetworkStats() {
     for (const line of lines) {
       // Skip loopback and header lines
       if (line.includes("lo:") || !line.includes(":")) continue;
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 10) {
-        totalRx += parseInt(parts[1]) || 0;
-        totalTx += parseInt(parts[9]) || 0;
+      const ifaceData = line.split(":")[1];
+      if (!ifaceData) continue;
+      const parts = ifaceData.trim().split(/\s+/);
+      if (parts.length >= 8) {
+        totalRx += parseInt(parts[0]) || 0;
+        totalTx += parseInt(parts[8]) || 0;
       }
     }
     return { rx_bytes: totalRx, tx_bytes: totalTx, rx_gb: Math.round(totalRx / 1073741824 * 100) / 100, tx_gb: Math.round(totalTx / 1073741824 * 100) / 100 };
@@ -1681,12 +1683,13 @@ app.get("/api/analytics", (req, res) => {
     bandwidth: {
       total: net ? { rx_gb: net.rx_gb, tx_gb: net.tx_gb, total_gb: Math.round((net.rx_gb + net.tx_gb) * 100) / 100 } : null,
       today: todayBw,
+      monthly: monthlyBw,
     },
     visitors: stats.visitors,
     recent_visitors: stats.recentVisitors,
     guests: stats.guests,
     recent_guests: stats.recentGuests,
-    most_watched: stats.most_watched,
+    most_watched: stats.mostWatched,
     portals: { connections: stats.portals, by_type: stats.portalsByType },
     engagement: stats.engagement,
     cache: {
