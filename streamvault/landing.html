@@ -49,6 +49,54 @@
         </div>
       </div>
     </section>
+
+    <section class="section">
+      <h2 class="section-title">Install the App</h2>
+      <p style="text-align: center; color: var(--t2); margin-bottom: 2rem;">Portal Heaven is a Progressive Web App (PWA). You can install it directly from your browser.</p>
+      
+      <div class="tabs">
+        <button class="tab-btn active" onclick="openTab('ios')">iOS / iPadOS</button>
+        <button class="tab-btn" onclick="openTab('android')">Android</button>
+        <button class="tab-btn" onclick="openTab('desktop')">Desktop</button>
+      </div>
+
+      <div id="ios" class="tab-content active">
+        <ol>
+          <li>Open <strong>Portal Heaven</strong> in Safari.</li>
+          <li>Tap the <strong>Share</strong> icon (square with an arrow pointing up) at the bottom.</li>
+          <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+          <li>Tap <strong>Add</strong> in the top right corner.</li>
+        </ol>
+      </div>
+
+      <div id="android" class="tab-content">
+        <ol>
+          <li>Open <strong>Portal Heaven</strong> in Chrome.</li>
+          <li>Tap the <strong>Menu</strong> icon (three dots) in the top right corner.</li>
+          <li>Tap <strong>Add to Home screen</strong> or <strong>Install app</strong>.</li>
+          <li>Follow the on-screen prompts to confirm.</li>
+        </ol>
+      </div>
+
+      <div id="desktop" class="tab-content">
+        <ol>
+          <li>Open <strong>Portal Heaven</strong> in Chrome, Edge, or Brave.</li>
+          <li>Look for the <strong>Install icon</strong> (a screen with a down arrow) on the right side of the address bar.</li>
+          <li>Click it and select <strong>Install</strong>.</li>
+        </ol>
+      </div>
+    </section>
+
   </div>
+
+  <script>
+    function openTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      
+      document.getElementById(tabId).classList.add('active');
+      event.target.classList.add('active');
+    }
+  </script>
 </body>
 </html>
