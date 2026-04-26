@@ -9,7 +9,7 @@ const TEST_DB = path.join(__dirname, "test-auth.db");
 let auth;
 let db;
 
-beforeAll(() => {
+beforeAll(async () => {
   // Clean previous test DB
   try { fs.unlinkSync(TEST_DB); } catch {}
 
@@ -28,7 +28,7 @@ beforeAll(() => {
 
   // Import and init auth
   auth = require("../src/auth");
-  auth.init(db);
+  await auth.init(db);
 });
 
 afterAll(() => {
@@ -46,88 +46,93 @@ describe("Auth — User Creation", () => {
     expect(admin.role).toBe("admin");
   });
 
-  it("creates a regular user by default", () => {
-    const user = auth.createUser("testuser", "pass1234");
+  it("creates a regular user by default", async () => {
+    const user = await auth.createUser("testuser", "pass1234");
     expect(user.username).toBe("testuser");
     expect(user.role).toBe("regular");
   });
 
-  it("creates a user with specific role", () => {
-    const user = auth.createUser("freeuser", "pass1234", "free");
+  it("creates a user with specific role", async () => {
+    const user = await auth.createUser("freeuser", "pass1234", "free");
     expect(user.role).toBe("free");
   });
 
-  it("rejects duplicate username", () => {
-    expect(() => auth.createUser("testuser", "pass1234")).toThrow("Username already taken");
+  it("rejects duplicate username", async () => {
+    await expect(auth.createUser("testuser", "pass1234")).rejects.toThrow("Username already taken");
   });
 
-  it("rejects short username", () => {
-    expect(() => auth.createUser("ab", "pass1234")).toThrow("at least 3 characters");
+  it("rejects short username", async () => {
+    await expect(auth.createUser("ab", "pass1234")).rejects.toThrow("at least 3 characters");
   });
 
-  it("rejects short password", () => {
-    expect(() => auth.createUser("newuser1", "123")).toThrow("at least 4 characters");
+  it("rejects short password", async () => {
+    await expect(auth.createUser("newuser1", "123")).rejects.toThrow("at least 8 characters");
   });
 
-  it("rejects empty username", () => {
-    expect(() => auth.createUser("", "pass1234")).toThrow("Username and password required");
+  it("rejects empty username", async () => {
+    await expect(auth.createUser("", "pass1234")).rejects.toThrow("Username and password required");
   });
 
-  it("creates user with email", () => {
-    const user = auth.createUser("emailuser", "pass1234", "regular", "test@example.com");
+  it("creates user with email", async () => {
+    const user = await auth.createUser("emailuser", "pass1234", "regular", "test@example.com");
     expect(user.email).toBe("test@example.com");
   });
 
-  it("rejects invalid email", () => {
-    expect(() => auth.createUser("badmail", "pass1234", "regular", "notanemail")).toThrow("Invalid email");
+  it("rejects invalid email", async () => {
+    await expect(auth.createUser("badmail", "pass1234", "regular", "notanemail")).rejects.toThrow("Invalid email");
   });
 
-  it("rejects duplicate email", () => {
-    expect(() => auth.createUser("another", "pass1234", "regular", "test@example.com")).toThrow("Email already registered");
+  it("rejects duplicate email", async () => {
+    await expect(auth.createUser("another", "pass1234", "regular", "test@example.com")).rejects.toThrow("Email already registered");
   });
 });
 
 describe("Auth — Authentication", () => {
-  it("authenticates with correct credentials", () => {
-    const session = auth.authenticate("testuser", "pass1234");
+  it("authenticates with correct credentials", async () => {
+    const session = await auth.authenticate("testuser", "pass1234");
     expect(session.token).toBeDefined();
     expect(session.user.username).toBe("testuser");
     expect(session.user.role).toBe("regular");
     expect(session.user.limits).toBeDefined();
   });
 
-  it("rejects wrong password", () => {
-    expect(() => auth.authenticate("testuser", "wrongpass")).toThrow("Invalid username or password");
+  it("rejects wrong password", async () => {
+    await expect(auth.authenticate("testuser", "wrongpass")).rejects.toThrow("Invalid username or password");
   });
 
-  it("rejects non-existent user", () => {
-    expect(() => auth.authenticate("nobody", "pass1234")).toThrow("Invalid username or password");
+  it("rejects non-existent user", async () => {
+    await expect(auth.authenticate("nobody", "pass1234")).rejects.toThrow("Invalid username or password");
   });
 
-  it("rejects disabled user", () => {
+  it("rejects disabled user", async () => {
     auth.updateUser(auth.listUsers().find(u => u.username === "freeuser").id, { disabled: 1 });
-    expect(() => auth.authenticate("freeuser", "pass1234")).toThrow("Account is disabled");
+    await expect(auth.authenticate("freeuser", "pass1234")).rejects.toThrow("Account is disabled");
     // Re-enable
     auth.updateUser(auth.listUsers().find(u => u.username === "freeuser").id, { disabled: 0 });
   });
 
-  it("returns correct limits per role", () => {
-    const adminSession = auth.authenticate("admin", "admin123");
+  it("returns correct limits per role", async () => {
+    const adminSession = await auth.authenticate("admin", "admin123");
     expect(adminSession.user.limits.maxConnections).toBe(999);
     expect(adminSession.user.limits.maxVod).toBe(Infinity);
 
-    const regularSession = auth.authenticate("testuser", "pass1234");
+    const regularSession = await auth.authenticate("testuser", "pass1234");
     expect(regularSession.user.limits.maxConnections).toBe(5);
 
-    const freeSession = auth.authenticate("freeuser", "pass1234");
+    const freeSession = await auth.authenticate("freeuser", "pass1234");
     expect(freeSession.user.limits.maxConnections).toBe(2);
     expect(freeSession.user.limits.maxVod).toBe(500);
   });
 });
 
 describe("Auth — JWT Tokens", () => {
-  it("verifies a valid token", () => {
-    const session = auth.authenticate("testuser", "pass1234");
+  beforeEach(async () => {
+    const user = auth.listUsers().find(u => u.username === "testuser");
+    if (user) auth.revokeAllUserTokens(user.id);
+  });
+
+  it("verifies a valid token", async () => {
+    const session = await auth.authenticate("testuser", "pass1234");
     const user = auth.verifyToken(session.token);
     expect(user).not.toBeNull();
     expect(user.username).toBe("testuser");
@@ -138,22 +143,22 @@ describe("Auth — JWT Tokens", () => {
     expect(user).toBeNull();
   });
 
-  it("generates unique tokens for same user", () => {
-    const s1 = auth.authenticate("testuser", "pass1234");
-    const s2 = auth.authenticate("testuser", "pass1234");
+  it("generates unique tokens for same user", async () => {
+    const s1 = await auth.authenticate("testuser", "pass1234");
+    const s2 = await auth.authenticate("testuser", "pass1234");
     expect(s1.token).not.toBe(s2.token);
   });
 
-  it("revokes a token", () => {
-    const session = auth.authenticate("testuser", "pass1234");
+  it("revokes a token", async () => {
+    const session = await auth.authenticate("testuser", "pass1234");
     expect(auth.verifyToken(session.token)).not.toBeNull();
     auth.revokeToken(session.token);
     expect(auth.verifyToken(session.token)).toBeNull();
   });
 
-  it("revokes all user tokens", () => {
-    const s1 = auth.authenticate("testuser", "pass1234");
-    const s2 = auth.authenticate("testuser", "pass1234");
+  it("revokes all user tokens", async () => {
+    const s1 = await auth.authenticate("testuser", "pass1234");
+    const s2 = await auth.authenticate("testuser", "pass1234");
     auth.revokeAllUserTokens(s1.user.id);
     expect(auth.verifyToken(s1.token)).toBeNull();
     expect(auth.verifyToken(s2.token)).toBeNull();
@@ -161,6 +166,11 @@ describe("Auth — JWT Tokens", () => {
 });
 
 describe("Auth — User Management", () => {
+  beforeEach(async () => {
+    const user = auth.listUsers().find(u => u.username === "testuser");
+    if (user) auth.revokeAllUserTokens(user.id);
+  });
+
   it("lists all users", () => {
     const users = auth.listUsers();
     expect(users.length).toBeGreaterThanOrEqual(3);
@@ -183,8 +193,8 @@ describe("Auth — User Management", () => {
     auth.updateUser(user.id, { role: "regular" });
   });
 
-  it("disabling user revokes sessions", () => {
-    const session = auth.authenticate("testuser", "pass1234");
+  it("disabling user revokes sessions", async () => {
+    const session = await auth.authenticate("testuser", "pass1234");
     expect(auth.verifyToken(session.token)).not.toBeNull();
     const user = auth.listUsers().find(u => u.username === "testuser");
     auth.updateUser(user.id, { disabled: 1 });
@@ -192,22 +202,22 @@ describe("Auth — User Management", () => {
     auth.updateUser(user.id, { disabled: 0 });
   });
 
-  it("changes password", () => {
+  it("changes password", async () => {
     const user = auth.listUsers().find(u => u.username === "testuser");
-    auth.changePassword(user.id, "newpass123");
-    const session = auth.authenticate("testuser", "newpass123");
+    await auth.changePassword(user.id, "newpass123");
+    const session = await auth.authenticate("testuser", "newpass123");
     expect(session.token).toBeDefined();
     // Restore
-    auth.changePassword(user.id, "pass1234");
+    await auth.changePassword(user.id, "pass1234");
   });
 
-  it("change password rejects short password", () => {
+  it("change password rejects short password", async () => {
     const user = auth.listUsers().find(u => u.username === "testuser");
-    expect(() => auth.changePassword(user.id, "ab")).toThrow("at least 4 characters");
+    await expect(auth.changePassword(user.id, "ab")).rejects.toThrow("at least 8 characters");
   });
 
-  it("deletes user", () => {
-    const user = auth.createUser("todelete", "pass1234");
+  it("deletes user", async () => {
+    const user = await auth.createUser("todelete", "pass1234");
     const before = auth.listUsers().length;
     auth.deleteUser(user.id);
     expect(auth.listUsers().length).toBe(before - 1);
@@ -263,15 +273,15 @@ describe("Auth — Password Reset", () => {
     expect(result.user.username).toBe("emailuser");
   });
 
-  it("resets password with valid token", () => {
+  it("resets password with valid token", async () => {
     const result = auth.requestPasswordReset("emailuser");
-    auth.resetPassword(result.token, "newpass999");
-    const session = auth.authenticate("emailuser", "newpass999");
+    await auth.resetPassword(result.token, "newpass999");
+    const session = await auth.authenticate("emailuser", "newpass999");
     expect(session.token).toBeDefined();
   });
 
-  it("rejects expired/invalid reset token", () => {
-    expect(() => auth.resetPassword("fake-token", "newpass")).toThrow("Invalid or expired");
+  it("rejects expired/invalid reset token", async () => {
+    await expect(auth.resetPassword("fake-token", "newpass")).rejects.toThrow("Invalid or expired");
   });
 });
 

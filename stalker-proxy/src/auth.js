@@ -25,7 +25,7 @@ let jwtSecret;
 // Prepared statements
 let stmts = {};
 
-function init(database) {
+async function init(database) {
   db = database;
 
   // Create tables
@@ -121,7 +121,7 @@ function init(database) {
   }
 
   // Seed admin user if none exists
-  seedAdmin();
+  await seedAdmin();
 
   console.log(`   Auth: ${stmts.countUsers.get().cnt} users, JWT ${process.env.JWT_SECRET ? "env" : "auto"}-secret`);
 }
@@ -137,7 +137,7 @@ async function seedAdmin() {
     stmts.createUser.run(adminUser, null, hash, "admin", 999, Date.now());
     console.log(`   Auth: seeded admin user "${adminUser}"`);
   } else if (existing.role !== "admin") {
-    stmts.updateUser.run("admin", 999, 0, existing.id);
+    stmts.updateUser.run("admin", 999, 0, existing.subscription_cycle, existing.subscription_expires_at, existing.id);
   }
 }
 
@@ -309,13 +309,15 @@ function getUser(id) {
   return stmts.getUserById.get(id);
 }
 
-function updateUser(id, { role, maxConnections, disabled }) {
+function updateUser(id, { role, maxConnections, disabled, subscription_cycle, subscription_expires_at }) {
   const user = stmts.getUserById.get(id);
   if (!user) throw new Error("User not found");
   stmts.updateUser.run(
     role ?? user.role,
     maxConnections ?? user.max_connections,
     disabled ?? user.disabled,
+    subscription_cycle !== undefined ? subscription_cycle : user.subscription_cycle,
+    subscription_expires_at !== undefined ? subscription_expires_at : user.subscription_expires_at,
     id
   );
   // If disabled, revoke all sessions
