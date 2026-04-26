@@ -132,9 +132,9 @@ async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) 
 const ADSTERRA_COOLDOWN_MS = 3 * 60 * 1000;
 const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
 
-function AdsterraSocialBar({ onAllowedPage }) {
+function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
-    if (!onAllowedPage) return;
+    if (!onAllowedPage || !isAdEligible) return;
 
     // ✅ Check cooldown BEFORE doing anything
     const closedAt = localStorage.getItem(ADSTERRA_STORAGE_KEY);
@@ -173,37 +173,40 @@ function AdsterraSocialBar({ onAllowedPage }) {
         document.head.removeChild(script);
       }
     };
-  }, [onAllowedPage]); // ✅ Only re-evaluate if the page eligibility changes
+  }, [onAllowedPage, isAdEligible]); // ✅ Only re-evaluate if the page eligibility changes
 
   return null;
 }
 
-// ── Adsterra Native Banner ──
-function AdsterraNativeBanner({ enabled }) {
+// ── ExoClick Native Banner ──
+const ExoclickNativeBanner = memo(function ExoclickNativeBanner({ enabled }) {
   useEffect(() => {
     if (!enabled) return;
 
-    // Check if script already exists
-    const existingScript = document.querySelector('script[src="https://pl29188175.profitablecpmratenetwork.com/3b0dde1ecede80099770260eafdfbd02/invoke.js"]');
-    if (existingScript) return;
+    // Load the main AdProvider script if it doesn't exist
+    const existingScript = document.querySelector('script[src="https://a.magsrv.com/ad-provider.js"]');
+    if (!existingScript) {
+      const script = document.createElement("script");
+      script.type = "application/javascript";
+      script.src = "https://a.magsrv.com/ad-provider.js";
+      script.async = true;
+      document.head.appendChild(script);
+    }
 
-    const script = document.createElement("script");
-    script.type = "text/javascript";
-    script.src = "https://pl29188175.profitablecpmratenetwork.com/3b0dde1ecede80099770260eafdfbd02/invoke.js";
-    script.async = true;
-    script.setAttribute("data-cfasync", "false");
-    document.head.appendChild(script);
+    // Trigger the ad serving
+    window.AdProvider = window.AdProvider || [];
+    window.AdProvider.push({ "serve": {} });
+
   }, [enabled]);
 
   if (!enabled) return null;
 
   return (
-    <div
-      id="container-3b0dde1ecede80099770260eafdfbd02"
-      style={{ gridColumn: "1 / -1", width: "100%", minHeight: "50px" }}
-    />
+    <div className="ad-container" style={{ margin: "1rem 0", minHeight: "150px", width: "100%", display: "flex", justifyContent: "center" }}>
+      <ins className="eas6a97888e20" data-zoneid="5910344"></ins>
+    </div>
   );
-}
+});
 
 // ── Reset Password Modal ──
 function ResetPasswordModal({ token, onClose }) {
@@ -1319,7 +1322,7 @@ function genCSS(t) {
 // ══════════════════════════════════════════════════════════════════
 // PLAYER COMPONENT (TiviMate-level keyboard + OSD + PiP + quick-ch)
 // ══════════════════════════════════════════════════════════════════
-function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t: pt }) {
+function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t: pt, isAdEligible }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
@@ -3186,6 +3189,7 @@ export default function App() {
     setAuthUser(null); setIsGuest(false);
   }
   const userRole = authUser?.role || (isGuest ? "guest" : null);
+  const isAdEligible = userRole === "guest" || userRole === "free";
   const userLimits = authUser?.limits || (isGuest ? { maxConnections: 2, maxVod: 500, epg: true, sync: false } : null);
 
   // Show upgrade prompt for free/guest users on login
@@ -4400,7 +4404,7 @@ export default function App() {
 
   return (
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
-      <AdsterraSocialBar onAllowedPage={onAllowedPage} />
+      <AdsterraSocialBar onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
       {/* ── MOBILE TOP BAR + DRAWER ── */}
       <div className="mob-topbar">
         <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>☰</button>
@@ -4741,7 +4745,7 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="vod-grid">
-                  <AdsterraNativeBanner enabled={section === "vod" || section === "series"} />
+                  <ExoclickNativeBanner enabled={isAdEligible && (section === "vod" || section === "series")} />
                     {paginatedItems.map((item,i) => {
                       const faved = isFav(item);
                       const hist = historyMap.get(item.id || item.url);
@@ -5082,7 +5086,7 @@ const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, isFav, t 
                 <button className="vod-fav on" onClick={e=>{e.stopPropagation();toggleFav(item);}}>♥</button>
               </div>
             ))}
-            {label === t("movies") && <AdsterraNativeBanner enabled={true} />}
+            {label === t("movies") && <ExoclickNativeBanner enabled={isAdEligible} />}
           </div>
         </div>
       ))}
