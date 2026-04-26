@@ -36,6 +36,10 @@ export default defineConfig({
   build: {
     target: "es2020",
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        landing: resolve(__dirname, 'landing.html')
+      },
       output: {
         manualChunks: (id) => {
           if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
