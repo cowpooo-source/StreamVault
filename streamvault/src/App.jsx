@@ -1175,9 +1175,14 @@ migrateOldCache();
 function parseM3U(text) {
   const lines = text.split("\n"); const out = [];
   let cur = null;
+  let epgUrl = null;
+
   for (const raw of lines) {
     const line = raw.trim();
-    if (line.startsWith("#EXTINF")) {
+    if (line.startsWith("#EXTM3U")) {
+      const match = line.match(/(?:url-tvg|x-tvg-url)="([^"]+)"/i);
+      if (match) epgUrl = match[1];
+    } else if (line.startsWith("#EXTINF")) {
       const name   = (line.match(/,(.+)$/) || [])[1]?.trim() || "Unknown";
       const logo   = (line.match(/tvg-logo="([^"]+)"/) || [])[1] || null;
       const group  = (line.match(/group-title="([^"]+)"/) || [])[1] || "Uncategorized";
@@ -1191,6 +1196,7 @@ function parseM3U(text) {
       out.push(cur); cur = null;
     }
   }
+  out.epgUrl = epgUrl;
   return out;
 }
 
@@ -1687,7 +1693,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
       setAdState(null);
       destroyPlayers();
 
-      if (!adPlayedRef.current) {
+      if (isAdEligible && !adPlayedRef.current) {
         adPlayedRef.current = true;
         const ad = await fetchVastAd(EXOCLICK_VAST_URL, video);
         if (cancelled || sessionId !== adSessionRef.current) return;
@@ -2041,7 +2047,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         const channels = parseM3U(text);
         if (!channels.length) throw new Error("No channels found");
         // Connection saved by handleConnect in App
-        onConnect({ type, url:f.url, channels });
+        onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
         const server = f.server.trim().replace(/\/$/,"");
@@ -3521,6 +3527,11 @@ export default function App() {
       setAutoConnected(false);
       // Still load EPG (transient, not cached)
       if (conn.type === "stalker") loadStalkerEPG();
+      else if (conn.type === "xtream") {
+        const xtreamEpgUrl = `${conn.server}/xmltv.php?username=${conn.user}&password=${conn.pass}`;
+        loadEPG(xtreamEpgUrl);
+      }
+      else if (conn.epgUrl) loadEPG(conn.epgUrl);
       else if (epgURL) loadEPG(epgURL);
       return;
     }
@@ -3533,13 +3544,15 @@ export default function App() {
         idbCache.set(`sync:${cId}`, { ...lastSynced, live: Date.now() });
         setLastSynced(prev => ({ ...prev, live: Date.now() }));
       }
-      if (epgURL) loadEPG(epgURL);
+      if (conn.epgUrl) loadEPG(conn.epgUrl);
+      else if (epgURL) loadEPG(epgURL);
     } else if (conn.type === "xtream") {
       fetchLive();
       // Pre-fetch VOD + series in background so they're ready when user switches tabs
       fetchVOD(false, true);
       fetchSeries(false, true);
-      if (epgURL) loadEPG(epgURL);
+      const xtreamEpgUrl = `${conn.server}/xmltv.php?username=${conn.user}&password=${conn.pass}`;
+      loadEPG(xtreamEpgUrl);
     } else if (conn.type === "stalker") {
       fetchStalkerChannels();
       // Pre-fetch VOD + series categories + items in background
