@@ -1,16 +1,16 @@
 :root {
-  --bg: #07070f;
-  --card: #0f0f1c;
-  --border: rgba(255, 255, 255, 0.06);
-  --t1: #dde0f5;
-  --t2: #8080aa;
-  --t3: #44445a;
-  --accent: #00d4ff;
+  --bg: #ffffff;
+  --card: #f8f9fa;
+  --border: rgba(0, 0, 0, 0.1);
+  --t1: #111827;
+  --t2: #4b5563;
+  --t3: #9ca3af;
+  --accent: #2563eb;
   --accent2: #7c3aed;
-  --green: #00e896;
-  --orange: #ff6b35;
-  --red: #ff4466;
-  --purple: #a78bfa;
+  --green: #10b981;
+  --orange: #f97316;
+  --red: #ef4444;
+  --purple: #8b5cf6;
 }
 
 * {
@@ -297,6 +297,7 @@ footer {
 footer a {
   color: var(--accent);
   text-decoration: none;
+  cursor: pointer;
 }
 
 footer a:hover {
@@ -308,4 +309,61 @@ footer a:hover {
   justify-content: center;
   gap: 2rem;
   margin-bottom: 1.5rem;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 9999;
+}
+
+.modal-overlay.active {
+  display: flex;
+}
+
+.modal-content {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 2rem;
+  width: 100%;
+  max-width: 600px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  position: relative;
+  color: var(--t2);
+}
+
+.modal-content h2 {
+  color: var(--t1);
+  margin-bottom: 1rem;
+}
+
+.modal-content ul {
+  padding-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.modal-content li {
+  margin-bottom: 0.5rem;
+}
+
+.modal-close {
+  position: absolute;
+  top: 1rem;
+  right: 1.5rem;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--t2);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  color: var(--t1);
 }
