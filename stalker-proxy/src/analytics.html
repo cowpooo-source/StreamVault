@@ -265,7 +265,7 @@
       <div class="section-title">Recent Activity (Last 20)</div>
       <div class="table-wrapper">
         <table id="v-guest-table">
-          <thead><tr><th>User</th><th>Location</th><th>Activity</th><th>Last Seen</th></tr></thead>
+          <thead><tr><th>User</th><th>Role</th><th>Location</th><th>Activity</th><th>Last Seen</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -536,9 +536,16 @@ function updateTables(d) {
   }).join('');
 
   const gBody = document.querySelector('#v-guest-table tbody');
-  gBody.innerHTML = (d.recent_guests || []).map(g => `
+  gBody.innerHTML = (d.recent_guests || []).map(g => {
+    let rColor = 'var(--t2)';
+    if (g.role === 'admin') rColor = 'var(--red)';
+    else if (g.role === 'pro') rColor = 'var(--purple)';
+    else if (g.role === 'regular') rColor = 'var(--accent)';
+    else if (g.role === 'guest') rColor = 'var(--green)';
+    return `
     <tr>
       <td><code>${esc(g.guest_id)}</code></td>
+      <td><span class="tag" style="background:rgba(255,255,255,0.05);color:${rColor}">${esc(g.role).toUpperCase()}</span></td>
       <td style="color:var(--t2)">${esc(g.ip)}</td>
       <td>
         <div style="display:flex;gap:.3rem">
@@ -548,7 +555,7 @@ function updateTables(d) {
       </td>
       <td style="white-space:nowrap">${ago(g.last_seen)}</td>
     </tr>
-  `).join('');
+  `}).join('');
 
   const wBody = document.querySelector('#v-watch-table tbody');
   wBody.innerHTML = (d.most_watched || []).map(w => `

@@ -144,7 +144,15 @@ app.use((req, res, next) => {
       cache.trackVisitor(ip, req.headers["user-agent"]);
       
       const guestId = req.headers["x-guest-id"];
-      if (guestId) cache.trackGuest(guestId, ip);
+      if (guestId) {
+        let role = 'guest';
+        const token = req.headers.authorization?.slice(7) || req.cookies?.sv_auth;
+        if (token) {
+          const user = auth.verifyToken(token);
+          if (user) role = user.role;
+        }
+        cache.trackGuest(guestId, ip, role);
+      }
     }
   });
 
@@ -203,7 +211,10 @@ app.put("/api/sync/:type", auth.optionalAuth, express.json(), (req, res) => {
   cache.saveGuestData(sid, cid, type, data);
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
   const guestId = req.headers["x-guest-id"];
-  if (guestId) cache.trackGuest(guestId, ip);
+  if (guestId) {
+    const role = req.user ? req.user.role : 'guest';
+    cache.trackGuest(guestId, ip, role);
+  }
   res.json({ ok: true });
 });
 

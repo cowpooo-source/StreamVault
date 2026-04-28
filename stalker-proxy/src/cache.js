@@ -31,7 +31,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS visitors (
 )`);
 db.exec(`CREATE TABLE IF NOT EXISTS guests (
   guest_id TEXT PRIMARY KEY, ip TEXT, created_at INTEGER, last_seen INTEGER,
-  connections INTEGER DEFAULT 0, favorites INTEGER DEFAULT 0, history INTEGER DEFAULT 0
+  connections INTEGER DEFAULT 0, favorites INTEGER DEFAULT 0, history INTEGER DEFAULT 0,
+  role TEXT DEFAULT 'guest'
 )`);
 db.exec(`CREATE TABLE IF NOT EXISTS watch_log (
   name TEXT NOT NULL, type TEXT NOT NULL, plays INTEGER DEFAULT 0,
@@ -52,6 +53,7 @@ try { db.exec("ALTER TABLE visitors ADD COLUMN device TEXT DEFAULT 'Unknown'"); 
 try { db.exec("ALTER TABLE portals ADD COLUMN avg_latency INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE portals ADD COLUMN errors INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE watch_log ADD COLUMN last_watched INTEGER"); } catch {}
+try { db.exec("ALTER TABLE guests ADD COLUMN role TEXT DEFAULT 'guest'"); } catch {}
 db.exec(`CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, guest_id TEXT,
   user_agent TEXT, ip TEXT, created_at INTEGER
@@ -79,8 +81,8 @@ const stmtTrackPortal = db.prepare(`INSERT INTO portals (key, portal, mac, type,
   ON CONFLICT(key) DO UPDATE SET last_seen = ?, hits = hits + 1, type = excluded.type,
     avg_latency = (avg_latency * hits + excluded.avg_latency) / (hits + 1),
     errors = errors + excluded.errors`);
-const stmtTrackGuest = db.prepare(`INSERT INTO guests (guest_id, ip, created_at, last_seen) VALUES (?, ?, ?, ?)
-  ON CONFLICT(guest_id) DO UPDATE SET last_seen = ?, ip = ?`);
+const stmtTrackGuest = db.prepare(`INSERT INTO guests (guest_id, ip, created_at, last_seen, role) VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(guest_id) DO UPDATE SET last_seen = ?, ip = ?, role = CASE WHEN excluded.role != 'guest' THEN excluded.role ELSE role END`);
 const stmtTrackWatch = db.prepare(`INSERT INTO watch_log (name, type, plays) VALUES (?, ?, 1)
   ON CONFLICT(name, type) DO UPDATE SET plays = plays + 1`);
 
@@ -283,10 +285,11 @@ function getStats() {
 
   // Guest/user stats
   const totalGuests = db.prepare("SELECT COUNT(*) AS cnt FROM guests").get().cnt;
-  const recentGuestRows = db.prepare("SELECT guest_id, ip, created_at, last_seen, connections, favorites, history FROM guests ORDER BY last_seen DESC LIMIT 20").all();
-  const recentGuests = recentGuestRows.map(({ guest_id, ip, created_at, last_seen, connections, favorites, history }) => ({
+  const recentGuestRows = db.prepare("SELECT guest_id, ip, created_at, last_seen, connections, favorites, history, role FROM guests ORDER BY last_seen DESC LIMIT 20").all();
+  const recentGuests = recentGuestRows.map(({ guest_id, ip, created_at, last_seen, connections, favorites, history, role }) => ({
     guest_id: guest_id?.substring(0, 8) + "...", ip: ip?.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '$1.$2.***.$4') || "",
     created_at, last_seen, connections: connections || 0, favorites: favorites || 0, history: history || 0,
+    role: role || 'guest'
   }));
 
   // Most watched
@@ -308,13 +311,13 @@ function getStats() {
   };
 }
 
-function trackGuest(guestId, ip) {
+function trackGuest(guestId, ip, role = 'guest') {
   if (!guestId) return;
   const now = Date.now();
   activeUsers.set(guestId, now); // In-memory update
   const nowSec = Math.floor(now / 1000);
   const masked = maskIp(ip);
-  stmtTrackGuest.run(guestId, masked, nowSec, nowSec, nowSec, masked);
+  stmtTrackGuest.run(guestId, masked, nowSec, nowSec, role, nowSec, masked);
 }
 
 const GUEST_ACTIVITY_FIELDS = new Set(["connections", "favorites", "history"]);
