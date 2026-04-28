@@ -3278,6 +3278,14 @@ export default function App() {
   // ── hidden cats per section
   const [hiddenCats, setHiddenCats] = useState({live:[], vod:[], series:[]});
 
+  // If current category becomes hidden, switch back to All
+  useEffect(() => {
+    if (cat !== "All" && isCatHidden(section, cat)) {
+      setCat("All");
+      setPage(1);
+    }
+  }, [hiddenCats, section, cat]);
+
   // ── EPG
   const [epgURL, setEpgURL]   = useState("");
   const [epgData, setEpgData] = useState(null);
@@ -4690,14 +4698,12 @@ export default function App() {
                   setCtx({x:e.clientX, y:e.clientY, sec:section, type: "container"});
                 }
               }}>
-                {curCats.map(c => {
-                  const hidden = c !== "All" && isCatHidden(section, c);
+                {curCats.filter(c => c === "All" || !isCatHidden(section, c)).map(c => {
                   return (
                     <div key={c}
-                      className={`cat ${cat===c?"on":""} ${hidden?"cat-hidden":""}`}
+                      className={`cat ${cat===c?"on":""}`}
                       title={c}
                       onClick={() => {
-                        if (hidden) return;
                         setCat(c); setPage(1);
                         if (conn?.type === "stalker" && (section === "vod" || section === "series")) {
                           const apiCats = section === "vod" ? stalkerVodCats : stalkerSeriesCats;
