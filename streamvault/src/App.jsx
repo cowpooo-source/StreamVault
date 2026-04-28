@@ -3021,7 +3021,13 @@ const NAV = [
 ];
 
 // ── MAIN APP ──
-const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epgData, nowMs, onPlay, onPlayCatchup }, outerRef) {
+const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup }, outerRef) {
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   const PX_PER_MIN = 3;
   const TOTAL_HOURS = 8;
   const TOTAL_MS = TOTAL_HOURS * 3600000;
@@ -3240,17 +3246,10 @@ export default function App() {
   const [visibleLimit, setVisibleLimit] = useState(20);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
   const [showCatEditor, setShowCatEditor] = useState(null); // section name or null
-  const [now, setNow]         = useState(Date.now());
 
   useEffect(() => {
     setVisibleLimit(20);
   }, [cat, section]);
-
-  // Update "now" every minute to refresh progress bars and EPG
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60000);
-    return () => clearInterval(timer);
-  }, []);
 
   // ── theme
   const [themeName, setThemeName] = useState("Dark");
@@ -5335,13 +5334,11 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
       ) : (
         <>
           {/* Scrollable grid */}
-          <TimelineGrid 
+          <TimelineGrid
             ref={outerRef}
-            channels={filteredChannels} 
-            epgData={epgData} 
-            nowMs={nowMs} 
-            onPlay={onPlay} 
-            onPlayCatchup={onPlayCatchup} 
+            channels={filteredChannels}
+            epgData={epgData}
+            onPlay={onPlay}            onPlayCatchup={onPlayCatchup} 
           />
 
           {/* Navigation bar */}
