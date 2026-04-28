@@ -3239,6 +3239,7 @@ export default function App() {
   const [playing, setPlaying] = useState(null);
   const [visibleLimit, setVisibleLimit] = useState(20);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
+  const [showCatEditor, setShowCatEditor] = useState(null); // section name or null
   const [now, setNow]         = useState(Date.now());
 
   useEffect(() => {
@@ -4236,11 +4237,16 @@ export default function App() {
     if (!cat) return [];
     const items = getItems(section);
     return items.filter(item => {
-      const catMatch = cat === "All" || item.group === cat;
+      let catMatch = false;
+      if (cat === "All") {
+        catMatch = !isCatHidden(section, item.group);
+      } else {
+        catMatch = item.group === cat;
+      }
       const searchMatch = !search || item.name?.toLowerCase().includes(search.toLowerCase());
       return catMatch && searchMatch;
     });
-  }, [getItems, section, cat, search]);
+  }, [cat, getItems, search, section, hiddenCats]);
 
   const favItems = useMemo(() => ({
     live: Object.values(favs.live||{}),
@@ -4678,7 +4684,12 @@ export default function App() {
           <div className="c-body">
             {/* Categories sidebar */}
             {curCats.length > 1 && (
-              <div className="cats">
+              <div className="cats" onContextMenu={(e) => {
+                if (e.target === e.currentTarget) {
+                  e.preventDefault();
+                  setCtx({x:e.clientX, y:e.clientY, sec:section, type: "container"});
+                }
+              }}>
                 {curCats.map(c => {
                   const hidden = c !== "All" && isCatHidden(section, c);
                   return (
@@ -4695,8 +4706,10 @@ export default function App() {
                         }
                       }}
                       onContextMenu={e => {
+                        e.stopPropagation();
                         e.preventDefault();
-                        if (c !== "All") setCtx({x:e.clientX, y:e.clientY, sec:section, catName:c});
+                        if (c !== "All") setCtx({x:e.clientX, y:e.clientY, sec:section, catName:c, type: "item"});
+                        else setCtx({x:e.clientX, y:e.clientY, sec:section, type: "container"});
                       }}>
                       {c}
                     </div>
@@ -4950,12 +4963,23 @@ export default function App() {
       {/* ── CONTEXT MENU ── */}
       {ctx && (
         <div className="ctx-menu" style={{left:ctx.x, top:ctx.y}} onClick={e=>e.stopPropagation()}>
-          <div className="ctx-item" onClick={() => {toggleHideCat(ctx.sec, ctx.catName);setCtx(null);}}>
-            {isCatHidden(ctx.sec, ctx.catName) ? `👁 ${t("showCategory")}` : `🙈 ${t("hideCategory")}`}
-          </div>
-          <div className="ctx-item" onClick={() => {setCat(ctx.catName);setCtx(null);}}>
-            📌 {t("filterToThis")}
-          </div>
+          {ctx.type === "container" ? (
+             <div className="ctx-item" onClick={() => { setShowCatEditor(ctx.sec); setCtx(null); }}>
+               📝 {t("editCategories") || "Edit Categories"}
+             </div>
+          ) : (
+             <>
+               <div className="ctx-item" onClick={() => {toggleHideCat(ctx.sec, ctx.catName);setCtx(null);}}>
+                 {isCatHidden(ctx.sec, ctx.catName) ? `👁 ${t("showCategory")}` : `🙈 ${t("hideCategory")}`}
+               </div>
+               <div className="ctx-item" onClick={() => {setCat(ctx.catName);setCtx(null);}}>
+                 📌 {t("filterToThis")}
+               </div>
+               <div className="ctx-item" onClick={() => { setShowCatEditor(ctx.sec); setCtx(null); }}>
+                 📝 {t("editCategories") || "Edit Categories"}
+               </div>
+             </>
+          )}
         </div>
       )}
 
@@ -5063,6 +5087,38 @@ export default function App() {
           t={t}
         />
       )}
+
+      {/* ── CATEGORY EDITOR MODAL ── */}
+      {showCatEditor && (() => {
+        const editSec = showCatEditor;
+        const editCats = editSec === "live" ? (["All", ...new Set(channels.map(i=>i.group).filter(Boolean))]) 
+                       : editSec === "vod" ? (conn?.type === "stalker" ? stalkerVodCats.map(c=>c.title) : ["All", ...new Set(vod.map(i=>i.group).filter(Boolean))])
+                       : editSec === "series" ? (conn?.type === "stalker" ? stalkerSeriesCats.map(c=>c.title) : ["All", ...new Set(series.map(i=>i.group).filter(Boolean))])
+                       : [];
+        return (
+          <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+               onClick={e => { if (e.target === e.currentTarget) setShowCatEditor(null); }}>
+            <div style={{background:"var(--card, #0f0f1c)",border:"1px solid var(--border, rgba(255,255,255,0.08))",borderRadius:14,padding:"1.8rem",width:"100%",maxWidth:460,boxShadow:"0 12px 48px rgba(0,0,0,0.6)", maxHeight:"80vh", display:"flex", flexDirection:"column"}}>
+              <div style={{fontSize:"1.3rem",fontWeight:700,marginBottom:"1.2rem",color:"var(--t1)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span>{t("editCategories") || "Edit Categories"}</span>
+                <span style={{fontSize:".8rem",fontWeight:400,color:"var(--t3)",textTransform:"uppercase"}}>{LABEL[editSec]}</span>
+              </div>
+              <div style={{flex:1, overflowY:"auto", marginBottom:"1.5rem", display:"flex", flexDirection:"column", gap:".7rem", paddingRight:".5rem"}}>
+                {editCats.filter(c => c !== "All").map(c => {
+                   const hidden = isCatHidden(editSec, c);
+                   return (
+                     <label key={c} style={{display:"flex", alignItems:"center", gap:".8rem", cursor:"pointer", color:"var(--t1)", fontSize:".98rem", background:"rgba(255,255,255,0.03)", padding:".7rem .9rem", borderRadius:8, border:"1px solid var(--border)"}}>
+                       <input type="checkbox" checked={!hidden} onChange={() => toggleHideCat(editSec, c)} style={{cursor:"pointer", width:20, height:20}} />
+                       <span style={{flex:1}}>{c}</span>
+                     </label>
+                   );
+                })}
+              </div>
+              <button onClick={() => setShowCatEditor(null)} className="btn-go" style={{width:"100%", padding:"1rem"}}>Done</button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
