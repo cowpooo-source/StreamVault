@@ -33,13 +33,18 @@ router.post("/auth/register", registerLimiter, express.json(), async (req, res) 
 // ── POST /api/auth/login ──
 router.post("/auth/login", loginLimiter, express.json(), async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, force } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Username and password required" });
-    const session = await auth.authenticate(username, password);
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+    const session = await auth.authenticate(username, password, ip, force === true);
     setAuthCookie(res, session.token);
     res.json(session);
   } catch (e) {
-    res.status(401).json({ error: e.message });
+    if (e.code === 'MAX_LOGINS_REACHED') {
+      res.status(403).json({ error: e.message, code: 'MAX_LOGINS_REACHED' });
+    } else {
+      res.status(401).json({ error: e.message });
+    }
   }
 });
 

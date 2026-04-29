@@ -295,12 +295,30 @@ function AuthScreen({ onAuth, onGuest }) {
       const body = { username, password };
       if (mode === "register") body.email = emailInput;
 
-      const res = await fetch(`${API}${endpoint}`, {
+      let res = await fetch(`${API}${endpoint}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
+      let data = await res.json();
+      
+      if (!res.ok) {
+        if (data.code === 'MAX_LOGINS_REACHED') {
+          if (window.confirm("Max login reached. Do you want to force login which will logout previous user?")) {
+            body.force = true;
+            res = await fetch(`${API}${endpoint}`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed");
+          } else {
+            throw new Error(data.error || "Failed");
+          }
+        } else {
+          throw new Error(data.error || "Failed");
+        }
+      }
+      
       localStorage.setItem("sv-auth-token", data.token);
       onAuth(data.user);
     } catch (e) { setErr(e.message); }
@@ -4765,14 +4783,12 @@ export default function App() {
                 )}
                 {section==="live" ? (
                   <div className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                    <TimelineGrid 
+                    <TimelineGrid
                       ref={liveGridRef}
                       channels={paginatedItems.slice(0, visibleLimit)}
                       epgData={epgData}
-                      nowMs={now}
                       onPlay={playItem}
-                      onPlayCatchup={playCatchup}
-                    />
+                      onPlayCatchup={playCatchup}                    />
                   </div>
                 ) : (
                   <div className="vod-grid">

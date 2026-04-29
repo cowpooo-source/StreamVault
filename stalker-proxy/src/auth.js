@@ -201,7 +201,7 @@ async function resetPassword(token, newPassword) {
   return stmts.getUserById.get(row.user_id);
 }
 
-async function authenticate(username, password, ip = "unknown") {
+async function authenticate(username, password, ip = "unknown", force = false) {
   const user = stmts.getUserByUsername.get(username);
   if (!user) {
     stmts.trackFailedLogin.run(ip, Date.now(), Date.now());
@@ -220,7 +220,13 @@ async function authenticate(username, password, ip = "unknown") {
   const activeSessions = stmts.countActiveUserSessions.get(user.id, Date.now()).cnt;
   
   if (activeSessions >= (limits.maxLogins || 1)) {
-    throw new Error(`Maximum concurrent logins reached (${limits.maxLogins}). Please log out from another device.`);
+    if (force) {
+      revokeAllUserTokens(user.id);
+    } else {
+      const err = new Error(`Maximum concurrent logins reached (${limits.maxLogins}). Please log out from another device.`);
+      err.code = 'MAX_LOGINS_REACHED';
+      throw err;
+    }
   }
 
   // Success — clear failed attempts for this IP
