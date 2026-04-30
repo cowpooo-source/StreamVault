@@ -277,7 +277,22 @@ function AuthScreen({ onAuth, onGuest }) {
   const [msg, setMsg] = useState("");
   const [forceLogin, setForceLogin] = useState(false);
   const formRef = useRef(null);
+  const turnstileContainerRef = useRef(null);
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
+
+  useEffect(() => {
+    if (siteKey && window.turnstile && turnstileContainerRef.current) {
+      turnstileContainerRef.current.innerHTML = "";
+      try {
+        window.turnstile.render(turnstileContainerRef.current, {
+          sitekey: siteKey,
+          theme: 'dark'
+        });
+      } catch (e) {
+        console.error("Turnstile render error", e);
+      }
+    }
+  }, [mode, siteKey]);
 
   async function submit(e) {
     e?.preventDefault();
