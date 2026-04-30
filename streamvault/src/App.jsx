@@ -2015,6 +2015,40 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
               })}
             </div>
           )}
+
+          {/* Catch-up Menu */}
+          {showCatchupMenu && current.type === "live" && epgData?.[current.epgId] && (() => {
+            const now = Date.now();
+            const pastPrograms = epgData[current.epgId].filter(p => new Date(p.stop).getTime() < now).reverse(); // Most recent first
+            
+            return (
+              <div style={{position:"absolute",bottom:"60px",right:"80px",background:"rgba(0,0,0,.9)",color:"#fff",
+                padding:"1rem",borderRadius:8,zIndex:20,width:"300px",maxHeight:"400px",overflowY:"auto", border:"1px solid var(--border)"}}
+                onClick={e => e.stopPropagation()}>
+                <div style={{fontWeight:700,marginBottom:".8rem",color:"var(--accent)",fontSize:".9rem",textTransform:"uppercase"}}>Catch-up TV Schedule</div>
+                {pastPrograms.length === 0 ? (
+                   <div style={{fontSize:".85rem", color:"var(--t2)"}}>No past programs available.</div>
+                ) : (
+                  pastPrograms.map((p, idx) => (
+                    <div key={idx} 
+                         onClick={() => {
+                           if (onPlayCatchup) {
+                             onPlayCatchup(current, p);
+                             setShowCatchupMenu(false);
+                           }
+                         }}
+                         style={{padding:".6rem",cursor:"pointer",borderRadius:4,fontSize:".85rem",borderBottom:"1px solid var(--border)",
+                         background: "transparent", color: "var(--t1)", display:"flex", flexDirection:"column", gap:".2rem"}}
+                         onMouseEnter={e => e.currentTarget.style.background = "var(--hover-bg)"}
+                         onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <div style={{fontWeight:600}}>{p.title}</div>
+                      <div style={{fontSize:".75rem", color:"var(--t3)"}}>{new Date(p.start).toLocaleTimeString()} - {new Date(p.stop).toLocaleTimeString()}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            );
+          })()}
         </div>
         <div className="player-bar">
           <div style={{flex:1,overflow:"hidden"}}>
@@ -2032,6 +2066,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
           )}
           <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ {t("pip")}</button>
           <button className={`player-ctrl${showStats?" on":""}`} onClick={() => setShowStats(s=>!s)} title="Stream Stats">📊</button>
+          {(audioTracks.length > 1 || subTracks.length > 0) && (
+            <button className={`player-ctrl${showTracksMenu?" on":""}`} onClick={() => { setShowTracksMenu(s=>!s); setShowCatchupMenu(false); }} title="Audio & Subtitles">
+              💬
+            </button>
+          )}
+          {current.type === "live" && epgData?.[current.epgId] && (
+            <button className={`player-ctrl${showCatchupMenu?" on":""}`} onClick={() => { setShowCatchupMenu(s=>!s); setShowTracksMenu(false); }} title="Catch-up TV">
+              ↩️
+            </button>
+          )}
           <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title={t("fav")}>
             {isFav?.(current) ? `♥ ${t("fav")}` : `♡ ${t("fav")}`}
           </button>
@@ -5081,6 +5125,7 @@ export default function App() {
           channelList={playing.type==="live" ? channels : null}
           epgData={epgData}
           onClose={() => setPlaying(null)}
+          onPlayCatchup={playCatchup}
           toggleFav={toggleFav}
           onFav={toggleFav}
           isFav={isFav}
