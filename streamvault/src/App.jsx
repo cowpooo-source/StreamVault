@@ -283,7 +283,7 @@ function AuthScreen({ onAuth, onGuest }) {
     e?.preventDefault();
     setErr(""); setMsg(""); setLoading(true);
 
-    const formData = new FormData(formRef.current);
+    const formData = formRef.current ? new FormData(formRef.current) : new FormData();
     const turnstileResponse = formData.get("cf-turnstile-response");
 
     try {
@@ -364,7 +364,7 @@ function AuthScreen({ onAuth, onGuest }) {
               <div className="fg">
                 <label className="fl">Password</label>
                 <input className="fi" type="password" placeholder="Password" name="password" value={password}
-                  onChange={e => {setPassword(e.target.value); if(forceLogin) setForceLogin(false);}} onKeyDown={e => e.key==="Enter" && submit()} />
+                  onChange={e => {setPassword(e.target.value); if(forceLogin) setForceLogin(false);}} />
               </div>
               {mode === "login" && (
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"-0.5rem",marginBottom:"0.8rem"}}>
@@ -394,7 +394,7 @@ function AuthScreen({ onAuth, onGuest }) {
             <p style={{fontSize:".8rem",color:"var(--t2)",marginBottom:"1.2rem",textAlign:"center"}}>Enter your email address and we'll send you a link to reset your password.</p>
             {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
             {msg && <div style={{background:"rgba(0,212,255,0.1)",color:"var(--accent)",padding:".8rem",borderRadius:8,fontSize:".8rem",marginBottom:"1rem",border:"1px solid var(--accent-22)"}}>{msg}</div>}
-            <form onSubmit={submit}>
+            <form ref={formRef} onSubmit={submit}>
               <div className="fg">
                 <label className="fl">Email Address</label>
                 <input className="fi" type="email" placeholder="email@example.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} autoFocus />
