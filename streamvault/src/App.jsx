@@ -1639,7 +1639,33 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         hlsRef.current = hls;
         hls.loadSource(u);
         hls.attachMedia(video);
-        hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
+        hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(()=>{});
+          
+          // Extract Audio Tracks
+          if (hls.audioTracks && hls.audioTracks.length > 1) {
+            setAudioTracks(hls.audioTracks);
+            setActiveAudio(hls.audioTrack);
+          } else {
+            setAudioTracks([]);
+          }
+
+          // Extract Subtitle Tracks
+          if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
+            setSubTracks(hls.subtitleTracks);
+            setActiveSub(hls.subtitleTrack);
+          } else {
+            setSubTracks([]);
+          }
+        });
+
+        // Listen for track changes triggered by the stream itself
+        hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
+          setActiveAudio(data.id);
+        });
+        hls.on(window.Hls.Events.SUBTITLE_TRACK_SWITCH, (event, data) => {
+          setActiveSub(data.id);
+        });
         hls.on(window.Hls.Events.ERROR, (_, data) => {
           if (!data.fatal) return;
           const code = data.response?.code;
