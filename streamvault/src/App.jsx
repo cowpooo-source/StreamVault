@@ -377,9 +377,7 @@ function AuthScreen({ onAuth, onGuest }) {
               )}
               {siteKey && (
                 <div 
-                  className="cf-turnstile" 
-                  data-sitekey={siteKey} 
-                  data-theme="dark"
+                  ref={turnstileContainerRef}
                   style={{ marginBottom: "1rem", display: "flex", justifyContent: "center" }}
                 ></div>
               )}
