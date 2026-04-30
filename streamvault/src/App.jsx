@@ -350,6 +350,33 @@ function AuthScreen({ onAuth, onGuest }) {
     finally { setLoading(false); }
   }
 
+  async function submitGuest(e) {
+    e?.preventDefault();
+    setErr(""); setMsg(""); setLoading(true);
+
+    const formData = formRef.current ? new FormData(formRef.current) : new FormData();
+    const turnstileResponse = formData.get("cf-turnstile-response");
+
+    try {
+      const res = await fetch(`${API}/api/auth/guest`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),
+      });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || "Failed");
+      }
+      
+      onGuest();
+    } catch (e) {
+      setErr(e.message);
+      if (window.turnstile) window.turnstile.reset();
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="setup">
       <div className="card" style={{maxWidth:380}}>
@@ -421,12 +448,12 @@ function AuthScreen({ onAuth, onGuest }) {
         )}
 
         <div style={{textAlign:"center",marginTop:"1.2rem"}}>
-          <button onClick={onGuest} style={{width:"100%",padding:".65rem",background:"transparent",
+          <button onClick={submitGuest} disabled={loading} style={{width:"100%",padding:".65rem",background:"transparent",
             border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,color:"var(--t2)",cursor:"pointer",
             fontSize:".88rem",fontWeight:500,fontFamily:"'DM Sans',sans-serif",transition:"all .2s"}}
             onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.color="var(--accent)"}}
             onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.15)";e.currentTarget.style.color="var(--t2)"}}>
-            Continue as Guest
+            {loading ? "..." : "Continue as Guest"}
           </button>
           <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed — some features limited</div>
           {mode === "register" && (
