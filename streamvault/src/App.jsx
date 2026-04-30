@@ -1426,6 +1426,26 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   });
   const [current, setCurrent] = useState(item);
   const [adState, setAdState] = useState(null);
+  const [audioTracks, setAudioTracks] = useState([]);
+  const [activeAudio, setActiveAudio] = useState(-1);
+  const [subTracks, setSubTracks] = useState([]);
+  const [activeSub, setActiveSub] = useState(-1);
+  const [showTracksMenu, setShowTracksMenu] = useState(false);
+  const [showCatchupMenu, setShowCatchupMenu] = useState(false);
+
+  function selectAudioTrack(id) {
+    if (hlsRef.current) {
+      hlsRef.current.audioTrack = id;
+      setActiveAudio(id);
+    }
+  }
+
+  function selectSubtitleTrack(id) {
+    if (hlsRef.current) {
+      hlsRef.current.subtitleTrack = id;
+      setActiveSub(id);
+    }
+  }
 
   const showOSD = useCallback(() => {
     setOsd(true);
