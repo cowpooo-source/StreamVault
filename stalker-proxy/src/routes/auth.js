@@ -3,6 +3,31 @@ const router = express.Router();
 const auth = require("../auth");
 const email = require("../email");
 const rateLimit = require("express-rate-limit");
+const fetch = require("node-fetch");
+
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY;
+
+async function verifyTurnstile(token, ip) {
+  if (!TURNSTILE_SECRET_KEY) return true; // Bypass if not configured
+  if (!token) return false;
+
+  const formData = new URLSearchParams();
+  formData.append('secret', TURNSTILE_SECRET_KEY);
+  formData.append('response', token);
+  formData.append('remoteip', ip);
+
+  try {
+    const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      body: formData,
+      method: 'POST',
+    });
+    const outcome = await result.json();
+    return outcome.success;
+  } catch (err) {
+    console.error("Turnstile verification failed:", err);
+    return false;
+  }
+}
 
 function setAuthCookie(res, token) {
   res.cookie("sv_auth", token, {
@@ -17,8 +42,17 @@ const registerLimiter = rateLimit({ windowMs: 3600000, max: 10, message: { error
 
 // ── POST /api/auth/register ──
 router.post("/auth/register", registerLimiter, express.json(), async (req, res) => {
+  const turnstileToken = req.body.cf_turnstile_response;
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+
+  if (TURNSTILE_SECRET_KEY) {
+    const isValid = await verifyTurnstile(turnstileToken, ip);
+    if (!isValid) return res.status(403).json({ error: "CAPTCHA verification failed. Please try again." });
+  }
+
   const open = process.env.REGISTRATION_OPEN !== "false";
   if (!open) return res.status(403).json({ error: "Registration is currently closed" });
+
   try {
     const { username, password, email: userEmail } = req.body;
     await auth.createUser(username, password, undefined, userEmail);
@@ -32,10 +66,17 @@ router.post("/auth/register", registerLimiter, express.json(), async (req, res) 
 
 // ── POST /api/auth/login ──
 router.post("/auth/login", loginLimiter, express.json(), async (req, res) => {
+  const turnstileToken = req.body.cf_turnstile_response;
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+
+  if (TURNSTILE_SECRET_KEY) {
+    const isValid = await verifyTurnstile(turnstileToken, ip);
+    if (!isValid) return res.status(403).json({ error: "CAPTCHA verification failed. Please try again." });
+  }
+
   try {
     const { username, password, force } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Username and password required" });
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
     const session = await auth.authenticate(username, password, ip, force === true);
     setAuthCookie(res, session.token);
     res.json(session);

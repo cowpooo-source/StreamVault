@@ -15,6 +15,7 @@ beforeAll(async () => {
   process.env.ADMIN_USER = "admin";
   process.env.JWT_SECRET = "api-test-secret";
   process.env.DEFAULT_ROLE = "regular";
+  process.env.TURNSTILE_SECRET_KEY = ""; // Ensure verification is bypassed during tests
 
   // Clean old test DB
   try { require("fs").unlinkSync(process.env.CACHE_DB); } catch {}
