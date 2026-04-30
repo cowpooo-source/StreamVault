@@ -275,10 +275,16 @@ function AuthScreen({ onAuth, onGuest }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 
   async function submit(e) {
     e?.preventDefault();
     setErr(""); setMsg(""); setLoading(true);
+
+    const formData = new FormData(e.target);
+    const turnstileResponse = formData.get("cf-turnstile-response");
+
     try {
       if (mode === "forgot") {
         if (!emailInput) throw new Error("Email is required");
@@ -292,7 +298,7 @@ function AuthScreen({ onAuth, onGuest }) {
       }
 
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body = { username, password };
+      const body = { username, password, cf_turnstile_response: turnstileResponse };
       if (mode === "register") body.email = emailInput;
 
       let res = await fetch(`${API}${endpoint}`, {
@@ -321,7 +327,10 @@ function AuthScreen({ onAuth, onGuest }) {
       
       localStorage.setItem("sv-auth-token", data.token);
       onAuth(data.user);
-    } catch (e) { setErr(e.message); }
+    } catch (e) {
+      setErr(e.message);
+      if (window.turnstile) window.turnstile.reset();
+    }
     finally { setLoading(false); }
   }
 
@@ -360,6 +369,14 @@ function AuthScreen({ onAuth, onGuest }) {
                 <div style={{textAlign:"right",marginTop:"-0.5rem",marginBottom:"0.8rem"}}>
                   <button type="button" onClick={() => setMode("forgot")} style={{background:"none",border:"none",color:"var(--accent)",fontSize:".75rem",cursor:"pointer",padding:0}}>Forgot Password?</button>
                 </div>
+              )}
+              {siteKey && (
+                <div 
+                  className="cf-turnstile" 
+                  data-sitekey={siteKey} 
+                  data-theme="dark"
+                  style={{ marginBottom: "1rem", display: "flex", justifyContent: "center" }}
+                ></div>
               )}
               <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%"}}>
                 {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
