@@ -275,14 +275,15 @@ function AuthScreen({ onAuth, onGuest }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
-  const [turnstileToken, setTurnstileToken] = useState("");
+  const [forceLogin, setForceLogin] = useState(false);
+  const formRef = useRef(null);
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 
   async function submit(e) {
     e?.preventDefault();
     setErr(""); setMsg(""); setLoading(true);
 
-    const formData = new FormData(e.target);
+    const formData = new FormData(formRef.current);
     const turnstileResponse = formData.get("cf-turnstile-response");
 
     try {
@@ -300,6 +301,7 @@ function AuthScreen({ onAuth, onGuest }) {
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
       const body = { username, password, cf_turnstile_response: turnstileResponse };
       if (mode === "register") body.email = emailInput;
+      if (forceLogin) body.force = true;
 
       let res = await fetch(`${API}${endpoint}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -309,14 +311,13 @@ function AuthScreen({ onAuth, onGuest }) {
       
       if (!res.ok) {
         if (data.code === 'MAX_LOGINS_REACHED') {
-          if (window.confirm("Max login reached. Do you want to force login which will logout previous user?")) {
-            body.force = true;
-            res = await fetch(`${API}${endpoint}`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            });
-            data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed");
+          // Reset turnstile as the token is now consumed
+          if (window.turnstile) window.turnstile.reset();
+          
+          if (window.confirm("Max login reached. Do you want to force login which will logout previous user? (You will need to re-verify CAPTCHA)")) {
+            setForceLogin(true);
+            setErr("Please re-verify CAPTCHA and click Login again to force login.");
+            return;
           } else {
             throw new Error(data.error || "Failed");
           }
@@ -345,28 +346,32 @@ function AuthScreen({ onAuth, onGuest }) {
         {mode !== "forgot" ? (
           <>
             <div className="tabs" style={{marginBottom:"1rem"}}>
-              <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("");setMsg("");}}>Login</button>
-              <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("");setMsg("");}}>Register</button>
+              <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("");setMsg("");setForceLogin(false);}}>Login</button>
+              <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("");setMsg("");setForceLogin(false);}}>Register</button>
             </div>
             {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
-            <form onSubmit={submit}>
+            <form ref={formRef} onSubmit={submit}>
               <div className="fg">
                 <label className="fl">Username</label>
-                <input className="fi" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} autoFocus />
+                <input className="fi" placeholder="Username" name="username" value={username} onChange={e => {setUsername(e.target.value); if(forceLogin) setForceLogin(false);}} autoFocus />
               </div>
               {mode === "register" && (
                 <div className="fg">
                   <label className="fl">Email Address</label>
-                  <input className="fi" type="email" placeholder="email@example.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} />
+                  <input className="fi" type="email" placeholder="email@example.com" name="email" value={emailInput} onChange={e => setEmailInput(e.target.value)} />
                 </div>
               )}
               <div className="fg">
                 <label className="fl">Password</label>
-                <input className="fi" type="password" placeholder="Password" value={password}
-                  onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key==="Enter" && submit()} />
+                <input className="fi" type="password" placeholder="Password" name="password" value={password}
+                  onChange={e => {setPassword(e.target.value); if(forceLogin) setForceLogin(false);}} onKeyDown={e => e.key==="Enter" && submit()} />
               </div>
               {mode === "login" && (
-                <div style={{textAlign:"right",marginTop:"-0.5rem",marginBottom:"0.8rem"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"-0.5rem",marginBottom:"0.8rem"}}>
+                  <label style={{display:"flex",alignItems:"center",gap:".4rem",fontSize:".75rem",color:"var(--t2)",cursor:"pointer"}}>
+                    <input type="checkbox" checked={forceLogin} onChange={e => setForceLogin(e.target.checked)} style={{accentColor:"var(--accent)"}} />
+                    Force Login
+                  </label>
                   <button type="button" onClick={() => setMode("forgot")} style={{background:"none",border:"none",color:"var(--accent)",fontSize:".75rem",cursor:"pointer",padding:0}}>Forgot Password?</button>
                 </div>
               )}
