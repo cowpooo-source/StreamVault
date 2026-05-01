@@ -1,4 +1,4 @@
-const CACHE = "sv-mo6mkda1";
+const CACHE = "sv-moneyjsp";
 
 self.addEventListener("install", e => {
   self.skipWaiting();

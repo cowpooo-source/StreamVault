@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import "./app.css";
 
 const API = ""; // Force relative path for production
-const EXOCLICK_VAST_URL = import.meta.env.VITE_EXOCLICK_VAST_URL || "https://s.magsrv.com/v1/vast.php?idzone=5903402";
 
 // Proxy portal images to avoid mixed-content / broken SSL cert issues
 // Skip proxying for known-good HTTPS domains (TMDB, etc.)
@@ -24,108 +23,6 @@ function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", h
 function resolveUrl(raw, base) {
   if (!raw) return "";
   try { return new URL(String(raw).trim(), base).toString(); } catch { return ""; }
-}
-
-function parseVastTime(value) {
-  if (!value) return 0;
-  const text = String(value).trim();
-  if (!text) return 0;
-  if (text.includes(":")) {
-    const parts = text.split(":").map(Number);
-    if (parts.some(Number.isNaN)) return 0;
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    if (parts.length === 2) return parts[0] * 60 + parts[1];
-  }
-  const n = Number(text);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function pingUrl(url) {
-  if (!url) return;
-  try {
-    const img = new Image();
-    img.referrerPolicy = "no-referrer";
-    img.src = url;
-  } catch {}
-}
-
-function pingUrls(urls = []) {
-  urls.forEach(pingUrl);
-}
-
-function mergeTrackers(...sets) {
-  const merged = {};
-  for (const set of sets) {
-    if (!set) continue;
-    for (const [event, urls] of Object.entries(set)) {
-      if (!urls?.length) continue;
-      (merged[event] ||= []).push(...urls);
-    }
-  }
-  for (const [event, urls] of Object.entries(merged)) {
-    merged[event] = [...new Set(urls.filter(Boolean))];
-  }
-  return merged;
-}
-
-function collectVastTrackers(root) {
-  const trackers = {};
-  const push = (event, url) => {
-    if (!event || !url) return;
-    (trackers[event] ||= []).push(url);
-  };
-  root.querySelectorAll("Impression").forEach((node) => push("impression", node.textContent?.trim()));
-  root.querySelectorAll("TrackingEvents Tracking").forEach((node) => push((node.getAttribute("event") || "").toLowerCase(), node.textContent?.trim()));
-  return trackers;
-}
-
-async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) {
-  if (!vastUrl || depth > 2) return null;
-  try {
-    const res = await fetch(vastUrl, { cache: "no-store", credentials: "omit", redirect: "follow" });
-    if (!res.ok) return null;
-    const xml = await res.text();
-    const doc = new DOMParser().parseFromString(xml, "application/xml");
-    if (doc.querySelector("parsererror")) return null;
-
-    const wrapper = doc.querySelector("Wrapper");
-    if (wrapper) {
-      const nextUrl = resolveUrl(wrapper.querySelector("VASTAdTagURI")?.textContent, vastUrl);
-      if (!nextUrl) return null;
-      const wrapperTrackers = collectVastTrackers(wrapper);
-      return await fetchVastAd(nextUrl, videoEl, depth + 1, mergeTrackers(inheritedTrackers, wrapperTrackers));
-    }
-
-    const inline = doc.querySelector("InLine");
-    const linear = inline?.querySelector("Linear");
-    if (!inline || !linear) return null;
-
-    const mediaFiles = [...linear.querySelectorAll("MediaFile")]
-      .map((node) => ({
-        url: node.textContent?.trim(),
-        type: node.getAttribute("type") || "",
-      }))
-      .filter((file) => file.url);
-
-    if (!mediaFiles.length) return null;
-
-    const media = mediaFiles.find((file) => file.type.startsWith("video/") && (!videoEl?.canPlayType || videoEl.canPlayType(file.type))) ||
-      mediaFiles.find((file) => file.type.startsWith("video/")) ||
-      mediaFiles[0];
-
-    const trackers = mergeTrackers(inheritedTrackers, collectVastTrackers(inline));
-    return {
-      title: inline.querySelector("AdTitle")?.textContent?.trim() || "Sponsored",
-      mediaUrl: resolveUrl(media.url, vastUrl),
-      mediaType: media.type,
-      clickThrough: resolveUrl(inline.querySelector("VideoClicks > ClickThrough")?.textContent, vastUrl),
-      duration: parseVastTime(linear.querySelector("Duration")?.textContent),
-      skipOffset: linear.getAttribute("skipoffset") ? parseVastTime(linear.getAttribute("skipoffset")) : null,
-      trackers,
-    };
-  } catch {
-    return null;
-  }
 }
 
 // ── Adsterra Social Bar ──
@@ -177,36 +74,6 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
 
   return null;
 }
-
-// ── ExoClick Native Banner ──
-const ExoclickNativeBanner = memo(function ExoclickNativeBanner({ enabled }) {
-  useEffect(() => {
-    if (!enabled) return;
-
-    // Load the main AdProvider script if it doesn't exist
-    const existingScript = document.querySelector('script[src="https://a.magsrv.com/ad-provider.js"]');
-    if (!existingScript) {
-      const script = document.createElement("script");
-      script.type = "application/javascript";
-      script.src = "https://a.magsrv.com/ad-provider.js";
-      script.async = true;
-      document.head.appendChild(script);
-    }
-
-    // Trigger the ad serving
-    window.AdProvider = window.AdProvider || [];
-    window.AdProvider.push({ "serve": {} });
-
-  }, [enabled]);
-
-  if (!enabled) return null;
-
-  return (
-    <div className="ad-container" style={{ margin: "1rem 0", minHeight: "150px", width: "100%", display: "flex", justifyContent: "center" }}>
-      <ins className="eas6a97888e20" data-zoneid="5910344"></ins>
-    </div>
-  );
-});
 
 // ── Reset Password Modal ──
 function ResetPasswordModal({ token, onClose }) {
@@ -1821,7 +1688,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 
       if (isAdEligible && !adPlayedRef.current) {
         adPlayedRef.current = true;
-        const ad = await fetchVastAd(EXOCLICK_VAST_URL, video);
+        const ad = await fetchVastAd(VAST_URL, video);
         if (cancelled || sessionId !== adSessionRef.current) return;
         if (ad?.mediaUrl) {
           const played = await playVastPreroll(video, ad, () => cancelled || sessionId !== adSessionRef.current);
@@ -1945,7 +1812,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
           <video ref={videoRef} className="player-video" controls playsInline />
           {adState?.active && (
             <div className="player-ad">
-              <div className="player-ad-badge">ExoClick Ad</div>
+              <div className="player-ad-badge">Sponsored Ad</div>
               <div className="player-ad-title">{adState.title}</div>
               <div className="player-ad-meta">{adState.mediaType || "VAST preroll"}</div>
               <div className="player-ad-actions">
@@ -4944,7 +4811,6 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="vod-grid">
-                  <ExoclickNativeBanner enabled={isAdEligible && (section === "vod" || section === "series")} />
                     {paginatedItems.map((item,i) => {
                       const faved = isFav(item);
                       const hist = historyMap.get(item.id || item.url);
@@ -5329,7 +5195,6 @@ const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, isFav, t 
                 <button className="vod-fav on" onClick={e=>{e.stopPropagation();toggleFav(item);}}>♥</button>
               </div>
             ))}
-            {label === t("movies") && <ExoclickNativeBanner enabled={isAdEligible} />}
           </div>
         </div>
       ))}
