@@ -1394,7 +1394,7 @@ app.get("/stream", async (req, res) => {
   if (!url) return res.status(400).json({ error: "url required" });
   if (!(await isUrlAllowed(url))) return res.status(403).json({ error: "URL not allowed" });
   try {
-    const headers = { "User-Agent": "StreamVault/1.0" };
+    const headers = { "User-Agent": req.headers["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" };
     if (req.headers.range) headers["Range"] = req.headers.range;
 
     const upstream = await fetch(url, { headers, redirect: "follow" });
