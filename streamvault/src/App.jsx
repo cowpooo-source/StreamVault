@@ -1799,7 +1799,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
       setAdState(null);
       destroyPlayers();
 
-      if (isAdEligible && !adPlayedRef.current) {
+      if (false && isAdEligible && !adPlayedRef.current) {
         adPlayedRef.current = true;
         const ad = await fetchVastAd(VAST_URL, video);
         if (cancelled || sessionId !== adSessionRef.current) return;
