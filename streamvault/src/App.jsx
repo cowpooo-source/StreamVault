@@ -1530,7 +1530,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 
       video.pause();
       video.removeAttribute("src");
-      video.src = needsProxy(ad.mediaUrl) ? streamProxy(ad.mediaUrl) : ad.mediaUrl;
+      video.src = location.protocol === "https:" && ad.mediaUrl.startsWith("http://")
+        ? streamProxy(ad.mediaUrl)
+        : ad.mediaUrl;
       video.controls = true;
       video.playsInline = true;
       video.muted = true;
