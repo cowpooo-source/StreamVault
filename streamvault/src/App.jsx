@@ -1436,6 +1436,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   const [showTracksMenu, setShowTracksMenu] = useState(false);
   const [showCatchupMenu, setShowCatchupMenu] = useState(false);
 
+  const audioTrackLabel = (track, index) =>
+    track?.name || track?.lang || track?.language || `Audio ${index + 1}`;
+  const subtitleTrackLabel = (track, index) =>
+    track?.name || track?.lang || track?.language || `Subtitle ${index + 1}`;
+
   function selectAudioTrack(id) {
     if (hlsRef.current) {
       hlsRef.current.audioTrack = id;
@@ -1450,6 +1455,14 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
     }
   }
 
+  function resetTrackState() {
+    setAudioTracks([]);
+    setActiveAudio(-1);
+    setSubTracks([]);
+    setActiveSub(-1);
+    setShowTracksMenu(false);
+  }
+
   const showOSD = useCallback(() => {
     setOsd(true);
     clearTimeout(osdTimer.current);
@@ -1459,6 +1472,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
   function destroyPlayers() {
     if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
     if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
+    resetTrackState();
     const video = videoRef.current;
     if (video) {
       video.pause();
@@ -1656,26 +1670,19 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         hlsRef.current = hls;
         hls.loadSource(u);
         hls.attachMedia(video);
+        const syncHlsTracks = () => {
+          setAudioTracks(hls.audioTracks || []);
+          setActiveAudio(hls.audioTrack);
+          setSubTracks(hls.subtitleTracks || []);
+          setActiveSub(hls.subtitleTrack);
+        };
         hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
           video.play().catch(()=>{});
-          
-          // Extract Audio Tracks
-          if (hls.audioTracks && hls.audioTracks.length > 1) {
-            setAudioTracks(hls.audioTracks);
-            setActiveAudio(hls.audioTrack);
-          } else {
-            setAudioTracks([]);
-          }
-
-          // Extract Subtitle Tracks
-          if (hls.subtitleTracks && hls.subtitleTracks.length > 0) {
-            setSubTracks(hls.subtitleTracks);
-            setActiveSub(hls.subtitleTrack);
-          } else {
-            setSubTracks([]);
-          }
+          syncHlsTracks();
         });
 
+        hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, syncHlsTracks);
+        hls.on(window.Hls.Events.SUBTITLE_TRACKS_UPDATED, syncHlsTracks);
         // Listen for track changes triggered by the stream itself
         hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
           setActiveAudio(data.id);
@@ -2101,6 +2108,47 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
           </button>
           <button className="player-close" onClick={onClose}>✕ {t("close")}</button>
         </div>
+        {showTracksMenu && (
+          <div className="player-track-menu" onClick={e => e.stopPropagation()}>
+            {audioTracks.length > 1 && (
+              <div className="player-track-section">
+                <div className="player-track-heading">Audio</div>
+                {audioTracks.map((track, index) => (
+                  <button
+                    key={`audio-${track.id ?? index}`}
+                    className={`player-track-item${activeAudio === index ? " on" : ""}`}
+                    onClick={() => selectAudioTrack(index)}
+                  >
+                    <span>{audioTrackLabel(track, index)}</span>
+                    {activeAudio === index && <span className="player-track-check">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            {subTracks.length > 0 && (
+              <div className="player-track-section">
+                <div className="player-track-heading">Subtitles</div>
+                <button
+                  className={`player-track-item${activeSub === -1 ? " on" : ""}`}
+                  onClick={() => selectSubtitleTrack(-1)}
+                >
+                  <span>Off</span>
+                  {activeSub === -1 && <span className="player-track-check">✓</span>}
+                </button>
+                {subTracks.map((track, index) => (
+                  <button
+                    key={`sub-${track.id ?? index}`}
+                    className={`player-track-item${activeSub === index ? " on" : ""}`}
+                    onClick={() => selectSubtitleTrack(index)}
+                  >
+                    <span>{subtitleTrackLabel(track, index)}</span>
+                    {activeSub === index && <span className="player-track-check">✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="kbd-hint">
           <span><span className="kbd">Space</span>{t("playPause")}</span>
           <span><span className="kbd">F</span>{t("fullscreen")}</span>
