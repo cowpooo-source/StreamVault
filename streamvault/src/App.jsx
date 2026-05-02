@@ -10,6 +10,23 @@ function vastProxyUrl(url) {
   return `${API}/api/vast?url=${encodeURIComponent(url)}`;
 }
 
+async function fetchTextWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!res.ok) return "";
+    return await res.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Proxy portal images to avoid mixed-content / broken SSL cert issues
 // Skip proxying for known-good HTTPS domains (TMDB, etc.)
 function imgSrc(url) {
@@ -87,58 +104,61 @@ function collectVastTrackers(root) {
 async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) {
   if (!vastUrl || depth > 2) return null;
   try {
-    const controller = new AbortController();
     // Keep this below Chrome's user-gesture autoplay window.
-    const timeout = setTimeout(() => controller.abort(), VAST_FETCH_TIMEOUT_MS);
-    let xml = "";
-    try {
-      const res = await fetch(vastProxyUrl(vastUrl), { cache: "no-store", credentials: "omit", signal: controller.signal });
-      if (!res.ok) return null;
-      xml = await res.text();
-    } finally {
-      clearTimeout(timeout);
-    }
+    let xml = await fetchTextWithTimeout(vastUrl, VAST_FETCH_TIMEOUT_MS);
+    if (!xml) xml = await fetchTextWithTimeout(vastProxyUrl(vastUrl), VAST_FETCH_TIMEOUT_MS);
+    if (!xml) return null;
     const doc = new DOMParser().parseFromString(xml, "application/xml");
-    if (doc.querySelector("parsererror")) return null;
-
-    const wrapper = doc.querySelector("Wrapper");
-    if (wrapper) {
-      const nextUrl = resolveUrl(wrapper.querySelector("VASTAdTagURI")?.textContent, vastUrl);
-      if (!nextUrl) return null;
-      const wrapperTrackers = collectVastTrackers(wrapper);
-      return await fetchVastAd(nextUrl, videoEl, depth + 1, mergeTrackers(inheritedTrackers, wrapperTrackers));
+    if (doc.querySelector("parsererror")) {
+      const fallbackXml = await fetchTextWithTimeout(vastProxyUrl(vastUrl), VAST_FETCH_TIMEOUT_MS);
+      if (!fallbackXml || fallbackXml === xml) return null;
+      const fallbackDoc = new DOMParser().parseFromString(fallbackXml, "application/xml");
+      if (fallbackDoc.querySelector("parsererror")) return null;
+      return parseVastDocument(fallbackDoc, vastUrl, videoEl, depth, inheritedTrackers);
     }
 
-    const inline = doc.querySelector("InLine");
-    const linear = inline?.querySelector("Linear");
-    if (!inline || !linear) return null;
-
-    const mediaFiles = [...linear.querySelectorAll("MediaFile")]
-      .map((node) => ({
-        url: node.textContent?.trim(),
-        type: node.getAttribute("type") || "",
-      }))
-      .filter((file) => file.url);
-
-    if (!mediaFiles.length) return null;
-
-    const media = mediaFiles.find((file) => file.type.startsWith("video/") && (!videoEl?.canPlayType || videoEl.canPlayType(file.type))) ||
-      mediaFiles.find((file) => file.type.startsWith("video/")) ||
-      mediaFiles[0];
-
-    const trackers = mergeTrackers(inheritedTrackers, collectVastTrackers(inline));
-    return {
-      title: inline.querySelector("AdTitle")?.textContent?.trim() || "Sponsored Ad",
-      mediaUrl: resolveUrl(media.url, vastUrl),
-      mediaType: media.type,
-      clickThrough: resolveUrl(inline.querySelector("VideoClicks > ClickThrough")?.textContent, vastUrl),
-      duration: parseVastTime(linear.querySelector("Duration")?.textContent),
-      skipOffset: linear.getAttribute("skipoffset") ? parseVastTime(linear.getAttribute("skipoffset")) : null,
-      trackers,
-    };
+    return parseVastDocument(doc, vastUrl, videoEl, depth, inheritedTrackers);
   } catch {
     return null;
   }
+}
+
+async function parseVastDocument(doc, vastUrl, videoEl, depth, inheritedTrackers) {
+  const wrapper = doc.querySelector("Wrapper");
+  if (wrapper) {
+    const nextUrl = resolveUrl(wrapper.querySelector("VASTAdTagURI")?.textContent, vastUrl);
+    if (!nextUrl) return null;
+    const wrapperTrackers = collectVastTrackers(wrapper);
+    return await fetchVastAd(nextUrl, videoEl, depth + 1, mergeTrackers(inheritedTrackers, wrapperTrackers));
+  }
+
+  const inline = doc.querySelector("InLine");
+  const linear = inline?.querySelector("Linear");
+  if (!inline || !linear) return null;
+
+  const mediaFiles = [...linear.querySelectorAll("MediaFile")]
+    .map((node) => ({
+      url: node.textContent?.trim(),
+      type: node.getAttribute("type") || "",
+    }))
+    .filter((file) => file.url);
+
+  if (!mediaFiles.length) return null;
+
+  const media = mediaFiles.find((file) => file.type.startsWith("video/") && (!videoEl?.canPlayType || videoEl.canPlayType(file.type))) ||
+    mediaFiles.find((file) => file.type.startsWith("video/")) ||
+    mediaFiles[0];
+
+  const trackers = mergeTrackers(inheritedTrackers, collectVastTrackers(inline));
+  return {
+    title: inline.querySelector("AdTitle")?.textContent?.trim() || "Sponsored Ad",
+    mediaUrl: resolveUrl(media.url, vastUrl),
+    mediaType: media.type,
+    clickThrough: resolveUrl(inline.querySelector("VideoClicks > ClickThrough")?.textContent, vastUrl),
+    duration: parseVastTime(linear.querySelector("Duration")?.textContent),
+    skipOffset: linear.getAttribute("skipoffset") ? parseVastTime(linear.getAttribute("skipoffset")) : null,
+    trackers,
+  };
 }
 
 // ── Adsterra Social Bar ──
