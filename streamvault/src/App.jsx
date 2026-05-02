@@ -81,7 +81,10 @@ function collectVastTrackers(root) {
 async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) {
   if (!vastUrl || depth > 2) return null;
   try {
-    const res = await fetch(vastUrl, { cache: "no-store", credentials: "omit", redirect: "follow" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(vastUrl, { cache: "no-store", credentials: "omit", redirect: "follow", signal: controller.signal });
+    clearTimeout(timeout);
     if (!res.ok) return null;
     const xml = await res.text();
     const doc = new DOMParser().parseFromString(xml, "application/xml");
@@ -1442,6 +1445,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 
       let done = false;
       let skipTimer = null;
+      let startTimeout = null;
       let impressionSent = false;
       const wasMuted = video.muted;
       const wasControls = video.controls;
@@ -1453,6 +1457,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         video.removeEventListener("playing", onPlaying);
         video.removeEventListener("click", onClick);
         if (skipTimer) clearInterval(skipTimer);
+        if (startTimeout) clearTimeout(startTimeout);
         video.muted = wasMuted;
         video.controls = wasControls;
         adFinishRef.current = null;
@@ -1466,6 +1471,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         setAdState(null);
         resolve(result);
       };
+
+      // Ensure ad doesn't hang player forever if blocked/stalled
+      startTimeout = setTimeout(() => {
+        if (!impressionSent) finish(false);
+      }, 10000);
 
       const updateOverlay = () => {
         if (isCancelled()) {
