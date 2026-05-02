@@ -3,6 +3,12 @@ import { createPortal } from "react-dom";
 import "./app.css";
 
 const API = ""; // Force relative path for production
+const VAST_URL = import.meta.env.VITE_VAST_URL || "";
+const VAST_FETCH_TIMEOUT_MS = 3500;
+
+function vastProxyUrl(url) {
+  return `${API}/api/vast?url=${encodeURIComponent(url)}`;
+}
 
 // Proxy portal images to avoid mixed-content / broken SSL cert issues
 // Skip proxying for known-good HTTPS domains (TMDB, etc.)
@@ -82,12 +88,16 @@ async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) 
   if (!vastUrl || depth > 2) return null;
   try {
     const controller = new AbortController();
-    // 2500ms timeout to avoid hitting browser's 5000ms user-gesture autoplay block limit
-    const timeout = setTimeout(() => controller.abort(), 2500);
-    const res = await fetch(vastUrl, { cache: "no-store", credentials: "omit", redirect: "follow", signal: controller.signal });
-    clearTimeout(timeout);
-    if (!res.ok) return null;
-    const xml = await res.text();
+    // Keep this below Chrome's user-gesture autoplay window.
+    const timeout = setTimeout(() => controller.abort(), VAST_FETCH_TIMEOUT_MS);
+    let xml = "";
+    try {
+      const res = await fetch(vastProxyUrl(vastUrl), { cache: "no-store", credentials: "omit", signal: controller.signal });
+      if (!res.ok) return null;
+      xml = await res.text();
+    } finally {
+      clearTimeout(timeout);
+    }
     const doc = new DOMParser().parseFromString(xml, "application/xml");
     if (doc.querySelector("parsererror")) return null;
 
@@ -1447,6 +1457,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
       let done = false;
       let skipTimer = null;
       let startTimeout = null;
+      let maxDurationTimeout = null;
       let impressionSent = false;
       const wasMuted = video.muted;
       const wasControls = video.controls;
@@ -1459,6 +1470,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
         video.removeEventListener("click", onClick);
         if (skipTimer) clearInterval(skipTimer);
         if (startTimeout) clearTimeout(startTimeout);
+        if (maxDurationTimeout) clearTimeout(maxDurationTimeout);
         video.muted = wasMuted;
         video.controls = wasControls;
         adFinishRef.current = null;
@@ -1477,6 +1489,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
       startTimeout = setTimeout(() => {
         if (!impressionSent) finish(false);
       }, 10000);
+      maxDurationTimeout = setTimeout(() => {
+        finish(false, "error");
+      }, Math.min(Math.max((ad.duration || 0) * 1000 + 5000, 15000), 45000));
 
       const updateOverlay = () => {
         if (isCancelled()) {
@@ -1515,7 +1530,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
 
       video.pause();
       video.removeAttribute("src");
-      video.src = ad.mediaUrl;
+      video.src = needsProxy(ad.mediaUrl) ? streamProxy(ad.mediaUrl) : ad.mediaUrl;
       video.controls = true;
       video.playsInline = true;
       video.muted = true;
@@ -1799,16 +1814,19 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
       setAdState(null);
       destroyPlayers();
 
-      if (false && isAdEligible && !adPlayedRef.current) {
+      if (VAST_URL && isAdEligible && !adPlayedRef.current) {
         adPlayedRef.current = true;
-        const ad = await fetchVastAd(VAST_URL, video);
-        if (cancelled || sessionId !== adSessionRef.current) return;
-        if (ad?.mediaUrl) {
-          const played = await playVastPreroll(video, ad, () => cancelled || sessionId !== adSessionRef.current);
+        try {
+          const ad = await fetchVastAd(VAST_URL, video);
           if (cancelled || sessionId !== adSessionRef.current) return;
-          if (!played) {
-            setAdState(null);
+          if (ad?.mediaUrl) {
+            await playVastPreroll(video, ad, () => cancelled || sessionId !== adSessionRef.current);
+            if (cancelled || sessionId !== adSessionRef.current) return;
           }
+        } catch {
+          // Ad failures must not block the requested stream.
+        } finally {
+          setAdState(null);
         }
       }
 

@@ -185,6 +185,38 @@ app.get("/api/feedback", (req, res) => {
   res.json({ feedback: cache.getFeedback() });
 });
 
+// ── GET /api/vast?url=... — same-origin VAST XML proxy for preroll ad tags
+app.get("/api/vast", async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: "url required" });
+  if (!(await isUrlAllowed(url))) return res.status(403).json({ error: "URL not allowed" });
+
+  try {
+    const upstream = await fetch(url, {
+      timeout: 5000,
+      redirect: "follow",
+      headers: {
+        "Accept": "application/xml,text/xml,*/*;q=0.8",
+        "User-Agent": req.headers["user-agent"] || "StreamVault/1.0",
+      },
+    });
+    if (!upstream.ok) return res.status(upstream.status).json({ error: "VAST request failed" });
+
+    const contentLength = Number(upstream.headers.get("content-length") || 0);
+    if (contentLength > 1024 * 1024) return res.status(413).json({ error: "VAST response too large" });
+
+    const xml = await upstream.text();
+    if (xml.length > 1024 * 1024) return res.status(413).json({ error: "VAST response too large" });
+
+    res.set("Content-Type", upstream.headers.get("content-type") || "application/xml; charset=utf-8");
+    res.set("Cache-Control", "no-store");
+    res.send(xml);
+  } catch (e) {
+    console.error("VAST proxy error:", e.message);
+    res.status(502).json({ error: "VAST request failed" });
+  }
+});
+
 // Sync key: prefer user_id from JWT, fallback to guest_id
 function syncId(req) {
   if (req.user) return `user:${req.user.id}`;
