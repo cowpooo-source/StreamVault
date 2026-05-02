@@ -25,6 +25,108 @@ function resolveUrl(raw, base) {
   try { return new URL(String(raw).trim(), base).toString(); } catch { return ""; }
 }
 
+function parseVastTime(value) {
+  if (!value) return 0;
+  const text = String(value).trim();
+  if (!text) return 0;
+  if (text.includes(":")) {
+    const parts = text.split(":").map(Number);
+    if (parts.some(Number.isNaN)) return 0;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+  }
+  const n = Number(text);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pingUrl(url) {
+  if (!url) return;
+  try {
+    const img = new Image();
+    img.referrerPolicy = "no-referrer";
+    img.src = url;
+  } catch {}
+}
+
+function pingUrls(urls = []) {
+  urls.forEach(pingUrl);
+}
+
+function mergeTrackers(...sets) {
+  const merged = {};
+  for (const set of sets) {
+    if (!set) continue;
+    for (const [event, urls] of Object.entries(set)) {
+      if (!urls?.length) continue;
+      (merged[event] ||= []).push(...urls);
+    }
+  }
+  for (const [event, urls] of Object.entries(merged)) {
+    merged[event] = [...new Set(urls.filter(Boolean))];
+  }
+  return merged;
+}
+
+function collectVastTrackers(root) {
+  const trackers = {};
+  const push = (event, url) => {
+    if (!event || !url) return;
+    (trackers[event] ||= []).push(url);
+  };
+  root.querySelectorAll("Impression").forEach((node) => push("impression", node.textContent?.trim()));
+  root.querySelectorAll("TrackingEvents Tracking").forEach((node) => push((node.getAttribute("event") || "").toLowerCase(), node.textContent?.trim()));
+  return trackers;
+}
+
+async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) {
+  if (!vastUrl || depth > 2) return null;
+  try {
+    const res = await fetch(vastUrl, { cache: "no-store", credentials: "omit", redirect: "follow" });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    if (doc.querySelector("parsererror")) return null;
+
+    const wrapper = doc.querySelector("Wrapper");
+    if (wrapper) {
+      const nextUrl = resolveUrl(wrapper.querySelector("VASTAdTagURI")?.textContent, vastUrl);
+      if (!nextUrl) return null;
+      const wrapperTrackers = collectVastTrackers(wrapper);
+      return await fetchVastAd(nextUrl, videoEl, depth + 1, mergeTrackers(inheritedTrackers, wrapperTrackers));
+    }
+
+    const inline = doc.querySelector("InLine");
+    const linear = inline?.querySelector("Linear");
+    if (!inline || !linear) return null;
+
+    const mediaFiles = [...linear.querySelectorAll("MediaFile")]
+      .map((node) => ({
+        url: node.textContent?.trim(),
+        type: node.getAttribute("type") || "",
+      }))
+      .filter((file) => file.url);
+
+    if (!mediaFiles.length) return null;
+
+    const media = mediaFiles.find((file) => file.type.startsWith("video/") && (!videoEl?.canPlayType || videoEl.canPlayType(file.type))) ||
+      mediaFiles.find((file) => file.type.startsWith("video/")) ||
+      mediaFiles[0];
+
+    const trackers = mergeTrackers(inheritedTrackers, collectVastTrackers(inline));
+    return {
+      title: inline.querySelector("AdTitle")?.textContent?.trim() || "Sponsored Ad",
+      mediaUrl: resolveUrl(media.url, vastUrl),
+      mediaType: media.type,
+      clickThrough: resolveUrl(inline.querySelector("VideoClicks > ClickThrough")?.textContent, vastUrl),
+      duration: parseVastTime(linear.querySelector("Duration")?.textContent),
+      skipOffset: linear.getAttribute("skipoffset") ? parseVastTime(linear.getAttribute("skipoffset")) : null,
+      trackers,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── Adsterra Social Bar ──
 const ADSTERRA_COOLDOWN_MS = 3 * 60 * 1000;
 const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
