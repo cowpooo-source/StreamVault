@@ -82,7 +82,8 @@ async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) 
   if (!vastUrl || depth > 2) return null;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    // 2500ms timeout to avoid hitting browser's 5000ms user-gesture autoplay block limit
+    const timeout = setTimeout(() => controller.abort(), 2500);
     const res = await fetch(vastUrl, { cache: "no-store", credentials: "omit", redirect: "follow", signal: controller.signal });
     clearTimeout(timeout);
     if (!res.ok) return null;
