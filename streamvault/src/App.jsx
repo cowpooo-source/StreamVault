@@ -4997,6 +4997,7 @@ export default function App() {
           isFav={isFav}
           connType={conn?.type}
           t={t}
+          isAdEligible={isAdEligible}
         />
       )}
 
