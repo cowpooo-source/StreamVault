@@ -4,6 +4,11 @@ const BREVO_KEY = process.env.BREVO_API_KEY;
 const FROM_EMAIL = process.env.SMTP_FROM || "portalheaven.stream@gmail.com";
 const FROM_NAME = process.env.SMTP_FROM_NAME || "Portal Heaven";
 
+function escapeHtml(unsafe) {
+  if (!unsafe) return "";
+  return String(unsafe).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
 async function sendEmail(to, subject, html) {
   if (!BREVO_KEY) {
     console.warn("Email: BREVO_API_KEY not set, skipping email to", to);
@@ -44,7 +49,7 @@ function sendActivation(to, username, token) {
   return sendEmail(to, "Activate your Portal Heaven account", `
     <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:20px;background:#0f0f1c;color:#fff;border-radius:12px">
       <h2 style="color:#00d4ff;margin-bottom:4px">Portal Heaven</h2>
-      <p>Hi <strong>${username}</strong>,</p>
+      <p>Hi <strong>${escapeHtml(username)}</strong>,</p>
       <p>Welcome! Click the button below to activate your account:</p>
       <p style="text-align:center;margin:24px 0">
         <a href="${link}" style="background:#00d4ff;color:#000;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">
@@ -62,7 +67,7 @@ function sendPasswordReset(to, username, token) {
   return sendEmail(to, "Reset your Portal Heaven password", `
     <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:20px;background:#0f0f1c;color:#fff;border-radius:12px">
       <h2 style="color:#00d4ff;margin-bottom:4px">Portal Heaven</h2>
-      <p>Hi <strong>${username}</strong>,</p>
+      <p>Hi <strong>${escapeHtml(username)}</strong>,</p>
       <p>You requested a password reset. Click below to set a new password:</p>
       <p style="text-align:center;margin:24px 0">
         <a href="${link}" style="background:#00d4ff;color:#000;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">
@@ -79,7 +84,7 @@ function sendLoginOTP(to, username, code) {
   return sendEmail(to, `${code} — Portal Heaven login code`, `
     <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:20px;background:#0f0f1c;color:#fff;border-radius:12px">
       <h2 style="color:#00d4ff;margin-bottom:4px">Portal Heaven</h2>
-      <p>Hi <strong>${username}</strong>,</p>
+      <p>Hi <strong>${escapeHtml(username)}</strong>,</p>
       <p>Your login verification code is:</p>
       <p style="text-align:center;margin:20px 0;font-size:32px;letter-spacing:8px;font-weight:700;color:#00d4ff">${code}</p>
       <p style="font-size:12px;color:#666">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>

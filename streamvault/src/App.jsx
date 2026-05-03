@@ -37,9 +37,8 @@ function imgSrc(url) {
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
-// Auth: httpOnly cookie is primary, localStorage Bearer is fallback for backward compat
-function getAuthToken() { return localStorage.getItem("sv-auth-token"); }
-function authHeaders(extra = {}) { const t = getAuthToken(); return { ...extra, ...(t ? { "Authorization": `Bearer ${t}` } : {}), "X-Guest-Id": GUEST_ID }; }
+// Auth: relies solely on httpOnly cookies (no localStorage token fallback to prevent XSS theft)
+function authHeaders(extra = {}) { return { ...extra, "X-Guest-Id": GUEST_ID }; }
 function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
 function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
 
@@ -344,7 +343,6 @@ function AuthScreen({ onAuth, onGuest }) {
         }
       }
       
-      localStorage.setItem("sv-auth-token", data.token);
       onAuth(data.user);
     } catch (e) {
       setErr(e.message);
@@ -3386,11 +3384,10 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
-    const token = getAuthToken();
     const wasGuest = localStorage.getItem("sv-guest-mode") === "1";
-    if (wasGuest && !token) { setIsGuest(true); setAuthLoading(false); return; }
-    if (!token) { setAuthLoading(false); return; }
-    fetch(`${API}/api/auth/me`, { headers: { "Authorization": `Bearer ${token}` } })
+    if (wasGuest) { setIsGuest(true); setAuthLoading(false); return; }
+    // Check auth via httpOnly cookie
+    fetch(`${API}/api/auth/me`, { credentials: "same-origin" })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(async u => {
         setAuthUser(u);
@@ -3402,7 +3399,7 @@ export default function App() {
           db.set("sv-connections", serverConns);
         }
       })
-      .catch(() => { localStorage.removeItem("sv-auth-token"); })
+      .catch(() => { })
       .finally(() => setAuthLoading(false));
   }, []);
 
@@ -3425,9 +3422,7 @@ export default function App() {
   }
   function handleGuest() { setIsGuest(true); localStorage.setItem("sv-guest-mode", "1"); }
   function handleLogout() {
-    const token = getAuthToken();
-    if (token) authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
-    localStorage.removeItem("sv-auth-token");
+    authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
     localStorage.removeItem("sv-guest-mode");
     // Clear current user's connections from local state
     setConnections([]);
@@ -5606,7 +5601,6 @@ function SettingsView({ connections, favs, history, authUser, isGuest, activeCon
       const res = await fetch(`${API}/api/user/profile`, {
         method: "POST", headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${getAuthToken()}`
         },
         body: JSON.stringify({ email: emailInput }),
       });
