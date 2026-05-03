@@ -5,6 +5,7 @@ import { vastProxyUrl, fetchTextWithTimeout, imgSrc, resolveUrl, parseVastTime, 
 import { collectVastTrackers, fetchVastAd, parseVastDocument } from "./vast.js";
 import { getEPGNow, epgLookup } from "./epg.js";
 import Player from "./components/Player.jsx";
+import { setEncKeySource, encryptConnections, decryptConnections } from "./auth-utils.js";
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
@@ -330,59 +331,6 @@ function AuthScreen({ onAuth, onGuest }) {
       </div>
     </div>
   );
-}
-
-// ── Client-side encryption for credentials synced to server ──
-const ENC_ALGO = "AES-GCM";
-let _encKeySource = GUEST_ID; // default to guest ID, updated to user ID on login
-function setEncKeySource(id) { _encKeySource = id; }
-async function deriveKey() {
-  const raw = new TextEncoder().encode(_encKeySource + ":sv-enc-key");
-  const hash = await crypto.subtle.digest("SHA-256", raw);
-  return crypto.subtle.importKey("raw", hash, ENC_ALGO, false, ["encrypt", "decrypt"]);
-}
-async function encryptData(plaintext) {
-  try {
-    const key = await deriveKey();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const enc = await crypto.subtle.encrypt({ name: ENC_ALGO, iv }, key, new TextEncoder().encode(plaintext));
-    return btoa(String.fromCharCode(...iv)) + "." + btoa(String.fromCharCode(...new Uint8Array(enc)));
-  } catch { return plaintext; }
-}
-async function decryptData(ciphertext) {
-  try {
-    if (!ciphertext || !ciphertext.includes(".")) return ciphertext;
-    const [ivB64, dataB64] = ciphertext.split(".");
-    const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
-    const data = Uint8Array.from(atob(dataB64), c => c.charCodeAt(0));
-    const key = await deriveKey();
-    const dec = await crypto.subtle.decrypt({ name: ENC_ALGO, iv }, key, data);
-    return new TextDecoder().decode(dec);
-  } catch { return ciphertext; }
-}
-
-// Strip sensitive fields before syncing, encrypt the rest
-async function encryptConnections(conns) {
-  const stripped = conns.map(c => {
-    const safe = { ...c };
-    // Remove plaintext credentials — encrypt them separately
-    if (safe.type === "xtream" && safe.pass) { safe._encPass = true; delete safe.pass; }
-    if (safe.type === "stalker" && safe.mac) { safe._encMac = true; }
-    return safe;
-  });
-  return await encryptData(JSON.stringify(stripped));
-}
-
-async function decryptConnections(data) {
-  if (!data) return null;
-  // If data is already an array (stored unencrypted / pre-encryption), return directly
-  if (Array.isArray(data)) return data;
-  // Try to decrypt
-  const json = await decryptData(typeof data === "string" ? data : JSON.stringify(data));
-  try { return JSON.parse(json); } catch {}
-  // Decryption failed — try parsing raw data as JSON (unencrypted fallback)
-  if (typeof data === "string") { try { return JSON.parse(data); } catch {} }
-  return typeof data === "object" ? data : null;
 }
 
 // Server sync — fire-and-forget with debounce (uses auth token if logged in)
