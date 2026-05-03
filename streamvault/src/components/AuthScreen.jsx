@@ -43,13 +43,17 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: emailInput }),
         });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to send reset email");
+        }
         const data = await res.json();
         setMsg(data.message || "Reset link sent!");
         return;
       }
 
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body = { username, password, cf_turnstile_response: turnstileResponse };
+      const body = { username, password, "cf-turnstile-response": turnstileResponse };
       if (mode === "register") body.email = emailInput;
       if (forceLogin) body.force = true;
 
@@ -94,7 +98,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
     try {
       const res = await fetch(`${api}/api/auth/guest`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),
+        body: JSON.stringify({ "cf-turnstile-response": turnstileResponse }),
       });
       const data = await res.json();
       
@@ -179,7 +183,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
             <form ref={formRef} onSubmit={submit}>
               <div className="fg">
                 <label className="fl">Email Address</label>
-                <input className="fi" type="email" placeholder="email@example.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} autoFocus />
+                <input className="fi" type="email" name="email" placeholder="email@example.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} autoFocus />
               </div>
               <button type="submit" className="btn-primary" disabled={loading || !!msg} style={{width:"100%",marginTop:".5rem"}}>
                 {loading ? "..." : "Send Reset Link"}
