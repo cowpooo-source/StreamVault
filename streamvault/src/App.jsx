@@ -273,6 +273,7 @@ function AuthScreen({ onAuth, onGuest }) {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [emailInput, setEmailInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -406,8 +407,16 @@ function AuthScreen({ onAuth, onGuest }) {
               )}
               <div className="fg">
                 <label className="fl">Password</label>
-                <input className="fi" type="password" placeholder="Password" name="password" value={password}
-                  onChange={e => {setPassword(e.target.value); if(forceLogin) setForceLogin(false);}} />
+                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                  <input className="fi" type={showPassword ? "text" : "password"} placeholder="Password" name="password" value={password}
+                    onChange={e => {setPassword(e.target.value); if(forceLogin) setForceLogin(false);}}
+                    style={{ paddingRight: "2.5rem" }} />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)}
+                    style={{ position: "absolute", right: "0.5rem", background: "none", border: "none", color: "var(--t2)", cursor: "pointer", padding: "0.2rem" }}
+                    title={showPassword ? "Hide password" : "Show password"}>
+                    {showPassword ? "🙈" : "👁"}
+                  </button>
+                </div>
               </div>
               {mode === "login" && (
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"-0.5rem",marginBottom:"0.8rem"}}>
