@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 
 const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 
-export default function AuthScreen({ onAuth, onGuest }) {
+export default function AuthScreen({ onAuth, onGuest, api }) {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -39,7 +39,7 @@ export default function AuthScreen({ onAuth, onGuest }) {
     try {
       if (mode === "forgot") {
         if (!emailInput) throw new Error("Email is required");
-        const res = await fetch(`${window.API}/api/auth/forgot-password`, {
+        const res = await fetch(`${api}/api/auth/forgot-password`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: emailInput }),
         });
@@ -53,7 +53,7 @@ export default function AuthScreen({ onAuth, onGuest }) {
       if (mode === "register") body.email = emailInput;
       if (forceLogin) body.force = true;
 
-      let res = await fetch(`${window.API}${endpoint}`, {
+      let res = await fetch(`${api}${endpoint}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -92,7 +92,7 @@ export default function AuthScreen({ onAuth, onGuest }) {
     const turnstileResponse = formData.get("cf-turnstile-response");
 
     try {
-      const res = await fetch(`${window.API}/api/auth/guest`, {
+      const res = await fetch(`${api}/api/auth/guest`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),
       });

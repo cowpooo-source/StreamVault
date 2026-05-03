@@ -1,6 +1,6 @@
 // Utility functions for StreamVault
 
-const API = ""; // Force relative path for production
+export const API = ""; // Force relative path for production
 export const VAST_URL = import.meta.env.VITE_VAST_URL || "";
 export const VAST_FETCH_TIMEOUT_MS = 3500;
 

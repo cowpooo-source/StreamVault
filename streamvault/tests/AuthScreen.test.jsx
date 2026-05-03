@@ -35,6 +35,7 @@ describe("AuthScreen", () => {
   const defaultProps = {
     onAuth: vi.fn(),
     onGuest: vi.fn(),
+    api: "",
   };
 
   it("should render login form by default", () => {
@@ -124,5 +125,52 @@ describe("AuthScreen", () => {
     await waitFor(() => {
       expect(screen.getByText("Reset link sent!")).toBeInTheDocument();
     });
+  });
+
+  it("should send email in register flow", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ user: { id: "2", username: "newuser" } }),
+    });
+    render(<AuthScreen {...defaultProps} />);
+    fireEvent.click(screen.getByText("Register"));
+    fireEvent.change(screen.getByPlaceholderText("email@example.com"), { target: { value: "test@example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "newuser" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pass" } });
+    fireEvent.click(screen.getByText("Create Account"));
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          body: expect.stringContaining('"email":"test@example.com"')
+        })
+      );
+      expect(defaultProps.onAuth).toHaveBeenCalled();
+    });
+  });
+
+  it("should toggle force login checkbox", () => {
+    render(<AuthScreen {...defaultProps} />);
+    const checkbox = screen.getByRole("checkbox");
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+  });
+
+  it("should re-render turnstile on mode change", () => {
+    const { unmount } = render(<AuthScreen {...defaultProps} />);
+    expect(window.turnstile.render).toHaveBeenCalled();
+    window.turnstile.render.mockClear();
+
+    // Switch to register - useEffect should trigger re-render
+    fireEvent.click(screen.getByText("Register"));
+    expect(window.turnstile.render).toHaveBeenCalled();
+    window.turnstile.render.mockClear();
+
+    // Switch to login
+    fireEvent.click(screen.getByText("Login"));
+    expect(window.turnstile.render).toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
-import { vastProxyUrl, fetchTextWithTimeout, imgSrc, resolveUrl, parseVastTime, pingUrl, pingUrls, mergeTrackers, uid, fmtTime, parseM3U, genCSS } from "./utils.js";
+import { vastProxyUrl, fetchTextWithTimeout, imgSrc, resolveUrl, parseVastTime, pingUrl, pingUrls, mergeTrackers, uid, fmtTime, parseM3U, genCSS, API } from "./utils.js";
 import { collectVastTrackers, fetchVastAd, parseVastDocument } from "./vast.js";
 import { getEPGNow, epgLookup } from "./epg.js";
 import Player from "./components/Player.jsx";
@@ -3391,7 +3391,7 @@ export default function App() {
   if (!authUser && !isGuest) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <AuthScreen onAuth={handleAuth} onGuest={handleGuest} />
+      <AuthScreen onAuth={handleAuth} onGuest={handleGuest} api={API} />
       {resetToken && createPortal(<ResetPasswordModal token={resetToken} onClose={() => setResetToken(null)} />, document.body)}
     </>
   );
