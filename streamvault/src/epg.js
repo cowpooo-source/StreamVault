@@ -1,5 +1,22 @@
 // EPG-related utility functions
 
+// TimelineGrid constants
+export const PX_PER_MIN = 3;
+export const TOTAL_HOURS = 8;
+export const TOTAL_MS = TOTAL_HOURS * 3600000;
+export const TOTAL_PX = TOTAL_HOURS * 60 * PX_PER_MIN; // 1440px
+export const CH_COL_W = 160;
+export const ROW_H = 48;
+
+// Helper functions for TimelineGrid
+export function msToPx(ms, windowStart) {
+  return ((ms - windowStart) / 60000) * PX_PER_MIN;
+}
+
+export function fmtT(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 export function getEPGNow(programs, epgId) {
   if (!programs || !epgId) return null;
   const key = epgId.toLowerCase().trim();
