@@ -159,11 +159,11 @@ These keys always pass in test mode.
 
 **Created:**
 1. `src/components/AuthScreen.jsx`
-2. `src/components/AuthScreen.test.jsx`
+2. `tests/AuthScreen.test.jsx`
 3. `src/auth-utils.js`
 4. `src/components/TimelineGrid.jsx`
-5. `src/components/TimelineGrid.test.jsx`
-6. Update `src/components/Player.test.jsx`
+5. `tests/TimelineGrid.test.jsx`
+6. Update `tests/Player.test.jsx`
 
 **Modified:**
 1. `src/App.jsx` — remove AuthScreen (lines 127-333), remove encryption functions (lines 335-374), remove TimelineGrid (lines 2311-2415), add imports
