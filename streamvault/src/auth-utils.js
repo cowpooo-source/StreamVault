@@ -1,4 +1,5 @@
 const ENC_ALGO = "AES-GCM";
+const KEY_SALT = ":sv-enc-key";
 let _encKeySource = null; // Set by App.jsx on login/guest
 
 export function setEncKeySource(id) {
@@ -6,7 +7,10 @@ export function setEncKeySource(id) {
 }
 
 export async function deriveKey() {
-  const raw = new TextEncoder().encode(_encKeySource + ":sv-enc-key");
+  if (!_encKeySource) {
+    console.warn("⚠️ deriveKey called with no _encKeySource set, using default");
+  }
+  const raw = new TextEncoder().encode((_encKeySource || "default") + KEY_SALT);
   const hash = await crypto.subtle.digest("SHA-256", raw);
   return crypto.subtle.importKey("raw", hash, ENC_ALGO, false, ["encrypt", "decrypt"]);
 }
@@ -17,7 +21,8 @@ export async function encryptData(plaintext) {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const enc = await crypto.subtle.encrypt({ name: ENC_ALGO, iv }, key, new TextEncoder().encode(plaintext));
     return btoa(String.fromCharCode(...iv)) + "." + btoa(String.fromCharCode(...new Uint8Array(enc)));
-  } catch {
+  } catch (err) {
+    console.warn("Encryption failed:", err.message);
     return plaintext;
   }
 }
@@ -31,7 +36,8 @@ export async function decryptData(ciphertext) {
     const key = await deriveKey();
     const dec = await crypto.subtle.decrypt({ name: ENC_ALGO, iv }, key, data);
     return new TextDecoder().decode(dec);
-  } catch {
+  } catch (err) {
+    console.warn("Decryption failed:", err.message);
     return ciphertext;
   }
 }
@@ -50,7 +56,8 @@ export async function decryptConnections(data) {
   try {
     const json = await decryptData(data);
     return JSON.parse(json);
-  } catch {
+  } catch (err) {
+    console.warn("Failed to decrypt connections:", err.message);
     return [];
   }
 }
