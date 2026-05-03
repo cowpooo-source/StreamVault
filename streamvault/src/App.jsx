@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import "./app.css";
 import { vastProxyUrl, fetchTextWithTimeout, imgSrc, resolveUrl, parseVastTime, pingUrl, pingUrls, mergeTrackers, uid, fmtTime, parseM3U, genCSS, API } from "./utils.js";
 import { collectVastTrackers, fetchVastAd, parseVastDocument } from "./vast.js";
-import { getEPGNow, epgLookup } from "./epg.js";
+import { getEPGNow, epgLookup, msToPx, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H } from "./epg.js";
 import Player from "./components/Player.jsx";
 import AuthScreen from "./components/AuthScreen.jsx";
 import { setEncKeySource, encryptConnections, decryptConnections } from "./auth-utils.js";
@@ -2055,12 +2055,7 @@ const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epg
     return () => clearInterval(timer);
   }, []);
 
-  const PX_PER_MIN = 3;
-  const TOTAL_HOURS = 8;
-  const TOTAL_MS = TOTAL_HOURS * 3600000;
-  const TOTAL_PX = TOTAL_HOURS * 60 * PX_PER_MIN; // 1440px
-  const CH_COL_W = 160;
-  const ROW_H = 48;
+  // Constants imported from epg.js: PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H
 
   // Window start = 1 hour before now (recalculates with nowMs)
   const windowStart = useMemo(() => nowMs - 3600000, [nowMs]);
@@ -2082,11 +2077,9 @@ const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epg
     return labels;
   }, [windowStart, windowEnd]);
 
-  // Convert ms position to px offset within the grid
-  const msToPx = useCallback((ms) => ((ms - windowStart) / 60000) * PX_PER_MIN, [windowStart]);
-
+  // msToPx imported from epg.js
   const fmtT = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const nowLinePx = msToPx(nowMs);
+  const nowLinePx = msToPx(nowMs, windowStart);
 
   return (
     <div className="epg-outer" ref={outerRef}>
@@ -2123,7 +2116,7 @@ const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epg
                   {progs.map((p,pi) => {
                     const clampStart = Math.max(p.start, windowStart);
                     const clampEnd = Math.min(p.stop, windowEnd);
-                    const leftPx = msToPx(clampStart);
+                    const leftPx = msToPx(clampStart, windowStart);
                     const widthPx = ((clampEnd - clampStart) / 60000) * PX_PER_MIN;
                     if (widthPx < 2) return null;
                     const isNow = p.start <= nowMs && p.stop > nowMs;
