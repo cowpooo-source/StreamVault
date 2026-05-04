@@ -27,7 +27,7 @@ npm run build
 
 log "Installing backend dependencies"
 cd "$BACKEND_DIR"
-npm ci --omit=dev
+npm install --omit=dev
 
 log "Starting/restarting PM2 sandbox app"
 PORT="$PORT" pm2 startOrRestart ecosystem.sandbox.config.cjs --only "$APP_NAME"
