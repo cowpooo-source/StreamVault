@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  API,
   vastProxyUrl,
   resolveUrl,
   parseVastTime,
@@ -14,7 +15,7 @@ import {
 describe("vastProxyUrl", () => {
   it("should wrap URL with proxy endpoint", () => {
     const url = "http://example.com/vast.xml";
-    expect(vastProxyUrl(url)).toBe("/api/vast?url=http%3A%2F%2Fexample.com%2Fvast.xml");
+    expect(vastProxyUrl(url)).toBe(`${API}/api/vast?url=http%3A%2F%2Fexample.com%2Fvast.xml`);
   });
 });
 

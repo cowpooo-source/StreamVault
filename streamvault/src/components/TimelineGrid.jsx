@@ -74,9 +74,9 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
                       <div key={pi} className={cls}
                         style={{left:leftPx,width:widthPx}}
                         onClick={()=> isPast && onPlayCatchup ? onPlayCatchup(ch, p) : onPlay(ch)}
-                        title={`${p.title}\n${fmtT(p.start)} – ${fmtT(p.stop)}${isPast ? "\nClick to play catchup" : ""}`}>
+                        title={`${p.title}\n${fmtT(p.start)} ï¿½ ${fmtT(p.stop)}${isPast ? "\nClick to play catchup" : ""}`}>
                         {widthPx > 50 && <div className="epg-prog-t">{isPast && <span className="epg-catchup-icon">?</span>}{p.title}</div>}
-                        {widthPx > 90 && <div className="epg-prog-s">{fmtT(p.start)} – {fmtT(p.stop)}</div>}
+                        {widthPx > 90 && <div className="epg-prog-s">{fmtT(p.start)} ï¿½ {fmtT(p.stop)}</div>}
                       </div>
                     );
                   })}
