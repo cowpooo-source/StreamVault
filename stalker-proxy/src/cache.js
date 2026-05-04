@@ -96,12 +96,6 @@ const stmtDeleteGuestData = db.prepare("DELETE FROM guest_data WHERE guest_id = 
 const stmtCleanupGuestData = db.prepare("DELETE FROM guest_data WHERE updated_at < ?");
 const stmtCleanupGuests = db.prepare("DELETE FROM guests WHERE last_seen < ?");
 
-// Escape SQL LIKE wildcards (% and _) to prevent incorrect pattern matching
-function escapeLike(str) {
-  if (!str) return "";
-  return String(str).replace(/[%_]/g, '\\$&');
-}
-
 // ── Cache operations ──
 function get(key) {
   const row = stmtGet.get(key, Date.now());
@@ -120,7 +114,7 @@ function deleteByPrefix(connId) {
   // connId format: "stalker:http://portal:port/c:00:1A:79:XX:XX:XX"
   const match = connId.match(/^stalker:(.+):([0-9A-Fa-f:]{17})$/);
   if (match) {
-    db.prepare("DELETE FROM cache WHERE key LIKE ? ESCAPE '\\'").run(`${escapeLike(match[1])}|${escapeLike(match[2])}|%`);
+    db.prepare("DELETE FROM cache WHERE key LIKE ?").run(`${match[1]}|${match[2]}|%`);
   }
 }
 
