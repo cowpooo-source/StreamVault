@@ -55,3 +55,10 @@ Desktop.ini
 # ── Archives ──────────────────────────────────────────────────────
 *.zip
 *.tar.gz
+
+# SQLite temp files (test databases)
+*.db-shm
+*.db-wal
+
+# Worker tests
+streamvault-worker/test/
