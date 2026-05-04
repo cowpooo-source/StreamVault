@@ -6,7 +6,9 @@ import { collectVastTrackers, fetchVastAd, parseVastDocument } from "./vast.js";
 import { getEPGNow, epgLookup, msToPx, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H } from "./epg.js";
 import Player from "./components/Player.jsx";
 import AuthScreen from "./components/AuthScreen.jsx";
+import TimelineGrid from "./components/TimelineGrid.jsx";
 import { setEncKeySource, encryptConnections, decryptConnections } from "./auth-utils.js";
+import TimelineGrid from "./components/TimelineGrid.jsx";
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
@@ -2048,30 +2050,7 @@ const NAV = [
 ];
 
 // ── MAIN APP ──
-const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup }, outerRef) {
-  const [nowMs, setNowMs] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 60000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Constants imported from epg.js: PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H
-
-  // Window start = 1 hour before now (recalculates with nowMs)
-  const windowStart = useMemo(() => nowMs - 3600000, [nowMs]);
-  const windowEnd = useMemo(() => windowStart + TOTAL_MS, [windowStart]);
-
-  // Generate time labels every 30 minutes
-  const timeLabels = useMemo(() => {
-    const labels = [];
-    const snapStart = new Date(windowStart);
-    snapStart.setMinutes(snapStart.getMinutes() < 30 ? 0 : 30, 0, 0);
-    let t = snapStart.getTime();
-    if (t < windowStart) t += 1800000;
-    while (t < windowEnd) {
-      const offsetPx = ((t - windowStart) / 60000) * PX_PER_MIN;
-      const d = new Date(t);
-      labels.push({ ms: t, px: offsetPx, label: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
+ });
       t += 1800000;
     }
     return labels;
