@@ -624,7 +624,7 @@ async function portalFetch(session, params, timeout = 12000) {
   const url = `${session.base}${session.apiPath}?${qs}`;
 
   function parseResponse(text, res) {
-    if (text.includes("Authorization failed")) return null; // token expired, signal retry
+    if (text.includes("Authorization failed") || text.includes("Device not found") || text.includes("Access denied")) return null; // token/auth expired or invalid
     try {
       return JSON.parse(text);
     } catch {
@@ -845,16 +845,13 @@ app.post("/stalker/validate", async (req, res) => {
       result.phone = a.phone || null;
       result.maxConnections = a.max_cur || a.max_connections || null;
 
-      // Check if account info was empty or fake (blocked/invalid)
+      // Check if account info was empty (blocked/invalid)
       if (Object.keys(a).length === 0) {
         result.status = "blocked";
         result.error = "Account returned empty info — may be blocked";
-      } else if (!a.id && !a.login && !a.account_number) {
-        // Detect "open" fake portals that return a token but no real user identity data
-        result.status = "unregistered";
-        result.error = "Portal returned invalid account data (fake/empty)";
       }
     } catch (e) {
+      result.status = "blocked";
       result.error = "Could not fetch account info: " + e.message;
     }
 
