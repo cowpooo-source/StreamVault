@@ -131,4 +131,29 @@ describe("Player", () => {
     expect(screen.getByText("◀ prev")).toBeInTheDocument();
     expect(screen.getByText("next ▶")).toBeInTheDocument();
   });
+
+  it("should call onPlayCatchup when a catch-up program is clicked", async () => {
+    const onPlayCatchup = vi.fn();
+    const props = {
+      ...defaultProps,
+      item: { ...defaultProps.item, epgId: "ch1" },
+      epgData: {
+        "ch1": [
+          { title: "Past Show", start: Date.now() - 7200000, stop: Date.now() - 3600000 }
+        ]
+      },
+      onPlayCatchup
+    };
+    render(<Player {...props} />);
+    
+    // Open Catch-up Menu (the button with ↩️ icon)
+    const catchupBtn = screen.getByTitle("Catch-up TV");
+    fireEvent.click(catchupBtn);
+    
+    // Click on the past program
+    const pastProg = screen.getByText("Past Show");
+    fireEvent.click(pastProg);
+    
+    expect(onPlayCatchup).toHaveBeenCalledWith(expect.objectContaining({ epgId: "ch1" }), expect.objectContaining({ title: "Past Show" }));
+  });
 });

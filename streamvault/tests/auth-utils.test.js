@@ -6,7 +6,7 @@ const mockImportKey = vi.fn();
 const mockEncrypt = vi.fn();
 const mockDecrypt = vi.fn();
 
-Object.defineProperty(global, 'crypto', {
+Object.defineProperty(window, 'crypto', {
   value: {
     subtle: {
       digest: mockDigest,
@@ -37,7 +37,7 @@ describe("setEncKeySource", () => {
 describe("deriveKey", () => {
   it("should derive a CryptoKey from key source", async () => {
     authUtils.setEncKeySource("user:123");
-    const key = await authUtils.deriveKey();
+    const _key = await authUtils.deriveKey();
     // Check mockDigest was called with "SHA-256" and some data
     const digestCalls = mockDigest.mock.calls;
     expect(digestCalls.length).toBeGreaterThan(0);
@@ -59,7 +59,7 @@ describe("encryptData/decryptData", () => {
     // Verify crypto.subtle.encrypt was called with proper parameters
     const calls = mockEncrypt.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
-    const [params, key, data] = calls[0];
+    const [params, _key, _data] = calls[0];
     expect(params.name).toBe("AES-GCM");
     expect(params.iv).toBeInstanceOf(Uint8Array);
   });

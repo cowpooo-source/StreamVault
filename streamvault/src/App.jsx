@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
-import { vastProxyUrl, fetchTextWithTimeout, imgSrc, resolveUrl, parseVastTime, pingUrl, pingUrls, mergeTrackers, uid, fmtTime, parseM3U, genCSS, API } from "./utils.js";
-import { collectVastTrackers, fetchVastAd, parseVastDocument } from "./vast.js";
-import { getEPGNow, epgLookup } from "./epg.js";
+import { imgSrc, fmtTime, parseM3U, genCSS, API } from "./utils.js";
 import Player from "./components/Player.jsx";
 import TimelineGrid from "./components/TimelineGrid.jsx";
 import AuthScreen from './components/AuthScreen.jsx';
+import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
+setEncKeySource(GUEST_ID);
 // Auth: relies solely on httpOnly cookies (no localStorage token fallback to prevent XSS theft)
 function authHeaders(extra = {}) { return { ...extra, "X-Guest-Id": GUEST_ID }; }
 function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
-function track(event, data = {}) { fetch(`${import.meta.env.BASE_URL || ""}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
+function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
 
 // VAST functions are now in vast.js
 
@@ -125,58 +125,7 @@ function ResetPasswordModal({ token, onClose }) {
   );
 }
 
-// ── Client-side encryption for credentials synced to server ──
-const ENC_ALGO = "AES-GCM";
-let _encKeySource = GUEST_ID; // default to guest ID, updated to user ID on login
-function setEncKeySource(id) { _encKeySource = id; }
-async function deriveKey() {
-  const raw = new TextEncoder().encode(_encKeySource + ":sv-enc-key");
-  const hash = await crypto.subtle.digest("SHA-256", raw);
-  return crypto.subtle.importKey("raw", hash, ENC_ALGO, false, ["encrypt", "decrypt"]);
-}
-async function encryptData(plaintext) {
-  try {
-    const key = await deriveKey();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const enc = await crypto.subtle.encrypt({ name: ENC_ALGO, iv }, key, new TextEncoder().encode(plaintext));
-    return btoa(String.fromCharCode(...iv)) + "." + btoa(String.fromCharCode(...new Uint8Array(enc)));
-  } catch { return plaintext; }
-}
-async function decryptData(ciphertext) {
-  try {
-    if (!ciphertext || !ciphertext.includes(".")) return ciphertext;
-    const [ivB64, dataB64] = ciphertext.split(".");
-    const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
-    const data = Uint8Array.from(atob(dataB64), c => c.charCodeAt(0));
-    const key = await deriveKey();
-    const dec = await crypto.subtle.decrypt({ name: ENC_ALGO, iv }, key, data);
-    return new TextDecoder().decode(dec);
-  } catch { return ciphertext; }
-}
 
-// Strip sensitive fields before syncing, encrypt the rest
-async function encryptConnections(conns) {
-  const stripped = conns.map(c => {
-    const safe = { ...c };
-    // Remove plaintext credentials — encrypt them separately
-    if (safe.type === "xtream" && safe.pass) { safe._encPass = true; delete safe.pass; }
-    if (safe.type === "stalker" && safe.mac) { safe._encMac = true; }
-    return safe;
-  });
-  return await encryptData(JSON.stringify(stripped));
-}
-
-async function decryptConnections(data) {
-  if (!data) return null;
-  // If data is already an array (stored unencrypted / pre-encryption), return directly
-  if (Array.isArray(data)) return data;
-  // Try to decrypt
-  const json = await decryptData(typeof data === "string" ? data : JSON.stringify(data));
-  try { return JSON.parse(json); } catch {}
-  // Decryption failed — try parsing raw data as JSON (unencrypted fallback)
-  if (typeof data === "string") { try { return JSON.parse(data); } catch {} }
-  return typeof data === "object" ? data : null;
-}
 
 // Server sync — fire-and-forget with debounce (uses auth token if logged in)
 const _syncTimers = {};
@@ -221,7 +170,7 @@ async function migrateGuestData() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ guestId: GUEST_ID }),
     });
-  } catch {}
+  } catch (e) { console.warn("Guest data migration failed:", e.message); }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -828,7 +777,7 @@ const db = {
     try {
       if (window.storage) { await window.storage.set(key, JSON.stringify(value)); }
       else localStorage.setItem(key, JSON.stringify(value));
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   },
 };
 
@@ -883,7 +832,7 @@ async function migrateOldCache() {
             const match = key.match(/^sv-s-(vod|series)cats-(.+)$/);
             if (match) await idbCache.set(`cats-ls:${match[2]}:${match[1]}`, cats);
           }
-        } catch {}
+        } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     }
     // Migrate old stalker channel caches (stored via db.set → localStorage)
@@ -896,11 +845,11 @@ async function migrateOldCache() {
             const server = key.replace("sv-stalker-channels-", "");
             await idbCache.set(`channels-ls:${server}`, channels);
           }
-        } catch {}
+        } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     }
     await idbCache.set("sv-migrated-v2", true);
-  } catch {}
+  } catch (e) { console.warn("IDB/localStorage error:", e.message); }
 }
 migrateOldCache();
 
@@ -955,7 +904,7 @@ async function safeJsonFetch(res) {
   }
   try {
     return JSON.parse(text);
-  } catch (e) {
+  } catch (error) {
     if (text.trim().startsWith("<")) {
       throw new Error("Server returned HTML/XML instead of JSON. Check if your URL and credentials are correct.");
     }
@@ -1092,7 +1041,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
           if (c.deviceId2) set("deviceId2", c.deviceId2);
         }
       }
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   }, []);
 
   function handleConnectClick() {
@@ -1637,7 +1586,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 // ══════════════════════════════════════════════════════════════════
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onEdit, onClose, authUser, isGuest, onLogout, t: ct }) {
+const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, _onEdit, onClose, authUser, isGuest, onLogout, t: ct }) {
   const t = ct || ((k) => k);
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
@@ -2300,7 +2249,7 @@ export default function App() {
         headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID },
         body: JSON.stringify({ message: fbMsg.trim(), guestId: GUEST_ID, timestamp: Date.now(), userAgent: navigator.userAgent }),
       });
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     setFbSending(false);
     setFbMsg("");
     setFbDone(true);
@@ -2364,7 +2313,7 @@ export default function App() {
           trailer: trailer ? `https://www.youtube.com/embed/${trailer.key}` : null,
           trailerKey: trailer?.key || null,
         });
-      } catch {}
+      } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     })();
     return () => { cancelled = true; };
   }, [expandedItem, tmdbKey]);
@@ -2415,7 +2364,7 @@ export default function App() {
         try {
           const connObj = conns.find(c => c.id === acId);
           if (connObj) await loadFromCache(acId, connObj);
-        } catch {}
+        } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     })();
   }, []);
@@ -2483,7 +2432,7 @@ export default function App() {
       localStorage.removeItem("sv-activeProfile");
       localStorage.removeItem("sv-lastConn");
       localStorage.removeItem("sv-history");
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   }
 
   // ── save theme
@@ -2552,6 +2501,7 @@ export default function App() {
     // Save connection to D1
     const cId = connId(conn);
     if (cId) {
+      // Intentionally empty, perhaps for future logic or a placeholder that was removed
     }
   }, [conn]);
 
@@ -2669,7 +2619,7 @@ export default function App() {
     let cats = null;
     // Check IDB first (permanent, no TTL)
     if (!force && cId) {
-      try { cats = await idbCache.get(`cats:${cId}:${sec}`); } catch {}
+      try { cats = await idbCache.get(`cats:${cId}:${sec}`); } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
     if (!cats) {
       if (!background) setLoading(true);
@@ -2717,7 +2667,7 @@ export default function App() {
           const items = cached.items || cached;
           if (items.length) { applyItems(items); fetchingCatRef.current.delete(refKey); return; }
         }
-      } catch {}
+      } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
     if (!silent) setCatLoading(true);
     try {
@@ -3038,7 +2988,7 @@ export default function App() {
   // ── connection management
   function makeConnectionLabel(type, config) {
     if (type === "xtream") return `${config.user} · Xtream`;
-    if (type === "stalker") { try { const host = new URL(config.server).hostname.replace(/^(www|portal)\./, ""); return `${host} · ${(config.mac||"").slice(-8)}`; } catch {} return `Stalker · ${(config.mac||"").slice(-8)}`; }
+    if (type === "stalker") { try { const host = new URL(config.server).hostname.replace(/^(www|portal)\./, ""); return `${host} · ${(config.mac||"").slice(-8)}`; } catch (e) { console.warn("IDB/localStorage error:", e.message); } return `Stalker · ${(config.mac||"").slice(-8)}`; }
     if (type === "m3u") return `M3U · ${(config.url||"").split("/").pop()?.slice(0,20)||"playlist"}`;
     return "Direct HLS";
   }
@@ -4111,7 +4061,7 @@ export default function App() {
 // ══════════════════════════════════════════════════════════════════
 // SUB-VIEWS
 // ══════════════════════════════════════════════════════════════════
-const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, isFav, t }) {
+const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, _isFav, t }) {
   const all = [...favItems.live, ...favItems.vod, ...favItems.series];
   if (!all.length) return (
     <div className="empty">
@@ -4239,21 +4189,14 @@ const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggle
 
 
 
-const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
+const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
   const PX_PER_MIN = 3;
   const CH_COL_W = 160;
   const MAX_CHANNELS = 200;
 
   const [urlInput, setUrlInput] = useState(epgURL || "");
   const [search, setSearch] = useState("");
-  const [nowMs, setNowMs] = useState(Date.now());
   const outerRef = useRef(null);
-
-  // Update current time every 30 seconds
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 30000);
-    return () => clearInterval(id);
-  }, []);
 
   // Auto-scroll to "now" on mount
   useEffect(() => {
@@ -4271,8 +4214,6 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
   }, [channels, search]);
 
   const handleNow = useCallback(() => {
-    const fresh = Date.now();
-    setNowMs(fresh);
     setTimeout(() => {
       if (!outerRef.current) return;
       const nowOffset = 60 * PX_PER_MIN;
@@ -4333,7 +4274,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
 });
 
 // ── Settings View ──
-function SettingsView({ connections, favs, history, authUser, isGuest, activeConnId, onAuth, t: st }) {
+function SettingsView({ connections, _favs, _history, authUser, _isGuest, activeConnId, onAuth, t: st }) {
   const t = st || (k => k);
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");

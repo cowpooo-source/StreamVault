@@ -1,7 +1,7 @@
 // VAST ad parsing and handling utilities
 import { fetchTextWithTimeout, vastProxyUrl, resolveUrl, mergeTrackers, parseVastTime } from "./utils.js";
 
-export async function collectVastTrackers(root) {
+export function collectVastTrackers(root) {
   const trackers = {};
   const push = (event, url) => {
     if (!event || !url) return;

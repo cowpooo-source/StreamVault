@@ -53,7 +53,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       }
 
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body = { username, password, "cf-turnstile-response": turnstileResponse };
+      const body = { username, password, "cf_turnstile_response": turnstileResponse };
       if (mode === "register") body.email = emailInput;
       if (forceLogin) body.force = true;
 

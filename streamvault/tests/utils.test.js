@@ -10,7 +10,25 @@ import {
   fmtTime,
   parseM3U,
   genCSS,
+  streamProxy,
 } from "../src/utils.js";
+
+describe("streamProxy", () => {
+  it("should return relative URLs as is", () => {
+    expect(streamProxy("/local/path")).toBe("/local/path");
+  });
+
+  it("should return URLs matching origin as is", () => {
+    // In tests, API is "" so origin is location.origin
+    const origin = location.origin;
+    expect(streamProxy(`${origin}/stream`)).toBe(`${origin}/stream`);
+  });
+
+  it("should proxy external URLs", () => {
+    const url = "http://external.com/stream.m3u8";
+    expect(streamProxy(url)).toBe(`${API}/stream?url=${encodeURIComponent(url)}`);
+  });
+});
 
 describe("vastProxyUrl", () => {
   it("should wrap URL with proxy endpoint", () => {
@@ -124,17 +142,29 @@ describe("fmtTime", () => {
 });
 
 describe("parseM3U", () => {
-  it("should parse M3U playlist", () => {
-    const text = `#EXTM3U
-#EXTINF:-1 tvg-logo="http://example.com/logo.png",Channel 1
-http://example.com/stream1
-#EXTINF:-1,Channel 2
-http://example.com/stream2`;
+  it("should parse M3U playlist with full metadata", () => {
+    const text = `#EXTM3U url-tvg="http://example.com/epg.xml"
+#EXTINF:-1 tvg-id="ch1" tvg-logo="http://example.com/logo1.png" group-title="Entertainment" tvg-chno="1",Channel 1
+http://example.com/live/1
+#EXTINF:-1,VOD Movie
+http://example.com/movie/123.mp4
+#EXTINF:-1,Series Episode
+http://example.com/series/456.mp4`;
     const result = parseM3U(text);
-    expect(result.length).toBe(2);
-    expect(result[0].name).toBe("Channel 1");
-    expect(result[0].url).toBe("http://example.com/stream1");
-    expect(result[1].name).toBe("Channel 2");
+    expect(result.length).toBe(3);
+    expect(result.epgUrl).toBe("http://example.com/epg.xml");
+    
+    expect(result[0]).toMatchObject({
+      name: "Channel 1",
+      logo: "http://example.com/logo1.png",
+      group: "Entertainment",
+      epgId: "ch1",
+      num: 1,
+      type: "live"
+    });
+
+    expect(result[1].type).toBe("vod");
+    expect(result[2].type).toBe("series");
   });
 
   it("should handle empty input", () => {

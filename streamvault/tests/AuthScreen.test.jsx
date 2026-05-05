@@ -16,7 +16,7 @@ vi.mock('import.meta', () => ({
 
 // Mock fetch
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+window.fetch = mockFetch;
 
 // Import after mocks
 let AuthScreen;
@@ -149,6 +149,32 @@ describe("AuthScreen", () => {
     });
   });
 
+  it("should use correct Turnstile field name (cf_turnstile_response) in requests", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ user: { id: "1", username: "test" } }),
+    });
+    
+    // Mock turnstile.getResponse
+    window.turnstile.getResponse = vi.fn(() => "test-token");
+
+    render(<AuthScreen {...defaultProps} />);
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "test" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pass" } });
+    
+    const loginButtons = screen.getAllByText("Login");
+    fireEvent.click(loginButtons[loginButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          body: expect.stringContaining('"cf_turnstile_response":')
+        })
+      );
+    });
+  });
+
   it("should toggle force login checkbox", () => {
     render(<AuthScreen {...defaultProps} />);
     const checkbox = screen.getByRole("checkbox");
@@ -160,7 +186,7 @@ describe("AuthScreen", () => {
   });
 
   it("should re-render turnstile on mode change", () => {
-    const { unmount } = render(<AuthScreen {...defaultProps} />);
+    const { _unmount } = render(<AuthScreen {...defaultProps} />);
     expect(window.turnstile.render).toHaveBeenCalled();
     window.turnstile.render.mockClear();
 

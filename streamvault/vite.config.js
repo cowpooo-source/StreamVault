@@ -2,6 +2,11 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Inject build version into SW on each build so browser detects changes
 function swVersionPlugin() {
@@ -14,7 +19,7 @@ function swVersionPlugin() {
         const version = `sv-${Date.now().toString(36)}`;
         sw = sw.replace(/const CACHE = "[^"]+";/, `const CACHE = "${version}";`);
         writeFileSync(swPath, sw);
-      } catch {}
+      } catch (e) { console.warn("Service worker version update failed:", e.message); }
     }
   };
 }

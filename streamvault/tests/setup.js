@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 // Mock fetch globally
-global.fetch = vi.fn(() =>
+window.fetch = vi.fn(() =>
   Promise.resolve({
     ok: true,
     json: () => Promise.resolve({}),
@@ -17,7 +17,7 @@ const localStorageMock = {
   removeItem: vi.fn(),
   clear: vi.fn(),
 };
-Object.defineProperty(global, 'localStorage', { value: localStorageMock });
+Object.defineProperty(window, 'localStorage', { value: localStorageMock });
 
 // Mock crypto.randomUUID
-global.crypto.randomUUID = vi.fn(() => 'test-uuid-1234');
+window.crypto.randomUUID = vi.fn(() => 'test-uuid-1234');

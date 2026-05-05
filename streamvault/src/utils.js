@@ -9,7 +9,9 @@ export function vastProxyUrl(url) {
 }
 
 export function streamProxy(u) {
-  return (u?.startsWith('/') || u?.startsWith(API)) ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
+  const origin = API || location.origin;
+  const isInternal = u?.startsWith('/') || (API && u?.startsWith(API)) || u?.startsWith(location.origin);
+  return isInternal ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
 }
 
 export async function fetchTextWithTimeout(url, timeoutMs) {
@@ -64,7 +66,7 @@ export function pingUrl(url) {
     const img = new Image();
     img.referrerPolicy = "no-referrer";
     img.src = url;
-  } catch {}
+  } catch (e) { console.warn("Tracking pixel load failed:", e.message); }
 }
 
 export function pingUrls(urls = []) {
@@ -101,22 +103,31 @@ export function fmtTime(sec) {
 // Parse M3U playlist text into array of {name, url} objects
 export function parseM3U(text) {
   if (!text) return [];
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-  const items = [];
-  let current = null;
-  for (const line of lines) {
-    if (line.startsWith("#EXTINF")) {
-      const nameMatch = line.match(/#EXTINF:-?\d+(?:[^,]*),(.+)/);
-      current = { name: nameMatch ? nameMatch[1].trim() : "Unknown" };
-    } else if (line && !line.startsWith("#")) {
-      if (current) {
-        current.url = line;
-        items.push(current);
-        current = null;
-      }
+  const lines = text.split("\n"); const out = [];
+  let cur = null;
+  let epgUrl = null;
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.startsWith("#EXTM3U")) {
+      const match = line.match(/(?:url-tvg|x-tvg-url)="([^"]+)"/i);
+      if (match) epgUrl = match[1];
+    } else if (line.startsWith("#EXTINF")) {
+      const name   = (line.match(/,(.+)$/) || [])[1]?.trim() || "Unknown";
+      const logo   = (line.match(/tvg-logo="([^"]+)"/) || [])[1] || null;
+      const group  = (line.match(/group-title="([^"]+)"/) || [])[1] || "Uncategorized";
+      const epgId  = (line.match(/tvg-id="([^"]+)"/) || [])[1] || null;
+      const num    = parseInt((line.match(/tvg-chno="([^"]+)"/) || [])[1]) || null;
+      cur = { name, logo, group, epgId, num, type:"live" };
+    } else if (line && !line.startsWith("#") && cur) {
+      cur.url = line; cur.id = cur.url;
+      if (line.includes("/movie/")) cur.type = "vod";
+      else if (line.includes("/series/")) cur.type = "series";
+      out.push(cur); cur = null;
     }
   }
-  return items;
+  out.epgUrl = epgUrl;
+  return out;
 }
 
 // Generate CSS variables from theme object

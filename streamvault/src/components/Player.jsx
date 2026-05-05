@@ -1,13 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
-import { imgSrc, pingUrls, streamProxy, vastProxyUrl, fetchTextWithTimeout, resolveUrl, parseVastTime, mergeTrackers, VAST_URL } from "../utils.js";
-import { fetchVastAd, parseVastDocument, collectVastTrackers } from "../vast.js";
+import { imgSrc, pingUrls, streamProxy, VAST_URL, API } from "../utils.js";
+import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 
-const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
-const origin = "" || location.origin;
-const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin) && !current?._direct;
-
-function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t: pt, isAdEligible }) {
+function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, t: pt, isAdEligible }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
@@ -232,9 +228,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
     return () => clearInterval(statsInterval.current);
   }, [showStats, current.url]);
 
-  const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
   // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
-  const origin = "" || location.origin;
+  const origin = API || location.origin;
   const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin) && !current?._direct;
 
   function initPlayer(url) {
@@ -553,7 +548,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t
     try {
       if (document.pictureInPictureElement) await document.exitPictureInPicture();
         else await v.requestPictureInPicture?.();
-    } catch {}
+    } catch (e) { console.warn("Picture-in-Picture request failed:", e.message); }
   }
 
   const epgNow = epgData ? getEPGNow(epgData, current.epgId) : null;
