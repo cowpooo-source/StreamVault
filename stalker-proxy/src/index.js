@@ -845,10 +845,14 @@ app.post("/stalker/validate", async (req, res) => {
       result.phone = a.phone || null;
       result.maxConnections = a.max_cur || a.max_connections || null;
 
-      // Check if account info was empty (blocked/invalid)
+      // Check if account info was empty or fake (blocked/invalid)
       if (Object.keys(a).length === 0) {
         result.status = "blocked";
         result.error = "Account returned empty info — may be blocked";
+      } else if (!a.id && !a.login && !a.account_number) {
+        // Detect "open" fake portals that return a token but no real user identity data
+        result.status = "unregistered";
+        result.error = "Portal returned invalid account data (fake/empty)";
       }
     } catch (e) {
       result.error = "Could not fetch account info: " + e.message;
