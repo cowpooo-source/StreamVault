@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
-import { imgSrc, pingUrls, streamProxy, VAST_URL, API } from "../utils.js";
+import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST } from "../utils.js";
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 
@@ -433,7 +433,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       setAdState(null);
       destroyPlayers();
 
-      if (VAST_URL && isAdEligible && !adPlayedRef.current) {
+      if (ENABLE_VAST && VAST_URL && isAdEligible && !adPlayedRef.current) {
         adPlayedRef.current = true;
         try {
           const ad = await fetchVastAd(VAST_URL, video);

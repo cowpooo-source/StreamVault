@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
-import { imgSrc, fmtTime, parseM3U, genCSS, API } from "./utils.js";
+import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL } from "./utils.js";
 import Player from "./components/Player.jsx";
 import TimelineGrid from "./components/TimelineGrid.jsx";
 import AuthScreen from './components/AuthScreen.jsx';
@@ -23,7 +23,7 @@ const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
 
 function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
-    if (!onAllowedPage || !isAdEligible) return;
+    if (!ENABLE_ADSTERRA || !onAllowedPage || !isAdEligible) return;
 
     // ✅ Check cooldown BEFORE doing anything
     const closedAt = localStorage.getItem(ADSTERRA_STORAGE_KEY);
@@ -31,7 +31,7 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
 
     const script = document.createElement("script");
     script.type = "text/javascript";
-    script.src = "https://pl29160027.profitablecpmratenetwork.com/fe/df/06/fedf067b01378386e9c4bc061ffa1edb.js";
+    script.src = ADSTERRA_URL;
     script.async = true;
     document.head.appendChild(script);
 
@@ -63,6 +63,36 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
       }
     };
   }, [onAllowedPage, isAdEligible]); // ✅ Only re-evaluate if the page eligibility changes
+
+  return null;
+}
+
+// ── HilltopAds In-App Push ──
+function HilltopPushAd({ onAllowedPage, isAdEligible }) {
+  useEffect(() => {
+    if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
+
+    const script = document.createElement("script");
+    script.innerHTML = `
+      (function(ntjo){
+        var d = document,
+            s = d.createElement('script'),
+            l = d.scripts[d.scripts.length - 1];
+        s.settings = ntjo || {};
+        s.src = "//quarrelsomebitter.com/bZXCVus.dCGClN0XYMWvcM/neqmn9LudZDULlCkUPiT/c/w-Mlj_AQ0vNFDvE-tZNKzVA/yTMVDeQP0/NIQD";
+        s.async = true;
+        s.referrerPolicy = 'no-referrer-when-downgrade';
+        l.parentNode.insertBefore(s, l);
+      })({})
+    `;
+    document.head.appendChild(script);
+
+    return () => {
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
+    };
+  }, [onAllowedPage, isAdEligible]);
 
   return null;
 }
@@ -2131,7 +2161,7 @@ export default function App() {
     setAuthUser(null); setIsGuest(false);
   }
   const userRole = authUser?.role || (isGuest ? "guest" : null);
-  const isAdEligible = userRole === "guest" || userRole === "free";
+  const isAdEligible = userRole === "guest" || userRole === "free" || userRole === "regular";
   const userLimits = authUser?.limits || (isGuest ? { maxConnections: 2, maxVod: 500, epg: true, sync: false } : null);
 
   // Show upgrade prompt for free/guest users on login
@@ -3357,6 +3387,7 @@ export default function App() {
   return (
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
       <AdsterraSocialBar onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
+      <HilltopPushAd onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
       {/* ── MOBILE TOP BAR + DRAWER ── */}
       <div className="mob-topbar">
         <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>☰</button>

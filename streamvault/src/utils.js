@@ -2,7 +2,13 @@
 
 export const API = import.meta.env.VITE_API_URL || ""; // Proxy URL for API calls, empty for relative paths
 export const VAST_URL = import.meta.env.VITE_VAST_URL || "";
+export const ADSTERRA_URL = import.meta.env.VITE_ADSTERRA_URL || "https://pl29160027.profitablecpmratenetwork.com/fe/df/06/fedf067b01378386e9c4bc061ffa1edb.js";
 export const VAST_FETCH_TIMEOUT_MS = 3500;
+
+// Feature Flags
+export const ENABLE_VAST = import.meta.env.VITE_ENABLE_VAST === "true";
+export const ENABLE_ADSTERRA = import.meta.env.VITE_ENABLE_ADSTERRA === "true";
+export const ENABLE_HILLTOP = import.meta.env.VITE_ENABLE_HILLTOP === "true";
 
 export function vastProxyUrl(url) {
   return `${API}/api/vast?url=${encodeURIComponent(url)}`;
