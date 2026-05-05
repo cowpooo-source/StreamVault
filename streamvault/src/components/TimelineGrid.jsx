@@ -1,13 +1,28 @@
-import { useState, useEffect, useMemo, memo, forwardRef } from "react";
+import { useState, useEffect, useMemo, memo, forwardRef, useRef } from "react";
 import { imgSrc } from "../utils.js";
 import { epgLookup, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H, msToPx, fmtT } from "../epg.js";
 
 const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup, hasMore, onLoadMore, loadText }, outerRef) {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const loadMoreRef = useRef(null);
+
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 60000);
     return () => clearInterval(timer);
   }, []);
+
+  // Infinite scroll observer
+  useEffect(() => {
+    if (!hasMore || !onLoadMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) onLoadMore();
+      },
+      { rootMargin: '300px' }
+    );
+    if (loadMoreRef.current) observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore]);
 
   const windowStart = useMemo(() => nowMs - 3600000, [nowMs]);
   const windowEnd = useMemo(() => windowStart + TOTAL_MS, [windowStart]);
@@ -56,7 +71,7 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
               </div>
             ))}
             {hasMore && (
-              <div className="epg-ch-cell" style={{justifyContent: 'center', cursor: 'pointer', background: 'var(--s1)'}} onClick={onLoadMore}>
+              <div ref={loadMoreRef} className="epg-ch-cell" style={{justifyContent: 'center', cursor: 'pointer', background: 'var(--s1)'}} onClick={onLoadMore}>
                 <button className="c-btn" style={{padding: '.2rem .5rem', fontSize: '.7rem', pointerEvents: 'none'}}>{loadText || "Load More"}</button>
               </div>
             )}
