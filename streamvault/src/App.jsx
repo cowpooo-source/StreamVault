@@ -3695,16 +3695,17 @@ export default function App() {
                   </div>
                 )}
                 {section==="live" ? (
-                  <div className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  <div key="live-wrapper" className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                     <TimelineGrid
                       ref={liveGridRef}
                       channels={paginatedItems.slice(0, visibleLimit)}
                       epgData={epgData}
                       onPlay={playItem}
-                      onPlayCatchup={playCatchup}                    />
+                      onPlayCatchup={playCatchup}
+                    />
                   </div>
                 ) : (
-                  <div className="vod-grid">
+                  <div key="vod-wrapper" className="vod-grid">
                     {paginatedItems.map((item,i) => {
                       const faved = isFav(item);
                       const hist = historyMap.get(item.id || item.url);
