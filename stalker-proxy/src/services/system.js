@@ -1,4 +1,5 @@
 const fs = require("fs");
+const os = require("os");
 const { execSync } = require("child_process");
 const cache = require("../cache");
 
@@ -57,10 +58,40 @@ function setLastNetStat(stat) {
   lastNetStat = stat;
 }
 
+function getSystemMetrics() {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  
+  let load = [0, 0, 0];
+  try {
+    const loadData = fs.readFileSync("/proc/loadavg", "utf8");
+    load = loadData.split(/\s+/).slice(0, 3).map(parseFloat);
+  } catch {
+    load = os.loadavg();
+  }
+
+  return {
+    cpu: {
+      load: os.loadavg(),
+      cores: os.cpus().length,
+    },
+    mem: {
+      total: totalMem,
+      free: freeMem,
+      used: usedMem,
+      percent: Math.round((usedMem / totalMem) * 100)
+    },
+    uptime: os.uptime(),
+    load: load
+  };
+}
+
 module.exports = {
   getNetworkStats,
   getDiskUsage,
   trackDailyBandwidth,
   getLastNetStat,
-  setLastNetStat
+  setLastNetStat,
+  getSystemMetrics
 };

@@ -1,0 +1,9 @@
+process.env.ADMIN_PASS = 'secret';
+process.env.JWT_SECRET = 'test-secret';
+process.env.RESEND_API_KEY = 'test-key';
+process.env.TURNSTILE_SECRET_KEY = ''; // Bypass
+process.env.REGISTRATION_OPEN = 'true';
+process.env.DEFAULT_ROLE = 'regular';
+process.env.NODE_ENV = 'test';
+process.env.TMDB_API_KEY = 'test-tmdb-key';
+process.env.PROXY_ALLOWED_DOMAINS = 'example.com';
