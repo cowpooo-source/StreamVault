@@ -3698,7 +3698,7 @@ export default function App() {
                   <div key="live-wrapper" className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                     <TimelineGrid
                       ref={liveGridRef}
-                      channels={paginatedItems.slice(0, visibleLimit)}
+                      channels={paginatedItems}
                       epgData={epgData}
                       onPlay={playItem}
                       onPlayCatchup={playCatchup}
