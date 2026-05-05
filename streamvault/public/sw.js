@@ -1,6 +1,6 @@
 const CACHE = "sv-v2";
 
-self.addEventListener("install", _e => {
+self.addEventListener("install", () => {
   self.skipWaiting();
 });
 

@@ -904,7 +904,7 @@ async function safeJsonFetch(res) {
   }
   try {
     return JSON.parse(text);
-  } catch (error) {
+  } catch {
     if (text.trim().startsWith("<")) {
       throw new Error("Server returned HTML/XML instead of JSON. Check if your URL and credentials are correct.");
     }
@@ -1586,7 +1586,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 // ══════════════════════════════════════════════════════════════════
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, _onEdit, onClose, authUser, isGuest, onLogout, t: ct }) {
+const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, authUser, isGuest, onLogout, t: ct }) {
   const t = ct || ((k) => k);
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
@@ -4062,7 +4062,7 @@ export default function App() {
 // ══════════════════════════════════════════════════════════════════
 // SUB-VIEWS
 // ══════════════════════════════════════════════════════════════════
-const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, _isFav, t }) {
+const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, t }) {
   const all = [...favItems.live, ...favItems.vod, ...favItems.series];
   if (!all.length) return (
     <div className="empty">
@@ -4275,8 +4275,8 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgLoading, l
 });
 
 // ── Settings View ──
-function SettingsView({ connections, _favs, _history, authUser, _isGuest, activeConnId, onAuth, t: st }) {
-  const t = st || (k => k);
+function SettingsView({ connections, authUser, activeConnId, onAuth }) {
+  // st or t are unused here in SettingsView
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
   const [importOk, setImportOk] = useState("");

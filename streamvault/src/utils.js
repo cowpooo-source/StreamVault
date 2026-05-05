@@ -9,7 +9,6 @@ export function vastProxyUrl(url) {
 }
 
 export function streamProxy(u) {
-  const origin = API || location.origin;
   const isInternal = u?.startsWith('/') || (API && u?.startsWith(API)) || u?.startsWith(location.origin);
   return isInternal ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
 }
