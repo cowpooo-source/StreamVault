@@ -3697,6 +3697,9 @@ export default function App() {
                       epgData={epgData}
                       onPlay={playItem}
                       onPlayCatchup={playCatchup}
+                      hasMore={hasMore}
+                      onLoadMore={() => setPage(p=>p+1)}
+                      loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
                     />
                   </div>
                 ) : (
@@ -3731,7 +3734,7 @@ export default function App() {
                     })}
                   </div>
                 )}
-                {hasMore && (
+                {hasMore && section !== "live" && (
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
                     <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
                   </div>
