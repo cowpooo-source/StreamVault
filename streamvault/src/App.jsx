@@ -2173,13 +2173,8 @@ export default function App() {
   const PAGE_SIZE = 50;
   const [globalQ, setGlobalQ] = useState("");
   const [playing, setPlaying] = useState(null);
-  const [visibleLimit, setVisibleLimit] = useState(20);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
   const [showCatEditor, setShowCatEditor] = useState(null); // section name or null
-
-  useEffect(() => {
-    setVisibleLimit(20);
-  }, [cat, section]);
 
   // ── theme
   const [themeName, setThemeName] = useState("Dark");

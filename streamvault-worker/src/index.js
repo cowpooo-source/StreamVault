@@ -6,6 +6,7 @@ import {
   handleSeriesCategories, handleSeries, handleSeriesSeasons,
   handleStalkerStream, handleEpisodeStream, handleStalkerPlay,
   handleProfile, handleAccount, handleEpg, handleApi,
+  handleValidate,
 } from "./handlers/stalker.js";
 import { handleStream, handleStreamHead } from "./handlers/stream.js";
 import { handleProxy } from "./handlers/proxy.js";
@@ -51,6 +52,36 @@ export default {
     // Health check
     if (pathname === "/health") {
       return jsonResponse({ status: "ok", runtime: "cloudflare-worker" });
+    }
+
+    // ── SSRF + MAC validation for all Stalker routes
+    if (pathname.startsWith("/stalker")) {
+      const portal = url.searchParams.get("portal") || (method === "POST" ? null : null);
+      const mac = url.searchParams.get("mac") || (method === "POST" ? null : null);
+
+      // For POST requests, we can't read the body here (it would consume the stream)
+      // So we only validate query params for GET, and POST handlers validate their own body
+      if (portal) {
+        // Basic URL validation (SSRF check)
+        try {
+          const u = new URL(portal);
+          if (u.protocol !== "http:" && u.protocol !== "https:") {
+            return errorResponse("Portal URL must use http or https", 403);
+          }
+          const host = u.hostname.toLowerCase();
+          if (host === "localhost" || host === "[::1]" || host === "localhost.localdomain") {
+            return errorResponse("Portal URL not allowed (localhost)", 403);
+          }
+        } catch {
+          return errorResponse("Invalid portal URL format", 400);
+        }
+      }
+      if (mac) {
+        const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
+        if (!MAC_RE.test(mac)) {
+          return errorResponse("Invalid MAC format", 400);
+        }
+      }
     }
 
     // ── Stream proxy
@@ -99,6 +130,9 @@ export default {
     // ── Stalker routes
     if (pathname === "/stalker/handshake" && method === "POST") {
       return handleHandshake(request, env);
+    }
+    if (pathname === "/stalker/validate" && method === "POST") {
+      return handleValidate(request, env);
     }
     if (pathname === "/stalker/channels" && method === "GET") {
       return handleChannels(url, env);

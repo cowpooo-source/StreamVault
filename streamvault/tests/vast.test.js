@@ -64,7 +64,7 @@ describe("collectVastTrackers", () => {
 describe("parseVastDocument", () => {
   it("should return null for non-Vast documents", () => {
     const mockDoc = {
-      querySelector: (sel) => null,
+      querySelector: (_sel) => null,
     };
     const result = parseVastDocument(mockDoc, "http://example.com/vast.xml", null, 0, {});
     expect(result).toBeNull();
