@@ -100,6 +100,7 @@ app.use(helmet({
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
     }
   },
   crossOriginEmbedderPolicy: false,
