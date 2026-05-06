@@ -2088,6 +2088,20 @@ export default function App() {
   const [resetToken, setResetToken] = useState(null);
 
   const liveGridRef = useRef(null);
+  const vodLoadMoreRef = useRef(null);
+
+  // Infinite scroll for VOD/Series
+  useEffect(() => {
+    if (!hasMore || section === "live") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) setPage(p => p + 1);
+      },
+      { rootMargin: "400px" }
+    );
+    if (vodLoadMoreRef.current) observer.observe(vodLoadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, section, setPage]);
 
   // Check stored token on mount
   useEffect(() => {
