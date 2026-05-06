@@ -1,6 +1,7 @@
 // StreamVault CF Worker — main router
 // Replaces stalker-proxy + existing CF Pages worker
 import { jsonResponse, errorResponse, handleOptions } from "./utils/cors.js";
+import { isUrlAllowed } from "./utils/stalker.js";
 import {
   handleHandshake, handleChannels, handleVodCategories, handleVod,
   handleSeriesCategories, handleSeries, handleSeriesSeasons,
@@ -68,9 +69,8 @@ export default {
           if (u.protocol !== "http:" && u.protocol !== "https:") {
             return errorResponse("Portal URL must use http or https", 403);
           }
-          const host = u.hostname.toLowerCase();
-          if (host === "localhost" || host === "[::1]" || host === "localhost.localdomain") {
-            return errorResponse("Portal URL not allowed (localhost)", 403);
+          if (!(await isUrlAllowed(portal))) {
+            return errorResponse("Portal URL not allowed (SSRF check failed)", 403);
           }
         } catch {
           return errorResponse("Invalid portal URL format", 400);

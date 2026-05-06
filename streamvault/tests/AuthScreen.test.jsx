@@ -110,6 +110,12 @@ describe("AuthScreen", () => {
     fireEvent.click(screen.getByText("Continue as Guest"));
     await waitFor(() => {
       expect(defaultProps.onGuest).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          body: "{}"
+        })
+      );
     });
   });
 

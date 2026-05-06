@@ -9,6 +9,7 @@ const API_PATHS = [
 
 // SSRF protection: block private/internal IPs
 const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1|fc|fd|fe80|0\.0\.0\.0)/i;
+const DNS_JSON_ENDPOINT = "https://cloudflare-dns.com/dns-query";
 
 function isPrivateIP(ip) {
   if (!ip) return true;
@@ -21,19 +22,50 @@ function isPrivateIP(ip) {
   return false;
 }
 
+async function resolveHostAddresses(host) {
+  const types = ["A", "AAAA"];
+  const addresses = new Set();
+
+  for (const type of types) {
+    const url = `${DNS_JSON_ENDPOINT}?name=${encodeURIComponent(host)}&type=${type}`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/dns-json" },
+    });
+    if (!res.ok) throw new Error(`DNS lookup failed for ${host}`);
+
+    const data = await res.json();
+    const answers = Array.isArray(data?.Answer) ? data.Answer : [];
+    for (const answer of answers) {
+      if ((answer?.type === 1 || answer?.type === 28) && answer?.data) {
+        addresses.add(answer.data);
+      }
+    }
+  }
+
+  return [...addresses];
+}
+
 // Validate URL is safe (SSRF protection)
-function isUrlAllowed(urlStr) {
+async function isUrlAllowed(urlStr) {
   try {
     const u = new URL(urlStr);
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    const host = u.hostname.toLowerCase();
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     // Block localhost variants
-    if (host === "localhost" || host === "localhost.localdomain") return false;
-    if (host === "[::1]") return false;
+    if (
+      host === "localhost" ||
+      host === "localhost.localdomain" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "0.0.0.0"
+    ) return false;
     // Block private IPs
     if (/^[\d.]+$/.test(host)) return !isPrivateIP(host);
     if (host.includes(":")) return !isPrivateIP(host); // IPv6
-    return true;
+
+    const addresses = await resolveHostAddresses(host);
+    if (!addresses.length) return false;
+    return addresses.every((address) => !isPrivateIP(address));
   } catch {
     return false;
   }
@@ -101,7 +133,7 @@ async function tryHandshake(base, apiPath, mac, portalUrl, opts = {}) {
 
 export async function getSession(portal, mac, opts = {}, kvCache = null) {
   // SSRF check before anything else
-  if (!isUrlAllowed(portal)) {
+  if (!(await isUrlAllowed(portal))) {
     throw new Error("Portal URL not allowed (SSRF check failed)");
   }
   if (!isValidMac(mac)) {
@@ -218,6 +250,8 @@ export async function portalFetch(session, params, timeout = 12000) {
 
   throw new Error(`Portal request failed: ${params.action || "unknown"}`);
 }
+
+export { isUrlAllowed, isPrivateIP };
 
 export async function portalFetchRetry(session, params, timeout) {
   let result = await portalFetch(session, params, timeout);

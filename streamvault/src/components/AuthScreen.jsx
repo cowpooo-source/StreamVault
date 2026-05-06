@@ -95,6 +95,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
     try {
       const res = await fetch(`${api}/api/auth/guest`, {
         method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       

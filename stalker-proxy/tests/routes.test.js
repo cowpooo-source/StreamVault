@@ -79,11 +79,6 @@ describe('Integration Tests - Routes', () => {
       setLastNetStat: vi.fn(),
       getSystemMetrics: vi.fn().mockReturnValue({})
     }));
-    vi.doMock('resend', () => ({
-      Resend: vi.fn().mockImplementation(() => ({
-        emails: { send: vi.fn().mockResolvedValue({ data: { id: 'id' }, error: null }) }
-      }))
-    }));
 
     // 4. Require app and its components
     vi.resetModules();
