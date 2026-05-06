@@ -3780,7 +3780,7 @@ export default function App() {
                   </div>
                 )}
                 {hasMore && section !== "live" && (
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
+                  <div ref={vodLoadMoreRef} style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
                     <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
                   </div>
                 )}
