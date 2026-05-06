@@ -91,14 +91,6 @@ router.post("/auth/login", loginLimiter, express.json(), async (req, res) => {
 
 // ── POST /api/auth/guest ──
 router.post("/auth/guest", loginLimiter, express.json(), async (req, res) => {
-  const turnstileToken = req.body.cf_turnstile_response;
-  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
-
-  if (TURNSTILE_SECRET_KEY) {
-    const isValid = await verifyTurnstile(turnstileToken, ip);
-    if (!isValid) return res.status(403).json({ error: "CAPTCHA verification failed. Please try again." });
-  }
-
   res.json({ ok: true });
 });
 

@@ -92,13 +92,9 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
     e?.preventDefault();
     setErr(""); setMsg(""); setLoading(true);
 
-    const formData = formRef.current ? new FormData(formRef.current) : new FormData();
-    const turnstileResponse = formData.get("cf-turnstile-response");
-
     try {
       const res = await fetch(`${api}/api/auth/guest`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ "cf-turnstile-response": turnstileResponse }),
       });
       const data = await res.json();
       
@@ -109,7 +105,6 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       onGuest();
     } catch (e) {
       setErr(e.message);
-      if (window.turnstile) window.turnstile.reset();
     } finally {
       setLoading(false);
     }
