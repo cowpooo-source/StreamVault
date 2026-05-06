@@ -2088,20 +2088,6 @@ export default function App() {
   const [resetToken, setResetToken] = useState(null);
 
   const liveGridRef = useRef(null);
-  const vodLoadMoreRef = useRef(null);
-
-  // Infinite scroll for VOD/Series
-  useEffect(() => {
-    if (!hasMore || section === "live") return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) setPage(p => p + 1);
-      },
-      { rootMargin: "400px" }
-    );
-    if (vodLoadMoreRef.current) observer.observe(vodLoadMoreRef.current);
-    return () => observer.disconnect();
-  }, [hasMore, section, setPage]);
 
   // Check stored token on mount
   useEffect(() => {
@@ -3323,6 +3309,30 @@ export default function App() {
     setConn(firstCfg);
   }
 
+  const onAllowedPage = (authUser || isGuest) && !!conn;
+  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
+  const activeConnection = connections.find(c => c.id === activeConnId);
+  const channelCount = channels.length + vod.length + series.length;
+  const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
+  const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
+  const hasMore = page * PAGE_SIZE < curItems.length;
+  const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
+
+  const vodLoadMoreRef = useRef(null);
+
+  // Infinite scroll for VOD/Series
+  useEffect(() => {
+    if (!hasMore || section === "live") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) setPage(p => p + 1);
+      },
+      { rootMargin: "400px" }
+    );
+    if (vodLoadMoreRef.current) observer.observe(vodLoadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, section, setPage]);
+
   // Auth gate: show login/register before anything else
   if (authLoading) return (<><style>{genCSS(THEMES[themeName])}</style><div className="setup"><div className="card" style={{textAlign:"center",padding:"3rem"}}><div className="spinner" /></div></div></>);
   if (!authUser && !isGuest) return (
@@ -3388,15 +3398,6 @@ export default function App() {
       , document.body)}
     </>
   );
-
-  const onAllowedPage = (authUser || isGuest) && !!conn;
-  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
-  const activeConnection = connections.find(c => c.id === activeConnId);
-  const channelCount = channels.length + vod.length + series.length;
-  const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
-  const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
-  const hasMore = page * PAGE_SIZE < curItems.length;
-  const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
 
   return (
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
