@@ -288,9 +288,15 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           if (code === 404) {
             title = "Stream Not Found (404)";
             body = "The stream URL returned 404. The channel may be offline, or its URL may have changed. Try reconnecting to refresh the channel list.";
-          } else if (code === 403) {
-            title = "Access Denied (403)";
-            body = "The stream server rejected the request. Your credentials may not have access to this channel.";
+          } else if (code === 401 || code === 403) {
+            title = `Access Denied (${code})`;
+            body = "The stream server rejected the request. Your IP may be blocked or your credentials lack access.";
+          } else if (code === 429) {
+            title = "Rate Limited (429)";
+            body = "Too many requests to the provider. Please wait a minute before trying again.";
+          } else if (code === 456) {
+            title = "Account Blocked (456)";
+            body = "The provider rejected the stream (HTTP 456). Your account may be expired, in use elsewhere, or your IP is blocked by the provider's firewall.";
           } else if (code === 459 || code === 462) {
             title = `Token Expired (${code})`;
             body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
@@ -327,9 +333,15 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         if (code === 404) {
           title = "Stream Not Found (404)";
           body = "The stream URL returned 404. The channel may be offline or the URL has changed.";
-        } else if (code === 403) {
-          title = "Access Denied (403)";
-          body = "The stream server rejected the request. Your credentials may not have access.";
+        } else if (code === 401 || code === 403) {
+          title = `Access Denied (${code})`;
+          body = "The stream server rejected the request. Your IP may be blocked or your credentials lack access.";
+        } else if (code === 429) {
+          title = "Rate Limited (429)";
+          body = "Too many requests to the provider. Please wait a minute before trying again.";
+        } else if (code === 456) {
+          title = "Account Blocked (456)";
+          body = "The provider rejected the stream (HTTP 456). Your account may be expired, in use elsewhere, or your IP is blocked by the provider's firewall.";
         } else if (code === 459 || code === 462) {
           title = `Token Expired (${code})`;
           body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
