@@ -1738,6 +1738,7 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (conn.type === "stalker") {
@@ -2006,20 +2007,42 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
               </div>
               <div>
                 <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Password</label>
-                <input
-                  type="password"
-                  value={form.pass}
-                  onChange={e => setForm({ ...form, pass: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: ".5rem",
-                    border: "1px solid var(--b2)",
-                    borderRadius: "6px",
-                    background: "var(--s2)",
-                    color: "var(--t1)",
-                    fontSize: ".8rem"
-                  }}
-                />
+                <div style={{ display: "flex", position: "relative" }}>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={form.pass}
+                    onChange={e => setForm({ ...form, pass: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: ".5rem",
+                      paddingRight: "2.5rem",
+                      border: "1px solid var(--b2)",
+                      borderRadius: "6px",
+                      background: "var(--s2)",
+                      color: "var(--t1)",
+                      fontSize: ".8rem"
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{
+                      position: "absolute",
+                      right: ".5rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "none",
+                      border: "none",
+                      color: "var(--t3)",
+                      cursor: "pointer",
+                      fontSize: "1rem",
+                      padding: 0
+                    }}
+                    title={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? "🙈" : "👁"}
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -2247,6 +2270,7 @@ export default function App() {
   const [epgSources, setEpgSources] = useState([]); // Array of { id, label, data }
   const [activeEpgSource, setActiveEpgSource] = useState("all");
   const [epgLoading, setEpgLoading] = useState(false);
+  const epgLoadToken = useRef(0); // Tracks current connection to ignore stale loads
 
   const epgData = useMemo(() => {
     if (!epgSources.length) return null;
@@ -2271,6 +2295,13 @@ export default function App() {
       setActiveEpgSource("all");
     }
   }, [epgSources]);
+
+  // Clear EPG sources whenever connection changes (safety net for all code paths)
+  useEffect(() => {
+    epgLoadToken.current++; // Invalidate any in-flight EPG loads
+    setEpgSources([]);
+    setActiveEpgSource("all");
+  }, [activeConnId]);
 
   // ── Stalker lazy-load
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
@@ -2793,14 +2824,17 @@ export default function App() {
 
   async function loadEPG(url, label) {
     if (!url) return;
+    const token = epgLoadToken.current;
     setEpgLoading(true);
     try {
       const res = await proxyFetch(url);
       const text = await res.text();
+      if (token !== epgLoadToken.current) return; // Stale load, ignore
       const data = parseXMLTV(text);
       const id = url;
       const newSource = { id, label: label || new URL(url).hostname, data };
       setEpgSources(prev => {
+        if (token !== epgLoadToken.current) return prev; // Stale, don't update
         const idx = prev.findIndex(s => s.id === id);
         if (idx >= 0) {
           const copy = [...prev];
@@ -2811,8 +2845,8 @@ export default function App() {
       });
       setEpgURL(url);
       db.set("sv-epgURL", url);
-    } catch(e) { console.error("EPG error:", e); }
-    finally { setEpgLoading(false); }
+    } catch(e) { if (token === epgLoadToken.current) console.error("EPG error:", e); }
+    finally { if (token === epgLoadToken.current) setEpgLoading(false); }
   }
 
   // ── load EPG when connection is active
@@ -2822,6 +2856,7 @@ export default function App() {
 
   async function loadStalkerEPG() {
     if (!conn || conn.type !== "stalker") return;
+    const token = epgLoadToken.current;
     setEpgLoading(true);
     try {
       const params = new URLSearchParams({
@@ -2832,14 +2867,16 @@ export default function App() {
       if (conn.serial) params.set("serial", conn.serial);
       if (conn.deviceId) params.set("deviceId", conn.deviceId);
       if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
-      
+
       const res = await fetch(`${API}/stalker/epg?${params.toString()}`);
       const data = await res.json();
+      if (token !== epgLoadToken.current) return; // Stale, ignore
       if (data.programs) {
         const id = `stalker:${conn.server}:${conn.mac}`;
         const label = `Stalker · ${conn.mac.slice(-5)}`;
         const newSource = { id, label, data: data.programs };
         setEpgSources(prev => {
+          if (token !== epgLoadToken.current) return prev; // Stale, don't update
           const idx = prev.findIndex(s => s.id === id);
           if (idx >= 0) {
             const copy = [...prev];
@@ -2849,8 +2886,8 @@ export default function App() {
           return [...prev, newSource];
         });
       }
-    } catch(e) { console.error("Stalker EPG error:", e); }
-    finally { setEpgLoading(false); }
+    } catch(e) { if (token === epgLoadToken.current) console.error("Stalker EPG error:", e); }
+    finally { if (token === epgLoadToken.current) setEpgLoading(false); }
   }
 
   function switchSection(s) {
@@ -3102,18 +3139,21 @@ export default function App() {
     const target = connections.find(c => c.id === id);
     if (!target) return;
     setShowConnManager(false);
+    epgLoadToken.current++; // Invalidate any in-flight EPG loads
     // Clear current content
     setChannels([]); setVod([]); setSeries([]);
+    setEpgSources([]); setActiveEpgSource("all");
     setStalkerVodCats([]); setStalkerSeriesCats([]);
 
     fetchingCatRef.current.clear(); setPrefetchProgress(null);
     setPlaying(null); setCat("All");
-    // Set active and load from IDB
+    // Set conn to new config FIRST so useEffect [activeConnId] sees correct conn
+    setConn(target.config);
     setActiveConnId(id);
     db.set("sv-activeConn", id);
     (async () => {
       const loaded = await loadFromCache(id, target);
-      if (!loaded) setConn(target.config);
+      if (!loaded) setConn(target.config); // fallback if not cached
     })();
   }
 
