@@ -110,13 +110,15 @@ export function parseM3U(text) {
   if (!text) return [];
   const lines = text.split("\n"); const out = [];
   let cur = null;
-  let epgUrl = null;
+  let epgUrls = [];
 
   for (const raw of lines) {
     const line = raw.trim();
     if (line.startsWith("#EXTM3U")) {
       const match = line.match(/(?:url-tvg|x-tvg-url)="([^"]+)"/i);
-      if (match) epgUrl = match[1];
+      if (match) {
+        epgUrls = match[1].split(/[,|]/).map(u => u.trim()).filter(Boolean);
+      }
     } else if (line.startsWith("#EXTINF")) {
       const name   = (line.match(/,(.+)$/) || [])[1]?.trim() || "Unknown";
       const logo   = (line.match(/tvg-logo="([^"]+)"/) || [])[1] || null;
@@ -131,7 +133,7 @@ export function parseM3U(text) {
       out.push(cur); cur = null;
     }
   }
-  out.epgUrl = epgUrl;
+  out.epgUrls = epgUrls;
   return out;
 }
 

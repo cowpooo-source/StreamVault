@@ -2264,6 +2264,14 @@ export default function App() {
     return Object.keys(merged).length ? merged : null;
   }, [epgSources, activeEpgSource]);
 
+  // Reset activeEpgSource if the selected source is no longer available
+  useEffect(() => {
+    if (activeEpgSource === "all") return;
+    if (!epgSources.some(s => s.id === activeEpgSource)) {
+      setActiveEpgSource("all");
+    }
+  }, [epgSources]);
+
   // ── Stalker lazy-load
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
   const [stalkerSeriesCats, setStalkerSeriesCats] = useState([]); // [{id,title,count}]
@@ -3612,7 +3620,7 @@ export default function App() {
           {section === "live" && epgSources.length > 0 && (
             <select className="fi" style={{width:130,padding:".25rem",fontSize:".72rem"}} 
               value={activeEpgSource} onChange={e=>setActiveEpgSource(e.target.value)}>
-              <option value="all">All EPG Sources</option>
+              <option value="all">All</option>
               {epgSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           )}
@@ -3789,6 +3797,7 @@ export default function App() {
                 {section==="live" ? (
                   <div key="live-wrapper" className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                     <TimelineGrid
+                      key={activeEpgSource}
                       ref={liveGridRef}
                       channels={paginatedItems}
                       epgData={epgData}
@@ -4335,7 +4344,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 
         {epgSources.length > 0 && (
           <select className="fi" style={{width:160}} value={activeEpgSource} onChange={e=>setActiveEpgSource(e.target.value)}>
-            <option value="all">All EPG Sources</option>
+            <option value="all">All</option>
             {epgSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         )}
@@ -4359,6 +4368,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
         <>
           {/* Scrollable grid */}
           <TimelineGrid
+            key={activeEpgSource}
             ref={outerRef}
             channels={filteredChannels}
             epgData={epgData}
