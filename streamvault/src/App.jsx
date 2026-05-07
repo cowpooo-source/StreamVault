@@ -71,6 +71,7 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
 // ── HilltopAds In-App Push ──
 function HilltopPushAd({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
+    console.log("[Hilltop] Enabled:", ENABLE_HILLTOP, "AllowedPage:", onAllowedPage, "Eligible:", isAdEligible);
     if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
 
     const script = document.createElement("script");
@@ -3268,6 +3269,30 @@ export default function App() {
     return [...channels, ...vod, ...series].filter(i => i.name?.toLowerCase().includes(q)).slice(0, 80);
   }, [globalQ, channels, vod, series]);
 
+  const onAllowedPage = (authUser || isGuest) && !!conn;
+  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
+  const activeConnection = connections.find(c => c.id === activeConnId);
+  const channelCount = channels.length + vod.length + series.length;
+  const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
+  const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
+  const hasMore = page * PAGE_SIZE < curItems.length;
+  const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
+
+  const vodLoadMoreRef = useRef(null);
+
+  // Infinite scroll for VOD/Series
+  useEffect(() => {
+    if (!hasMore || section === "live") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) setPage(p => p + 1);
+      },
+      { rootMargin: "400px" }
+    );
+    if (vodLoadMoreRef.current) observer.observe(vodLoadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, section, setPage]);
+
   function handleConnect(connConfig) {
     const err = saveConnection(connConfig);
     if (err) { alert(err); return; }
@@ -3309,30 +3334,6 @@ export default function App() {
     if (firstId) { setActiveConnId(firstId); db.set("sv-activeConn", firstId); }
     setConn(firstCfg);
   }
-
-  const onAllowedPage = (authUser || isGuest) && !!conn;
-  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
-  const activeConnection = connections.find(c => c.id === activeConnId);
-  const channelCount = channels.length + vod.length + series.length;
-  const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
-  const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
-  const hasMore = page * PAGE_SIZE < curItems.length;
-  const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
-
-  const vodLoadMoreRef = useRef(null);
-
-  // Infinite scroll for VOD/Series
-  useEffect(() => {
-    if (!hasMore || section === "live") return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) setPage(p => p + 1);
-      },
-      { rootMargin: "400px" }
-    );
-    if (vodLoadMoreRef.current) observer.observe(vodLoadMoreRef.current);
-    return () => observer.disconnect();
-  }, [hasMore, section, setPage]);
 
   // Auth gate: show login/register before anything else
   if (authLoading) return (<><style>{genCSS(THEMES[themeName])}</style><div className="setup"><div className="card" style={{textAlign:"center",padding:"3rem"}}><div className="spinner" /></div></div></>);
