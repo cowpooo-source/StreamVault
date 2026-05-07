@@ -3702,6 +3702,7 @@ export default function App() {
           <DirectHLSView />
         ) : section==="epg" ? (
           <EPGView channels={channels} epgData={epgData} epgURL={epgURL} setEpgURL={setEpgURL}
+            epgSources={epgSources} activeEpgSource={activeEpgSource} setActiveEpgSource={setActiveEpgSource}
             epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} onPlayCatchup={playCatchup} t={t} />
         ) : section==="search" ? (
           <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} />
