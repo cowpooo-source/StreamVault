@@ -1108,7 +1108,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         const channels = parseM3U(text);
         if (!channels.length) throw new Error("No channels found");
         // Connection saved by handleConnect in App
-        onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl });
+        onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl, epgUrls: channels.epgUrls });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
         const server = f.server.trim().replace(/\/$/,"");
@@ -2244,8 +2244,25 @@ export default function App() {
 
   // ── EPG
   const [epgURL, setEpgURL]   = useState("");
-  const [epgData, setEpgData] = useState(null);
+  const [epgSources, setEpgSources] = useState([]); // Array of { id, label, data }
+  const [activeEpgSource, setActiveEpgSource] = useState("all");
   const [epgLoading, setEpgLoading] = useState(false);
+
+  const epgData = useMemo(() => {
+    if (!epgSources.length) return null;
+    if (activeEpgSource !== "all") {
+      return epgSources.find(s => s.id === activeEpgSource)?.data || null;
+    }
+    // Merge all sources to prevent overlapping in the UI
+    const merged = {};
+    for (const source of epgSources) {
+      if (!source.data) continue;
+      for (const [chId, progs] of Object.entries(source.data)) {
+        if (!merged[chId]) merged[chId] = progs;
+      }
+    }
+    return Object.keys(merged).length ? merged : null;
+  }, [epgSources, activeEpgSource]);
 
   // ── Stalker lazy-load
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
@@ -2509,7 +2526,8 @@ export default function App() {
         idbCache.set(`sync:${cId}`, { ...lastSynced, live: Date.now() });
         setLastSynced(prev => ({ ...prev, live: Date.now() }));
       }
-      if (conn.epgUrl) loadEPG(conn.epgUrl);
+      if (conn.epgUrls?.length) conn.epgUrls.forEach(u => loadEPG(u));
+      else if (conn.epgUrl) loadEPG(conn.epgUrl);
       else if (epgURL) loadEPG(epgURL);
     } else if (conn.type === "xtream") {
       fetchLive();
@@ -2765,13 +2783,24 @@ export default function App() {
     return stalkerPlayUrl(cmd, contentType);
   }
 
-  async function loadEPG(url) {
+  async function loadEPG(url, label) {
     if (!url) return;
     setEpgLoading(true);
     try {
       const res = await proxyFetch(url);
       const text = await res.text();
-      setEpgData(parseXMLTV(text));
+      const data = parseXMLTV(text);
+      const id = url;
+      const newSource = { id, label: label || new URL(url).hostname, data };
+      setEpgSources(prev => {
+        const idx = prev.findIndex(s => s.id === id);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = newSource;
+          return copy;
+        }
+        return [...prev, newSource];
+      });
       setEpgURL(url);
       db.set("sv-epgURL", url);
     } catch(e) { console.error("EPG error:", e); }
@@ -2798,7 +2827,20 @@ export default function App() {
       
       const res = await fetch(`${API}/stalker/epg?${params.toString()}`);
       const data = await res.json();
-      if (data.programs) setEpgData(data.programs);
+      if (data.programs) {
+        const id = `stalker:${conn.server}:${conn.mac}`;
+        const label = `Stalker · ${conn.mac.slice(-5)}`;
+        const newSource = { id, label, data: data.programs };
+        setEpgSources(prev => {
+          const idx = prev.findIndex(s => s.id === id);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = newSource;
+            return copy;
+          }
+          return [...prev, newSource];
+        });
+      }
     } catch(e) { console.error("Stalker EPG error:", e); }
     finally { setEpgLoading(false); }
   }
@@ -3567,8 +3609,14 @@ export default function App() {
           {section==="live" && (
             <span style={{fontSize:".73rem"}}><span className="live-dot" />LIVE</span>
           )}
-          {["live","vod","series"].includes(section) && (
-            <>
+          {section === "live" && epgSources.length > 0 && (
+            <select className="fi" style={{width:130,padding:".25rem",fontSize:".72rem"}} 
+              value={activeEpgSource} onChange={e=>setActiveEpgSource(e.target.value)}>
+              <option value="all">All EPG Sources</option>
+              {epgSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          )}
+          {["live","vod","series"].includes(section) && (            <>
               {conn?.type === "stalker" && (
                 <>
                   <button className="c-btn" title="Reload from portal" onClick={() => {
@@ -4236,7 +4284,7 @@ const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggle
 
 
 
-const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
+const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, activeEpgSource, setActiveEpgSource, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
   const PX_PER_MIN = 3;
   const CH_COL_W = 160;
   const MAX_CHANNELS = 200;
@@ -4283,6 +4331,14 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgLoading, l
         <button className="btn-go" onClick={()=>loadEPG(urlInput)} disabled={epgLoading} style={{padding:".4rem .9rem",fontSize:".82rem"}}>
           {epgLoading ? t("loading") : t("loadEPG")}
         </button>
+
+        {epgSources.length > 0 && (
+          <select className="fi" style={{width:160}} value={activeEpgSource} onChange={e=>setActiveEpgSource(e.target.value)}>
+            <option value="all">All EPG Sources</option>
+            {epgSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        )}
+
         {channels.length > 0 && (
           <input className="fi" style={{width:"160px"}} placeholder="Filter channels\u2026"
             value={search} onChange={e=>setSearch(e.target.value)} />
