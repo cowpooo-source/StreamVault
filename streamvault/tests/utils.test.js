@@ -152,10 +152,9 @@ http://example.com/movie/123.mp4
 http://example.com/series/456.mp4`;
     const result = parseM3U(text);
     expect(result.length).toBe(3);
-    expect(result.epgUrl).toBe("http://example.com/epg.xml");
-    
-    expect(result[0]).toMatchObject({
-      name: "Channel 1",
+    expect(result.epgUrls).toEqual(["http://example.com/epg.xml"]);
+
+    expect(result[0]).toMatchObject({      name: "Channel 1",
       logo: "http://example.com/logo1.png",
       group: "Entertainment",
       epgId: "ch1",
