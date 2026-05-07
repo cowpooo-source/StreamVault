@@ -298,7 +298,7 @@ describe("Auth — Role Limits", () => {
     expect(g.maxConnections).toBe(2);
     expect(g.maxVod).toBe(500);
     expect(g.epg).toBe(true);
-    expect(g.sync).toBe(false);
+    expect(g.sync).toBe(true);
   });
 
   it("regular has unlimited VOD", () => {

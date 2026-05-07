@@ -1,164 +1,21 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
-
-const API = ""; // Force relative path for production
-const VAST_URL = import.meta.env.VITE_VAST_URL || "";
-const VAST_FETCH_TIMEOUT_MS = 3500;
-
-function vastProxyUrl(url) {
-  return `${API}/api/vast?url=${encodeURIComponent(url)}`;
-}
-
-async function fetchTextWithTimeout(url, timeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      cache: "no-store",
-      credentials: "omit",
-      redirect: "follow",
-      signal: controller.signal,
-    });
-    if (!res.ok) return "";
-    return await res.text();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-// Proxy portal images to avoid mixed-content / broken SSL cert issues
-// Skip proxying for known-good HTTPS domains (TMDB, etc.)
-function imgSrc(url) {
-  if (!url) return null;
-  if (url.includes("image.tmdb.org") || url.includes("themoviedb.org")) return url;
-  return `${API}/img?url=${encodeURIComponent(url)}`;
-}
+import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL } from "./utils.js";
+import Player from "./components/Player.jsx";
+import TimelineGrid from "./components/TimelineGrid.jsx";
+import AuthScreen from './components/AuthScreen.jsx';
+import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 
 // Guest ID for analytics tracking
 const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
+setEncKeySource(GUEST_ID);
 // Auth: relies solely on httpOnly cookies (no localStorage token fallback to prevent XSS theft)
 function authHeaders(extra = {}) { return { ...extra, "X-Guest-Id": GUEST_ID }; }
 function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
 function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
 
-function resolveUrl(raw, base) {
-  if (!raw) return "";
-  try { return new URL(String(raw).trim(), base).toString(); } catch { return ""; }
-}
-
-function parseVastTime(value) {
-  if (!value) return 0;
-  const text = String(value).trim();
-  if (!text) return 0;
-  if (text.includes(":")) {
-    const parts = text.split(":").map(Number);
-    if (parts.some(Number.isNaN)) return 0;
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    if (parts.length === 2) return parts[0] * 60 + parts[1];
-  }
-  const n = Number(text);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function pingUrl(url) {
-  if (!url) return;
-  try {
-    const img = new Image();
-    img.referrerPolicy = "no-referrer";
-    img.src = url;
-  } catch {}
-}
-
-function pingUrls(urls = []) {
-  urls.forEach(pingUrl);
-}
-
-function mergeTrackers(...sets) {
-  const merged = {};
-  for (const set of sets) {
-    if (!set) continue;
-    for (const [event, urls] of Object.entries(set)) {
-      if (!urls?.length) continue;
-      (merged[event] ||= []).push(...urls);
-    }
-  }
-  for (const [event, urls] of Object.entries(merged)) {
-    merged[event] = [...new Set(urls.filter(Boolean))];
-  }
-  return merged;
-}
-
-function collectVastTrackers(root) {
-  const trackers = {};
-  const push = (event, url) => {
-    if (!event || !url) return;
-    (trackers[event] ||= []).push(url);
-  };
-  root.querySelectorAll("Impression").forEach((node) => push("impression", node.textContent?.trim()));
-  root.querySelectorAll("TrackingEvents Tracking").forEach((node) => push((node.getAttribute("event") || "").toLowerCase(), node.textContent?.trim()));
-  return trackers;
-}
-
-async function fetchVastAd(vastUrl, videoEl, depth = 0, inheritedTrackers = {}) {
-  if (!vastUrl || depth > 2) return null;
-  try {
-    // Keep this below Chrome's user-gesture autoplay window.
-    let xml = await fetchTextWithTimeout(vastUrl, VAST_FETCH_TIMEOUT_MS);
-    if (!xml) xml = await fetchTextWithTimeout(vastProxyUrl(vastUrl), VAST_FETCH_TIMEOUT_MS);
-    if (!xml) return null;
-    const doc = new DOMParser().parseFromString(xml, "application/xml");
-    if (doc.querySelector("parsererror")) {
-      const fallbackXml = await fetchTextWithTimeout(vastProxyUrl(vastUrl), VAST_FETCH_TIMEOUT_MS);
-      if (!fallbackXml || fallbackXml === xml) return null;
-      const fallbackDoc = new DOMParser().parseFromString(fallbackXml, "application/xml");
-      if (fallbackDoc.querySelector("parsererror")) return null;
-      return parseVastDocument(fallbackDoc, vastUrl, videoEl, depth, inheritedTrackers);
-    }
-
-    return parseVastDocument(doc, vastUrl, videoEl, depth, inheritedTrackers);
-  } catch {
-    return null;
-  }
-}
-
-async function parseVastDocument(doc, vastUrl, videoEl, depth, inheritedTrackers) {
-  const wrapper = doc.querySelector("Wrapper");
-  if (wrapper) {
-    const nextUrl = resolveUrl(wrapper.querySelector("VASTAdTagURI")?.textContent, vastUrl);
-    if (!nextUrl) return null;
-    const wrapperTrackers = collectVastTrackers(wrapper);
-    return await fetchVastAd(nextUrl, videoEl, depth + 1, mergeTrackers(inheritedTrackers, wrapperTrackers));
-  }
-
-  const inline = doc.querySelector("InLine");
-  const linear = inline?.querySelector("Linear");
-  if (!inline || !linear) return null;
-
-  const mediaFiles = [...linear.querySelectorAll("MediaFile")]
-    .map((node) => ({
-      url: node.textContent?.trim(),
-      type: node.getAttribute("type") || "",
-    }))
-    .filter((file) => file.url);
-
-  if (!mediaFiles.length) return null;
-
-  const media = mediaFiles.find((file) => file.type.startsWith("video/") && (!videoEl?.canPlayType || videoEl.canPlayType(file.type))) ||
-    mediaFiles.find((file) => file.type.startsWith("video/")) ||
-    mediaFiles[0];
-
-  const trackers = mergeTrackers(inheritedTrackers, collectVastTrackers(inline));
-  return {
-    title: inline.querySelector("AdTitle")?.textContent?.trim() || "Sponsored Ad",
-    mediaUrl: resolveUrl(media.url, vastUrl),
-    mediaType: media.type,
-    clickThrough: resolveUrl(inline.querySelector("VideoClicks > ClickThrough")?.textContent, vastUrl),
-    duration: parseVastTime(linear.querySelector("Duration")?.textContent),
-    skipOffset: linear.getAttribute("skipoffset") ? parseVastTime(linear.getAttribute("skipoffset")) : null,
-    trackers,
-  };
-}
+// VAST functions are now in vast.js
 
 // ── Adsterra Social Bar ──
 const ADSTERRA_COOLDOWN_MS = 3 * 60 * 1000;
@@ -166,7 +23,8 @@ const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
 
 function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
-    if (!onAllowedPage || !isAdEligible) return;
+    console.log("[Adsterra] Enabled:", ENABLE_ADSTERRA, "AllowedPage:", onAllowedPage, "Eligible:", isAdEligible);
+    if (!ENABLE_ADSTERRA || !onAllowedPage || !isAdEligible) return;
 
     // ✅ Check cooldown BEFORE doing anything
     const closedAt = localStorage.getItem(ADSTERRA_STORAGE_KEY);
@@ -174,7 +32,7 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
 
     const script = document.createElement("script");
     script.type = "text/javascript";
-    script.src = "https://pl29160027.profitablecpmratenetwork.com/fe/df/06/fedf067b01378386e9c4bc061ffa1edb.js";
+    script.src = ADSTERRA_URL;
     script.async = true;
     document.head.appendChild(script);
 
@@ -206,6 +64,37 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
       }
     };
   }, [onAllowedPage, isAdEligible]); // ✅ Only re-evaluate if the page eligibility changes
+
+  return null;
+}
+
+// ── HilltopAds In-App Push ──
+function HilltopPushAd({ onAllowedPage, isAdEligible }) {
+  useEffect(() => {
+    console.log("[Hilltop] Enabled:", ENABLE_HILLTOP, "AllowedPage:", onAllowedPage, "Eligible:", isAdEligible);
+    if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
+
+    const script = document.createElement("script");
+    script.innerHTML = `
+      (function(ntjo){
+        var d = document,
+            s = d.createElement('script'),
+            l = d.scripts[d.scripts.length - 1];
+        s.settings = ntjo || {};
+        s.src = "//quarrelsomebitter.com/bZXCVus.dCGClN0XYMWvcM/neqmn9LudZDULlCkUPiT/c/w-Mlj_AQ0vNFDvE-tZNKzVA/yTMVDeQP0/NIQD";
+        s.async = true;
+        s.referrerPolicy = 'no-referrer-when-downgrade';
+        l.parentNode.insertBefore(s, l);
+      })({})
+    `;
+    document.head.appendChild(script);
+
+    return () => {
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
+    };
+  }, [onAllowedPage, isAdEligible]);
 
   return null;
 }
@@ -268,267 +157,7 @@ function ResetPasswordModal({ token, onClose }) {
   );
 }
 
-// ── Auth Screen ──
-function AuthScreen({ onAuth, onGuest }) {
-  const [mode, setMode] = useState("login");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [emailInput, setEmailInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [msg, setMsg] = useState("");
-  const [forceLogin, setForceLogin] = useState(false);
-  const formRef = useRef(null);
-  const turnstileContainerRef = useRef(null);
-  const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 
-  useEffect(() => {
-    if (siteKey && window.turnstile && turnstileContainerRef.current) {
-      turnstileContainerRef.current.innerHTML = "";
-      try {
-        window.turnstile.render(turnstileContainerRef.current, {
-          sitekey: siteKey,
-          theme: 'dark'
-        });
-      } catch (e) {
-        console.error("Turnstile render error", e);
-      }
-    }
-  }, [mode, siteKey]);
-
-  async function submit(e) {
-    e?.preventDefault();
-    setErr(""); setMsg(""); setLoading(true);
-
-    const formData = formRef.current ? new FormData(formRef.current) : new FormData();
-    const turnstileResponse = formData.get("cf-turnstile-response");
-
-    try {
-      if (mode === "forgot") {
-        if (!emailInput) throw new Error("Email is required");
-        const res = await fetch(`${API}/api/auth/forgot-password`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: emailInput }),
-        });
-        const data = await res.json();
-        setMsg(data.message || "Reset link sent!");
-        return;
-      }
-
-      const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body = { username, password, cf_turnstile_response: turnstileResponse };
-      if (mode === "register") body.email = emailInput;
-      if (forceLogin) body.force = true;
-
-      let res = await fetch(`${API}${endpoint}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      let data = await res.json();
-      
-      if (!res.ok) {
-        if (data.code === 'MAX_LOGINS_REACHED') {
-          // Reset turnstile as the token is now consumed
-          if (window.turnstile) window.turnstile.reset();
-          
-          if (window.confirm("Max login reached. Do you want to force login which will logout previous user? (You will need to re-verify CAPTCHA)")) {
-            setForceLogin(true);
-            setErr("Please re-verify CAPTCHA and click Login again to force login.");
-            return;
-          } else {
-            throw new Error(data.error || "Failed");
-          }
-        } else {
-          throw new Error(data.error || "Failed");
-        }
-      }
-      
-      onAuth(data.user);
-    } catch (e) {
-      setErr(e.message);
-      if (window.turnstile) window.turnstile.reset();
-    }
-    finally { setLoading(false); }
-  }
-
-  async function submitGuest(e) {
-    e?.preventDefault();
-    setErr(""); setMsg(""); setLoading(true);
-
-    const formData = formRef.current ? new FormData(formRef.current) : new FormData();
-    const turnstileResponse = formData.get("cf-turnstile-response");
-
-    try {
-      const res = await fetch(`${API}/api/auth/guest`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),
-      });
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.error || "Failed");
-      }
-      
-      onGuest();
-    } catch (e) {
-      setErr(e.message);
-      if (window.turnstile) window.turnstile.reset();
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="setup">
-      <div className="card" style={{maxWidth:380}}>
-        <div style={{textAlign:"center",marginBottom:"1.5rem"}}>
-          <div style={{fontFamily:"'Rajdhani',sans-serif",fontSize:"2rem",fontWeight:700,letterSpacing:".12em",color:"var(--accent)"}}>Portal Heaven</div>
-          <div style={{fontSize:".78rem",color:"var(--t3)"}}>Your personal IPTV client</div>
-        </div>
-
-        {mode !== "forgot" ? (
-          <>
-            <div className="tabs" style={{marginBottom:"1rem"}}>
-              <button className={`tab ${mode==="login"?"on":""}`} onClick={() => {setMode("login");setErr("");setMsg("");setForceLogin(false);}}>Login</button>
-              <button className={`tab ${mode==="register"?"on":""}`} onClick={() => {setMode("register");setErr("");setMsg("");setForceLogin(false);}}>Register</button>
-            </div>
-            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
-            <form ref={formRef} onSubmit={submit}>
-              <div className="fg">
-                <label className="fl">Username</label>
-                <input className="fi" placeholder="Username" name="username" value={username} onChange={e => {setUsername(e.target.value); if(forceLogin) setForceLogin(false);}} autoFocus />
-              </div>
-              {mode === "register" && (
-                <div className="fg">
-                  <label className="fl">Email Address</label>
-                  <input className="fi" type="email" placeholder="email@example.com" name="email" value={emailInput} onChange={e => setEmailInput(e.target.value)} />
-                </div>
-              )}
-              <div className="fg">
-                <label className="fl">Password</label>
-                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                  <input className="fi" type={showPassword ? "text" : "password"} placeholder="Password" name="password" value={password}
-                    onChange={e => {setPassword(e.target.value); if(forceLogin) setForceLogin(false);}}
-                    style={{ paddingRight: "2.5rem" }} />
-                  <button type="button" onClick={() => setShowPassword(!showPassword)}
-                    style={{ position: "absolute", right: "0.5rem", background: "none", border: "none", color: "var(--t2)", cursor: "pointer", padding: "0.2rem" }}
-                    title={showPassword ? "Hide password" : "Show password"}>
-                    {showPassword ? "🙈" : "👁"}
-                  </button>
-                </div>
-              </div>
-              {mode === "login" && (
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"-0.5rem",marginBottom:"0.8rem"}}>
-                  <label style={{display:"flex",alignItems:"center",gap:".4rem",fontSize:".75rem",color:"var(--t2)",cursor:"pointer"}}>
-                    <input type="checkbox" checked={forceLogin} onChange={e => setForceLogin(e.target.checked)} style={{accentColor:"var(--accent)"}} />
-                    Force Login
-                  </label>
-                  <button type="button" onClick={() => setMode("forgot")} style={{background:"none",border:"none",color:"var(--accent)",fontSize:".75rem",cursor:"pointer",padding:0}}>Forgot Password?</button>
-                </div>
-              )}
-              {siteKey && (
-                <div 
-                  ref={turnstileContainerRef}
-                  style={{ marginBottom: "1rem", display: "flex", justifyContent: "center" }}
-                ></div>
-              )}
-              <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%"}}>
-                {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <div style={{fontSize:"1.1rem",fontWeight:600,marginBottom:"0.5rem",textAlign:"center"}}>Reset Password</div>
-            <p style={{fontSize:".8rem",color:"var(--t2)",marginBottom:"1.2rem",textAlign:"center"}}>Enter your email address and we'll send you a link to reset your password.</p>
-            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
-            {msg && <div style={{background:"rgba(0,212,255,0.1)",color:"var(--accent)",padding:".8rem",borderRadius:8,fontSize:".8rem",marginBottom:"1rem",border:"1px solid var(--accent-22)"}}>{msg}</div>}
-            <form ref={formRef} onSubmit={submit}>
-              <div className="fg">
-                <label className="fl">Email Address</label>
-                <input className="fi" type="email" placeholder="email@example.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} autoFocus />
-              </div>
-              <button type="submit" className="btn-primary" disabled={loading || !!msg} style={{width:"100%",marginTop:".5rem"}}>
-                {loading ? "..." : "Send Reset Link"}
-              </button>
-              <button type="button" onClick={() => setMode("login")} style={{width:"100%",background:"none",border:"1px solid var(--b2)",color:"var(--t2)",padding:".6rem",borderRadius:8,fontSize:".85rem",marginTop:".8rem",cursor:"pointer"}}>Back to Login</button>
-            </form>
-          </>
-        )}
-
-        <div style={{textAlign:"center",marginTop:"1.2rem"}}>
-          <button onClick={submitGuest} disabled={loading} style={{width:"100%",padding:".65rem",background:"transparent",
-            border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,color:"var(--t2)",cursor:"pointer",
-            fontSize:".88rem",fontWeight:500,fontFamily:"'DM Sans',sans-serif",transition:"all .2s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.color="var(--accent)"}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.15)";e.currentTarget.style.color="var(--t2)"}}>
-            {loading ? "..." : "Continue as Guest"}
-          </button>
-          <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed — some features limited</div>
-          {mode === "register" && (
-            <div style={{fontSize:".65rem",color:"var(--accent)",marginTop:".5rem"}}>
-              New accounts get Regular access (promo)
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Client-side encryption for credentials synced to server ──
-const ENC_ALGO = "AES-GCM";
-let _encKeySource = GUEST_ID; // default to guest ID, updated to user ID on login
-function setEncKeySource(id) { _encKeySource = id; }
-async function deriveKey() {
-  const raw = new TextEncoder().encode(_encKeySource + ":sv-enc-key");
-  const hash = await crypto.subtle.digest("SHA-256", raw);
-  return crypto.subtle.importKey("raw", hash, ENC_ALGO, false, ["encrypt", "decrypt"]);
-}
-async function encryptData(plaintext) {
-  try {
-    const key = await deriveKey();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const enc = await crypto.subtle.encrypt({ name: ENC_ALGO, iv }, key, new TextEncoder().encode(plaintext));
-    return btoa(String.fromCharCode(...iv)) + "." + btoa(String.fromCharCode(...new Uint8Array(enc)));
-  } catch { return plaintext; }
-}
-async function decryptData(ciphertext) {
-  try {
-    if (!ciphertext || !ciphertext.includes(".")) return ciphertext;
-    const [ivB64, dataB64] = ciphertext.split(".");
-    const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
-    const data = Uint8Array.from(atob(dataB64), c => c.charCodeAt(0));
-    const key = await deriveKey();
-    const dec = await crypto.subtle.decrypt({ name: ENC_ALGO, iv }, key, data);
-    return new TextDecoder().decode(dec);
-  } catch { return ciphertext; }
-}
-
-// Strip sensitive fields before syncing, encrypt the rest
-async function encryptConnections(conns) {
-  const stripped = conns.map(c => {
-    const safe = { ...c };
-    // Remove plaintext credentials — encrypt them separately
-    if (safe.type === "xtream" && safe.pass) { safe._encPass = true; delete safe.pass; }
-    if (safe.type === "stalker" && safe.mac) { safe._encMac = true; }
-    return safe;
-  });
-  return await encryptData(JSON.stringify(stripped));
-}
-
-async function decryptConnections(data) {
-  if (!data) return null;
-  // If data is already an array (stored unencrypted / pre-encryption), return directly
-  if (Array.isArray(data)) return data;
-  // Try to decrypt
-  const json = await decryptData(typeof data === "string" ? data : JSON.stringify(data));
-  try { return JSON.parse(json); } catch {}
-  // Decryption failed — try parsing raw data as JSON (unencrypted fallback)
-  if (typeof data === "string") { try { return JSON.parse(data); } catch {} }
-  return typeof data === "object" ? data : null;
-}
 
 // Server sync — fire-and-forget with debounce (uses auth token if logged in)
 const _syncTimers = {};
@@ -573,7 +202,7 @@ async function migrateGuestData() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ guestId: GUEST_ID }),
     });
-  } catch {}
+  } catch (e) { console.warn("Guest data migration failed:", e.message); }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1180,7 +809,7 @@ const db = {
     try {
       if (window.storage) { await window.storage.set(key, JSON.stringify(value)); }
       else localStorage.setItem(key, JSON.stringify(value));
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   },
 };
 
@@ -1235,7 +864,7 @@ async function migrateOldCache() {
             const match = key.match(/^sv-s-(vod|series)cats-(.+)$/);
             if (match) await idbCache.set(`cats-ls:${match[2]}:${match[1]}`, cats);
           }
-        } catch {}
+        } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     }
     // Migrate old stalker channel caches (stored via db.set → localStorage)
@@ -1248,11 +877,11 @@ async function migrateOldCache() {
             const server = key.replace("sv-stalker-channels-", "");
             await idbCache.set(`channels-ls:${server}`, channels);
           }
-        } catch {}
+        } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     }
     await idbCache.set("sv-migrated-v2", true);
-  } catch {}
+  } catch (e) { console.warn("IDB/localStorage error:", e.message); }
 }
 migrateOldCache();
 
@@ -1262,33 +891,7 @@ migrateOldCache();
 // ══════════════════════════════════════════════════════════════════
 // UTILS
 // ══════════════════════════════════════════════════════════════════
-function parseM3U(text) {
-  const lines = text.split("\n"); const out = [];
-  let cur = null;
-  let epgUrl = null;
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line.startsWith("#EXTM3U")) {
-      const match = line.match(/(?:url-tvg|x-tvg-url)="([^"]+)"/i);
-      if (match) epgUrl = match[1];
-    } else if (line.startsWith("#EXTINF")) {
-      const name   = (line.match(/,(.+)$/) || [])[1]?.trim() || "Unknown";
-      const logo   = (line.match(/tvg-logo="([^"]+)"/) || [])[1] || null;
-      const group  = (line.match(/group-title="([^"]+)"/) || [])[1] || "Uncategorized";
-      const epgId  = (line.match(/tvg-id="([^"]+)"/) || [])[1] || null;
-      const num    = parseInt((line.match(/tvg-chno="([^"]+)"/) || [])[1]) || null;
-      cur = { name, logo, group, epgId, num, type:"live" };
-    } else if (line && !line.startsWith("#") && cur) {
-      cur.url = line; cur.id = cur.url;
-      if (line.includes("/movie/")) cur.type = "vod";
-      else if (line.includes("/series/")) cur.type = "series";
-      out.push(cur); cur = null;
-    }
-  }
-  out.epgUrl = epgUrl;
-  return out;
-}
+// parseM3U is now imported from utils.js
 
 function parseXMLTV(xml) {
   const doc = new DOMParser().parseFromString(xml, "text/xml");
@@ -1311,26 +914,9 @@ function parseEPGDate(s) {
   return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`).getTime();
 }
 
-function getEPGNow(programs, epgId) {
-  if (!programs || !epgId) return null;
-  const key = epgId.toLowerCase().trim();
-  const list = programs[key] || programs[epgId] || [];
-  const now = Date.now();
-  return list.find(p => p.start <= now && p.stop > now) || null;
-}
+// getEPGNow and epgLookup are now imported from epg.js
 
-function epgLookup(epgData, ch) {
-  if (!epgData) return null;
-  // Try normalized epgId (xmltv_id), then raw, then channel numeric id
-  const norm = ch.epgId?.toLowerCase().trim();
-  return (norm && epgData[norm]) || (ch.epgId && epgData[ch.epgId]) || (ch.id && epgData[ch.id]) || null;
-}
-
-function fmtTime(sec) {
-  if (!sec) return "0:00";
-  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.floor(sec%60);
-  return h > 0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}` : `${m}:${String(s).padStart(2,"0")}`;
-}
+// fmtTime is now imported from utils.js
 
 function proxyFetch(url) {
   return fetch(`${API}/proxy?url=${encodeURIComponent(url)}`);
@@ -1350,7 +936,7 @@ async function safeJsonFetch(res) {
   }
   try {
     return JSON.parse(text);
-  } catch (e) {
+  } catch {
     if (text.trim().startsWith("<")) {
       throw new Error("Server returned HTML/XML instead of JSON. Check if your URL and credentials are correct.");
     }
@@ -1381,7 +967,7 @@ function makeXtreamAPI(server, user, pass) {
   };
 }
 
-function uid() { return Math.random().toString(36).slice(2,10); }
+// uid is now imported from utils.js
 
 // Transform stalker item URL: extract direct HTTP URLs, store original as _stalkerCmd
 function transformStalkerItem(item) {
@@ -1394,782 +980,12 @@ function transformStalkerItem(item) {
 // ══════════════════════════════════════════════════════════════════
 // CSS GENERATOR
 // ══════════════════════════════════════════════════════════════════
-function genCSS(t) {
-  const isLight = t.bg === "#ffffff" || t.bg === "#f8f9fc";
-  const b1 = isLight ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.06)";
-  const b2 = isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.11)";
-  return `
-:root{
-  --bg:${t.bg};--s1:${t.s1};--s2:${t.s2};--s3:${t.s3};
-  --b1:${b1};--b2:${b2};
-  --accent:${t.accent};--accent2:${t.accent2};
-  --glow:${t.accent}28;
-  --accent-10:${t.accent}10;--accent-12:${t.accent}12;--accent-14:${t.accent}14;--accent-15:${t.accent}15;
-  --accent-18:${t.accent}18;--accent-22:${t.accent}22;--accent-30:${t.accent}30;--accent-40:${t.accent}40;--accent-50:${t.accent}50;
-  --accent2-22:${t.accent2}22;
-  --t1:${t.t1};--t2:${t.t2};--t3:${t.t3};
-  --danger:#ff4466;--ok:#00cc88;
-  --shadow:${isLight ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.5)"};
-  --hover-bg:${isLight ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.03)"};
-}`;
-}
+// genCSS is now imported from utils.js
 
 
 // ══════════════════════════════════════════════════════════════════
 // PLAYER COMPONENT (TiviMate-level keyboard + OSD + PiP + quick-ch)
 // ══════════════════════════════════════════════════════════════════
-function Player({ item, channelList, epgData, onClose, onFav, isFav, connType, t: pt, isAdEligible }) {
-  const t = pt || ((k) => k);
-  const videoRef   = useRef(null);
-  const hlsRef     = useRef(null);
-  const mpegtsRef  = useRef(null);
-  const adPlayedRef = useRef(false);
-  const adSessionRef = useRef(0);
-  const adFinishRef = useRef(null);
-  const osdTimer   = useRef(null);
-  const [osd, setOsd]         = useState(true);
-  const [showQCH, setShowQCH] = useState(false);
-  const qchTimer = useRef(null);
-  const [chIdx, setChIdx]     = useState(() => {
-    if (!channelList) return -1;
-    return channelList.findIndex(c => c.id === item.id || c.url === item.url);
-  });
-  const [current, setCurrent] = useState(item);
-  const [adState, setAdState] = useState(null);
-  const [audioTracks, setAudioTracks] = useState([]);
-  const [activeAudio, setActiveAudio] = useState(-1);
-  const [subTracks, setSubTracks] = useState([]);
-  const [activeSub, setActiveSub] = useState(-1);
-  const [showTracksMenu, setShowTracksMenu] = useState(false);
-  const [showCatchupMenu, setShowCatchupMenu] = useState(false);
-
-  const audioTrackLabel = (track, index) =>
-    track?.name || track?.lang || track?.language || `Audio ${index + 1}`;
-  const subtitleTrackLabel = (track, index) =>
-    track?.name || track?.lang || track?.language || `Subtitle ${index + 1}`;
-
-  function selectAudioTrack(id) {
-    if (hlsRef.current) {
-      hlsRef.current.audioTrack = id;
-      setActiveAudio(id);
-    }
-  }
-
-  function selectSubtitleTrack(id) {
-    if (hlsRef.current) {
-      hlsRef.current.subtitleTrack = id;
-      setActiveSub(id);
-    }
-  }
-
-  function resetTrackState() {
-    setAudioTracks([]);
-    setActiveAudio(-1);
-    setSubTracks([]);
-    setActiveSub(-1);
-    setShowTracksMenu(false);
-  }
-
-  const showOSD = useCallback(() => {
-    setOsd(true);
-    clearTimeout(osdTimer.current);
-    osdTimer.current = setTimeout(() => setOsd(false), 3500);
-  }, []);
-
-  function destroyPlayers() {
-    if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
-    if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
-    resetTrackState();
-    const video = videoRef.current;
-    if (video) {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    }
-  }
-
-  async function playVastPreroll(video, ad, isCancelled) {
-    return new Promise((resolve) => {
-      if (!video || !ad?.mediaUrl || isCancelled()) {
-        resolve(false);
-        return;
-      }
-
-      let done = false;
-      let skipTimer = null;
-      let startTimeout = null;
-      let maxDurationTimeout = null;
-      let impressionSent = false;
-      const wasMuted = video.muted;
-      const wasControls = video.controls;
-
-      const cleanup = () => {
-        video.removeEventListener("ended", onEnded);
-        video.removeEventListener("error", onError);
-        video.removeEventListener("timeupdate", onTimeUpdate);
-        video.removeEventListener("playing", onPlaying);
-        video.removeEventListener("click", onClick);
-        if (skipTimer) clearInterval(skipTimer);
-        if (startTimeout) clearTimeout(startTimeout);
-        if (maxDurationTimeout) clearTimeout(maxDurationTimeout);
-        video.muted = wasMuted;
-        video.controls = wasControls;
-        adFinishRef.current = null;
-      };
-
-      const finish = (result, eventName = null) => {
-        if (done) return;
-        done = true;
-        if (eventName) pingUrls(ad.trackers?.[eventName]);
-        cleanup();
-        setAdState(null);
-        resolve(result);
-      };
-
-      // Ensure ad doesn't hang player forever if blocked/stalled
-      startTimeout = setTimeout(() => {
-        if (!impressionSent) finish(false);
-      }, 10000);
-      maxDurationTimeout = setTimeout(() => {
-        finish(false, "error");
-      }, Math.min(Math.max((ad.duration || 0) * 1000 + 5000, 15000), 45000));
-
-      const updateOverlay = () => {
-        if (isCancelled()) {
-          finish(false);
-          return;
-        }
-        const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-        const skipEnabled = ad.skipOffset !== null;
-        const canSkip = !skipEnabled || ad.skipOffset <= 0 || currentTime >= ad.skipOffset;
-        const remaining = skipEnabled && !canSkip ? Math.max(0, Math.ceil(ad.skipOffset - currentTime)) : 0;
-        setAdState({
-          active: true,
-          title: ad.title,
-          clickThrough: ad.clickThrough,
-          skipEnabled,
-          canSkip,
-          skipRemaining: remaining,
-          mediaType: ad.mediaType,
-        });
-      };
-
-      const onEnded = () => finish(true, "complete");
-      const onError = () => finish(false);
-      const onPlaying = () => {
-        if (impressionSent) return;
-        impressionSent = true;
-        pingUrls(ad.trackers?.impression);
-      };
-      const onClick = () => {
-        if (!ad.clickThrough) return;
-        window.open(ad.clickThrough, "_blank", "noopener,noreferrer");
-      };
-      const onTimeUpdate = () => updateOverlay();
-
-      adFinishRef.current = (eventName = "complete") => finish(true, eventName);
-
-      video.pause();
-      video.removeAttribute("src");
-      video.src = location.protocol === "https:" && ad.mediaUrl.startsWith("http://")
-        ? streamProxy(ad.mediaUrl)
-        : ad.mediaUrl;
-      video.controls = true;
-      video.playsInline = true;
-      video.muted = true;
-      video.load();
-
-      video.addEventListener("ended", onEnded);
-      video.addEventListener("error", onError);
-      video.addEventListener("timeupdate", onTimeUpdate);
-      video.addEventListener("playing", onPlaying, { once: true });
-      video.addEventListener("click", onClick);
-
-      if (ad.skipOffset !== null && ad.skipOffset > 0) {
-        skipTimer = setInterval(updateOverlay, 250);
-      }
-
-      updateOverlay();
-      const playPromise = video.play();
-      if (playPromise?.catch) {
-        playPromise.catch(() => finish(false));
-      }
-    });
-  }
-
-  const [streamErr, setStreamErr] = useState(null);
-  const [showStats, setShowStats] = useState(false);
-  const [stats, setStats] = useState({});
-  const statsInterval = useRef(null);
-
-  useEffect(() => {
-    if (!showStats) { clearInterval(statsInterval.current); return; }
-    function collect() {
-      const v = videoRef.current;
-      if (!v) return;
-      const s = {};
-      s.resolution = v.videoWidth && v.videoHeight ? `${v.videoWidth}×${v.videoHeight}` : "—";
-      s.currentTime = v.currentTime?.toFixed(1) || "0";
-      s.duration = v.duration && isFinite(v.duration) ? v.duration.toFixed(1) : "Live";
-      s.readyState = ["NOTHING","METADATA","CURRENT","FUTURE","ENOUGH"][v.readyState] || v.readyState;
-      s.networkState = ["EMPTY","IDLE","LOADING","NO_SRC"][v.networkState] || v.networkState;
-      s.paused = v.paused ? "Yes" : "No";
-      s.volume = `${Math.round(v.volume * 100)}%${v.muted ? " (muted)" : ""}`;
-      // Buffer info
-      if (v.buffered.length > 0) {
-        const end = v.buffered.end(v.buffered.length - 1);
-        s.buffer = `${(end - v.currentTime).toFixed(1)}s ahead`;
-      } else { s.buffer = "0s"; }
-      // Dropped frames (Chrome/Edge)
-      const q = v.getVideoPlaybackQuality?.();
-      if (q) {
-        s.droppedFrames = `${q.droppedVideoFrames}/${q.totalVideoFrames}`;
-        s.fps = q.totalVideoFrames > 0 && v.currentTime > 1
-          ? (q.totalVideoFrames / v.currentTime).toFixed(1) : "—";
-      }
-      // HLS.js stats
-      const hls = hlsRef.current;
-      if (hls?.levels?.[hls.currentLevel]) {
-        const lvl = hls.levels[hls.currentLevel];
-        s.bitrate = lvl.bitrate ? `${(lvl.bitrate / 1000).toFixed(0)} kbps` : "—";
-        s.codec = [lvl.videoCodec, lvl.audioCodec].filter(Boolean).join(", ") || "—";
-        s.hlsLevel = `${hls.currentLevel + 1}/${hls.levels.length}`;
-      }
-      s.url = current.url?.slice(0, 80) + (current.url?.length > 80 ? "…" : "");
-      setStats(s);
-    }
-    collect();
-    statsInterval.current = setInterval(collect, 1000);
-    return () => clearInterval(statsInterval.current);
-  }, [showStats, current.url]);
-
-  const isMixed = location.protocol === "https:" ? (u) => u?.startsWith("http://") : () => false;
-  // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
-  const origin = API || location.origin;
-  const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin) && !current?._direct;
-  const streamProxy = (u) => (u?.startsWith('/') || u?.startsWith(origin)) ? u : `${API}/stream?url=${encodeURIComponent(u)}`;
-
-  function initPlayer(url) {
-    const video = videoRef.current;
-    if (!video || !url) return;
-    setStreamErr(null);
-    destroyPlayers();
-    video.removeAttribute("src");
-
-    // Native <video> error handler (for direct src= playback)
-    video.onerror = () => {
-      // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
-      if (hlsRef.current || mpegtsRef.current) return;
-      const e = video.error;
-      const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
-      setStreamErr({ icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" });
-    };
-
-    function startHls(u) {
-      if (window.Hls?.isSupported()) {
-        const opts = { enableWorker: false, fragLoadingMaxRetry: 2 };
-        // On HTTPS pages, proxy HTTP streams through proxy
-        // The proxy rewrites HLS manifests so segments also go through proxy (same IP)
-        if (needsProxy(u)) {
-          u = streamProxy(u);
-        }
-        const hls = new window.Hls(opts);
-        hlsRef.current = hls;
-        hls.loadSource(u);
-        hls.attachMedia(video);
-        const syncHlsTracks = () => {
-          setAudioTracks(hls.audioTracks || []);
-          setActiveAudio(hls.audioTrack);
-          setSubTracks(hls.subtitleTracks || []);
-          setActiveSub(hls.subtitleTrack);
-        };
-        hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch(()=>{});
-          syncHlsTracks();
-        });
-
-        hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, syncHlsTracks);
-        hls.on(window.Hls.Events.SUBTITLE_TRACKS_UPDATED, syncHlsTracks);
-        // Listen for track changes triggered by the stream itself
-        hls.on(window.Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
-          setActiveAudio(data.id);
-        });
-        hls.on(window.Hls.Events.SUBTITLE_TRACK_SWITCH, (event, data) => {
-          setActiveSub(data.id);
-        });
-        hls.on(window.Hls.Events.ERROR, (_, data) => {
-          if (!data.fatal) return;
-          const code = data.response?.code;
-          let title = "Playback Error";
-          let body;
-          if (code === 404) {
-            title = "Stream Not Found (404)";
-            body = "The stream URL returned 404. The channel may be offline, or its URL may have changed. Try reconnecting to refresh the channel list.";
-          } else if (code === 403) {
-            title = "Access Denied (403)";
-            body = "The stream server rejected the request. Your credentials may not have access to this channel.";
-          } else if (code === 459 || code === 462) {
-            title = `Token Expired (${code})`;
-            body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
-          } else if (code >= 500) {
-            title = `Server Error (${code})`;
-            body = "The stream server returned an error. It may be overloaded or temporarily down.";
-          } else if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
-            title = "Network Error";
-            body = "Could not reach the stream server. Check your connection or try again.";
-          } else {
-            body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
-          }
-          setStreamErr({ icon: "⚠️", title, body });
-          destroyPlayers();
-        });
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = needsProxy(u) ? streamProxy(u) : u; video.play().catch(()=>{});
-      }
-    }
-
-    function startMpegts(u) {
-      // Proxy HTTP streams through Cloudflare Worker when on HTTPS
-      if (needsProxy(u)) u = streamProxy(u);
-      if (!window.mpegts?.isSupported()) {
-        video.src = u; video.play().catch(()=>{}); return;
-      }
-      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: u },
-        { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
-      mpegtsRef.current = player;
-      player.on(window.mpegts.Events.ERROR, (errType, errDetail, errInfo) => {
-        const code = errInfo?.code;
-        let title = "Playback Error";
-        let body;
-        if (code === 404) {
-          title = "Stream Not Found (404)";
-          body = "The stream URL returned 404. The channel may be offline or the URL has changed.";
-        } else if (code === 403) {
-          title = "Access Denied (403)";
-          body = "The stream server rejected the request. Your credentials may not have access.";
-        } else if (code === 459 || code === 462) {
-          title = `Token Expired (${code})`;
-          body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
-        } else if (code >= 400 && code < 500) {
-          title = `Client Error (${code})`;
-          body = `The stream request was rejected with HTTP ${code}.`;
-        } else if (code >= 500) {
-          title = `Server Error (${code})`;
-          body = "The stream server returned an error. It may be overloaded or temporarily down.";
-        } else if (errType === "NetworkError") {
-          title = "Network Error";
-          body = `Could not load the stream. ${errInfo?.msg || "Check your connection or try again."}`;
-        } else if (errDetail?.includes("Unsupported media type")) {
-          // Fallback to native video if mpegts.js can't handle it
-          console.warn("mpegts.js: Unsupported media type, falling back to native <video>");
-          destroyPlayers();
-          video.src = u;
-          video.play().catch(()=>{});
-          return;
-        } else {
-          body = `${errType}: ${errDetail || "Unknown error"}${code ? ` (HTTP ${code})` : ""}`;
-        }
-        setStreamErr({ icon: "⚠️", title, body });
-        destroyPlayers();
-      });
-      player.attachMediaElement(video);
-      player.load();
-      player.play().catch(()=>{});
-    }
-
-    const SRI_HASHES = {
-      "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js": "sha384-miJUhTuRucSoqFe3/VSB2sRghSMoev6wpPoEyj5fhF0PARehD+naPBsAkl5NqwPO",
-      "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js": "sha384-Z2H/TjKWDNZA/2luGOnjLx9pcva7cK4VSWC+hZn78Kr5uG8YbMpxdz+wWXBMO6N/",
-    };
-    function loadScript(src, cb) {
-      if (document.querySelector(`script[src="${src}"]`)) { cb(); return; }
-      const s = document.createElement("script");
-      s.src = src;
-      s.crossOrigin = "anonymous";
-      if (SRI_HASHES[src]) s.integrity = SRI_HASHES[src];
-      s.onload = cb;
-      document.head.appendChild(s);
-    }
-
-    // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS
-    const fileExt = url.split(/[?#]/)[0].split(".").pop()?.toLowerCase();
-    if (["mp4", "mkv", "avi", "mov", "webm", "mp3", "aac"].includes(fileExt)) {
-      video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
-      return;
-    }
-
-    // Stalker VOD/series items are direct video files served by the portal.
-    const isStalkerVod = (current.type === "vod" || current.type === "series")
-      && (url.includes("/play/movie.php") || url.includes("/play/live.php") || url.includes("play_token="));
-    if (isStalkerVod) {
-      if (url.includes(".m3u8")) {
-        if (window.Hls) startHls(url);
-        else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
-                        () => startHls(url));
-      } else {
-        video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
-      }
-      return;
-    }
-
-    const needTs  = url.includes("extension=ts") || /\.ts(\?|$)/.test(url)
-      || (current.type === "live" && !url.includes(".m3u8"));
-    const needHls = !needTs && (url.includes(".m3u8") || url.includes("/live/") || url.includes("/movie/"));
-
-    // For Xtream live streams on HTTPS, proxy raw TS through stream proxy
-    // (HLS .m3u8 has IP-bound segment tokens that break with proxied manifests)
-    if (needTs && needsProxy(url)) {
-      const proxied = streamProxy(url);
-      if (window.mpegts) startMpegts(proxied);
-      else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
-                      () => startMpegts(proxied));
-      return;
-    }
-
-    if (needTs) {
-      if (window.mpegts) startMpegts(url);
-      else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
-                      () => startMpegts(url));
-    } else if (needHls) {
-      if (window.Hls) startHls(url);
-      else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
-                      () => startHls(url));
-    } else {
-      video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
-    }
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-    const sessionId = ++adSessionRef.current;
-    const video = videoRef.current;
-    if (!video || !current.url) return;
-
-    async function start() {
-      setStreamErr(null);
-      setAdState(null);
-      destroyPlayers();
-
-      if (VAST_URL && isAdEligible && !adPlayedRef.current) {
-        adPlayedRef.current = true;
-        try {
-          const ad = await fetchVastAd(VAST_URL, video);
-          if (cancelled || sessionId !== adSessionRef.current) return;
-          if (ad?.mediaUrl) {
-            await playVastPreroll(video, ad, () => cancelled || sessionId !== adSessionRef.current);
-            if (cancelled || sessionId !== adSessionRef.current) return;
-          }
-        } catch {
-          // Ad failures must not block the requested stream.
-        } finally {
-          setAdState(null);
-        }
-      }
-
-      if (cancelled || sessionId !== adSessionRef.current) return;
-      initPlayer(current.url);
-      showOSD();
-    }
-
-    start();
-    return () => {
-      cancelled = true;
-      adSessionRef.current += 1;
-      adFinishRef.current = null;
-      setAdState(null);
-      destroyPlayers();
-      clearTimeout(osdTimer.current);
-      clearTimeout(qchTimer.current);
-    };
-  }, [current.url]);
-
-  // Keyboard shortcuts (TiviMate + SFVIP style)
-  useEffect(() => {
-    function onKey(e) {
-      const v = videoRef.current;
-      if (!v) return;
-      if (e.target.tagName === "INPUT") return;
-      switch(e.key) {
-        case " ":
-        case "k":
-          e.preventDefault();
-          v.paused ? v.play() : v.pause();
-          showOSD(); break;
-        case "f":
-        case "F":
-          document.fullscreenElement ? document.exitFullscreen() : v.requestFullscreen?.();
-          break;
-        case "m":
-        case "M":
-          v.muted = !v.muted; showOSD(); break;
-        case "ArrowLeft":
-          e.preventDefault();
-          if (current.type === "live") prevChannel();
-          else { v.currentTime = Math.max(0, v.currentTime - 10); showOSD(); }
-          break;
-        case "ArrowRight":
-          e.preventDefault();
-          if (current.type === "live") nextChannel();
-          else { v.currentTime = Math.min(v.duration||0, v.currentTime + 10); showOSD(); }
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          if (current.type === "live") prevChannel();
-          else { v.volume = Math.min(1, v.volume + 0.1); showOSD(); }
-          break;
-        case "ArrowDown":
-          e.preventDefault();
-          if (current.type === "live") nextChannel();
-          else { v.volume = Math.max(0, v.volume - 0.1); showOSD(); }
-          break;
-        case "Escape":
-          onClose(); break;
-        case "p":
-        case "P":
-          pip(); break;
-        case "s":
-          e.preventDefault();
-          setShowStats(prev => !prev); break;
-        default: break;
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [current, chIdx]);
-
-  function prevChannel() {
-    if (!channelList || channelList.length === 0) return;
-    const i = Math.max(0, (chIdx < 0 ? 0 : chIdx) - 1);
-    setChIdx(i); setCurrent(channelList[i]);
-    setShowQCH(true);
-    clearTimeout(qchTimer.current);
-    qchTimer.current = setTimeout(() => setShowQCH(false), 2500);
-    showOSD();
-  }
-
-  function nextChannel() {
-    if (!channelList || channelList.length === 0) return;
-    const max = channelList.length - 1;
-    const i = Math.min(max, (chIdx < 0 ? 0 : chIdx) + 1);
-    setChIdx(i); setCurrent(channelList[i]);
-    setShowQCH(true);
-    clearTimeout(qchTimer.current);
-    qchTimer.current = setTimeout(() => setShowQCH(false), 2500);
-    showOSD();
-  }
-
-  async function pip() {
-    const v = videoRef.current;
-    if (!v) return;
-    try {
-      if (document.pictureInPictureElement) await document.exitPictureInPicture();
-      else await v.requestPictureInPicture?.();
-    } catch {}
-  }
-
-  const epgNow = getEPGNow(epgData, current.epgId);
-  const qchChannels = channelList && chIdx >= 0
-    ? channelList.slice(Math.max(0, chIdx-2), Math.min(channelList.length, chIdx+3))
-    : [];
-
-  return (
-    <div className="player-ov" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="player-wrap">
-        <div style={{ position:"relative" }}>
-          <video ref={videoRef} className="player-video" controls playsInline />
-          {adState?.active && (
-            <div className="player-ad">
-              <div className="player-ad-badge">Sponsored Ad</div>
-              <div className="player-ad-title">{adState.title}</div>
-              <div className="player-ad-meta">{adState.mediaType || "VAST preroll"}</div>
-              <div className="player-ad-actions">
-                {adState.clickThrough && (
-                  <button className="player-ad-link" onClick={() => window.open(adState.clickThrough, "_blank", "noopener,noreferrer")}>
-                    Learn More
-                  </button>
-                )}
-                {adState.skipEnabled && (adState.canSkip ? (
-                  <button className="player-ad-skip" onClick={() => adFinishRef.current?.("skip")}>
-                    Skip Ad
-                  </button>
-                ) : (
-                  <div className="player-ad-countdown">Skip in {adState.skipRemaining}s</div>
-                ))}
-              </div>
-            </div>
-          )}
-          {streamErr && (
-            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
-              background:"rgba(0,0,0,.88)",padding:"2rem",textAlign:"center"}}>
-              <div style={{maxWidth:"400px"}}>
-                <div style={{fontSize:"2.2rem",marginBottom:".75rem"}}>{streamErr.icon}</div>
-                <div style={{fontSize:".9rem",color:"var(--t1)",fontWeight:600,marginBottom:".5rem"}}>{streamErr.title}</div>
-                <div style={{fontSize:".78rem",color:"var(--t2)",lineHeight:1.6}}>{streamErr.body}</div>
-              </div>
-            </div>
-          )}
-          {/* OSD */}
-          {osd && (
-            <div className="osd" onClick={showOSD}>
-              {current.logo
-                ? <img className="osd-logo" src={imgSrc(current.logo)} alt="" onError={e => e.target.style.display="none"} />
-                : <div className="osd-logo-ph">{current.type==="live"?"📺":"🎬"}</div>}
-              <div>
-                {current.num && <div className="osd-num">CH {current.num}</div>}
-                <div className="osd-name">{current.name}</div>
-                {epgNow && <div className="osd-epg">▶ {epgNow.title}</div>}
-              </div>
-            </div>
-          )}
-          {/* Stream stats overlay */}
-          {showStats && (
-            <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,.82)",color:"#0f0",
-              fontFamily:"monospace",fontSize:".68rem",padding:".6rem .8rem",borderRadius:6,lineHeight:1.7,
-              zIndex:20,maxWidth:"320px",pointerEvents:"none"}}>
-              <div style={{color:"#fff",fontWeight:700,marginBottom:4,fontSize:".72rem"}}>Stream Stats</div>
-              {Object.entries(stats).map(([k, v]) => (
-                <div key={k}><span style={{color:"#aaa"}}>{k}: </span>{v}</div>
-              ))}
-            </div>
-          )}
-          {/* Quick channel switcher */}
-          {showQCH && channelList && (
-            <div className="qch">
-              {qchChannels.map((ch, i) => {
-                const isActive = ch.id === current.id || ch.url === current.url;
-                return (
-                  <div key={ch.id||i} className={`qch-item ${isActive?"active":""}`}>
-                    {ch.logo
-                      ? <img className="qch-thumb" src={imgSrc(ch.logo)} alt="" onError={e => e.target.style.display="none"} />
-                      : <div className="qch-thumb-ph">📺</div>}
-                    <div className="qch-n">{ch.name}</div>
-                    {ch.num && <div className="qch-num">{ch.num}</div>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Catch-up Menu */}
-          {showCatchupMenu && current.type === "live" && epgData?.[current.epgId] && (() => {
-            const now = Date.now();
-            const pastPrograms = epgData[current.epgId].filter(p => new Date(p.stop).getTime() < now).reverse(); // Most recent first
-            
-            return (
-              <div style={{position:"absolute",bottom:"60px",right:"80px",background:"rgba(0,0,0,.9)",color:"#fff",
-                padding:"1rem",borderRadius:8,zIndex:20,width:"300px",maxHeight:"400px",overflowY:"auto", border:"1px solid var(--border)"}}
-                onClick={e => e.stopPropagation()}>
-                <div style={{fontWeight:700,marginBottom:".8rem",color:"var(--accent)",fontSize:".9rem",textTransform:"uppercase"}}>Catch-up TV Schedule</div>
-                {pastPrograms.length === 0 ? (
-                   <div style={{fontSize:".85rem", color:"var(--t2)"}}>No past programs available.</div>
-                ) : (
-                  pastPrograms.map((p, idx) => (
-                    <div key={idx} 
-                         onClick={() => {
-                           if (onPlayCatchup) {
-                             onPlayCatchup(current, p);
-                             setShowCatchupMenu(false);
-                           }
-                         }}
-                         style={{padding:".6rem",cursor:"pointer",borderRadius:4,fontSize:".85rem",borderBottom:"1px solid var(--border)",
-                         background: "transparent", color: "var(--t1)", display:"flex", flexDirection:"column", gap:".2rem"}}
-                         onMouseEnter={e => e.currentTarget.style.background = "var(--hover-bg)"}
-                         onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <div style={{fontWeight:600}}>{p.title}</div>
-                      <div style={{fontSize:".75rem", color:"var(--t3)"}}>{new Date(p.start).toLocaleTimeString()} - {new Date(p.stop).toLocaleTimeString()}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            );
-          })()}
-        </div>
-        <div className="player-bar">
-          <div style={{flex:1,overflow:"hidden"}}>
-            <div className="player-title">
-              {current.name}
-              {current.group && <span className="badge">{current.group}</span>}
-            </div>
-            {epgNow && <div className="player-epg">▶ {epgNow.title}</div>}
-          </div>
-          {channelList && current.type === "live" && (
-            <>
-              <button className="player-ctrl" onClick={prevChannel}>◀ {t("prev")}</button>
-              <button className="player-ctrl" onClick={nextChannel}>{t("next")} ▶</button>
-            </>
-          )}
-          <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ {t("pip")}</button>
-          <button className={`player-ctrl${showStats?" on":""}`} onClick={() => setShowStats(s=>!s)} title="Stream Stats">📊</button>
-          {(audioTracks.length > 1 || subTracks.length > 0) && (
-            <button className={`player-ctrl${showTracksMenu?" on":""}`} onClick={() => { setShowTracksMenu(s=>!s); setShowCatchupMenu(false); }} title="Audio & Subtitles">
-              💬
-            </button>
-          )}
-          {current.type === "live" && epgData?.[current.epgId] && (
-            <button className={`player-ctrl${showCatchupMenu?" on":""}`} onClick={() => { setShowCatchupMenu(s=>!s); setShowTracksMenu(false); }} title="Catch-up TV">
-              ↩️
-            </button>
-          )}
-          <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title={t("fav")}>
-            {isFav?.(current) ? `♥ ${t("fav")}` : `♡ ${t("fav")}`}
-          </button>
-          <button className="player-close" onClick={onClose}>✕ {t("close")}</button>
-        </div>
-        {showTracksMenu && (
-          <div className="player-track-menu" onClick={e => e.stopPropagation()}>
-            {audioTracks.length > 1 && (
-              <div className="player-track-section">
-                <div className="player-track-heading">Audio</div>
-                {audioTracks.map((track, index) => (
-                  <button
-                    key={`audio-${track.id ?? index}`}
-                    className={`player-track-item${activeAudio === index ? " on" : ""}`}
-                    onClick={() => selectAudioTrack(index)}
-                  >
-                    <span>{audioTrackLabel(track, index)}</span>
-                    {activeAudio === index && <span className="player-track-check">✓</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-            {subTracks.length > 0 && (
-              <div className="player-track-section">
-                <div className="player-track-heading">Subtitles</div>
-                <button
-                  className={`player-track-item${activeSub === -1 ? " on" : ""}`}
-                  onClick={() => selectSubtitleTrack(-1)}
-                >
-                  <span>Off</span>
-                  {activeSub === -1 && <span className="player-track-check">✓</span>}
-                </button>
-                {subTracks.map((track, index) => (
-                  <button
-                    key={`sub-${track.id ?? index}`}
-                    className={`player-track-item${activeSub === index ? " on" : ""}`}
-                    onClick={() => selectSubtitleTrack(index)}
-                  >
-                    <span>{subtitleTrackLabel(track, index)}</span>
-                    {activeSub === index && <span className="player-track-check">✓</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        <div className="kbd-hint">
-          <span><span className="kbd">Space</span>{t("playPause")}</span>
-          <span><span className="kbd">F</span>{t("fullscreen")}</span>
-          <span><span className="kbd">M</span>{t("mute")}</span>
-          <span><span className="kbd">←→</span>{current.type==="live"?t("channels"):"±10s"}</span>
-          <span><span className="kbd">↑↓</span>{current.type==="live"?t("channels"):t("volume")}</span>
-          <span><span className="kbd">P</span>{t("pip")}</span>
-          <span><span className="kbd">S</span>Stats</span>
-          <span><span className="kbd">Esc</span>Close</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ══════════════════════════════════════════════════════════════════
 // SETUP
@@ -2257,7 +1073,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
           if (c.deviceId2) set("deviceId2", c.deviceId2);
         }
       }
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   }, []);
 
   function handleConnectClick() {
@@ -2292,7 +1108,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         const channels = parseM3U(text);
         if (!channels.length) throw new Error("No channels found");
         // Connection saved by handleConnect in App
-        onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl });
+        onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl, epgUrls: channels.epgUrls });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
         const server = f.server.trim().replace(/\/$/,"");
@@ -2802,7 +1618,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 // ══════════════════════════════════════════════════════════════════
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onEdit, onClose, authUser, isGuest, onLogout, t: ct }) {
+const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, authUser, isGuest, onLogout, t: ct }) {
   const t = ct || ((k) => k);
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
@@ -2922,6 +1738,7 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (conn.type === "stalker") {
@@ -3190,20 +2007,42 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
               </div>
               <div>
                 <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>Password</label>
-                <input
-                  type="password"
-                  value={form.pass}
-                  onChange={e => setForm({ ...form, pass: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: ".5rem",
-                    border: "1px solid var(--b2)",
-                    borderRadius: "6px",
-                    background: "var(--s2)",
-                    color: "var(--t1)",
-                    fontSize: ".8rem"
-                  }}
-                />
+                <div style={{ display: "flex", position: "relative" }}>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={form.pass}
+                    onChange={e => setForm({ ...form, pass: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: ".5rem",
+                      paddingRight: "2.5rem",
+                      border: "1px solid var(--b2)",
+                      borderRadius: "6px",
+                      background: "var(--s2)",
+                      color: "var(--t1)",
+                      fontSize: ".8rem"
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{
+                      position: "absolute",
+                      right: ".5rem",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "none",
+                      border: "none",
+                      color: "var(--t3)",
+                      cursor: "pointer",
+                      fontSize: "1rem",
+                      padding: 0
+                    }}
+                    title={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? "🙈" : "👁"}
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -3266,111 +2105,6 @@ const NAV = [
 ];
 
 // ── MAIN APP ──
-const TimelineGrid = memo(React.forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup }, outerRef) {
-  const [nowMs, setNowMs] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 60000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const PX_PER_MIN = 3;
-  const TOTAL_HOURS = 8;
-  const TOTAL_MS = TOTAL_HOURS * 3600000;
-  const TOTAL_PX = TOTAL_HOURS * 60 * PX_PER_MIN; // 1440px
-  const CH_COL_W = 160;
-  const ROW_H = 48;
-
-  // Window start = 1 hour before now (recalculates with nowMs)
-  const windowStart = useMemo(() => nowMs - 3600000, [nowMs]);
-  const windowEnd = useMemo(() => windowStart + TOTAL_MS, [windowStart]);
-
-  // Generate time labels every 30 minutes
-  const timeLabels = useMemo(() => {
-    const labels = [];
-    const snapStart = new Date(windowStart);
-    snapStart.setMinutes(snapStart.getMinutes() < 30 ? 0 : 30, 0, 0);
-    let t = snapStart.getTime();
-    if (t < windowStart) t += 1800000;
-    while (t < windowEnd) {
-      const offsetPx = ((t - windowStart) / 60000) * PX_PER_MIN;
-      const d = new Date(t);
-      labels.push({ ms: t, px: offsetPx, label: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
-      t += 1800000;
-    }
-    return labels;
-  }, [windowStart, windowEnd]);
-
-  // Convert ms position to px offset within the grid
-  const msToPx = useCallback((ms) => ((ms - windowStart) / 60000) * PX_PER_MIN, [windowStart]);
-
-  const fmtT = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const nowLinePx = msToPx(nowMs);
-
-  return (
-    <div className="epg-outer" ref={outerRef}>
-      <div className="epg-grid-wrap" style={{width:CH_COL_W+TOTAL_PX,minHeight:channels.length*ROW_H+32}}>
-        {/* Sticky time header */}
-        <div className="epg-time-header">
-          <div className="epg-time-header-pad" />
-          <div className="epg-time-header-track" style={{width:TOTAL_PX,position:"relative"}}>
-            {timeLabels.map(tl => (
-              <div key={tl.ms} className="epg-time-label" style={{left:tl.px}}>{tl.label}</div>
-            ))}
-          </div>
-        </div>
-
-        {/* Channel rows + program area */}
-        <div className="epg-body">
-          {/* Sticky channel column */}
-          <div className="epg-ch-col">
-            {channels.map((ch,i) => (
-              <div key={ch.id||i} className="epg-ch-cell" onClick={()=>onPlay(ch)} title={ch.name}>
-                {ch.logo && <img className="epg-ch-logo" loading="lazy" src={imgSrc(ch.logo)} alt="" onError={e=>{e.target.style.display="none";}} />}
-                <span className="epg-ch-name">{ch.name}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Programs area (absolutely positioned blocks) */}
-          <div className="epg-prog-area" style={{width:TOTAL_PX,position:"relative"}}>
-            {channels.map((ch,rowIdx) => {
-              const epgCh = epgLookup(epgData, ch);
-              const progs = epgCh ? epgCh.filter(p => p.start < windowEnd && p.stop > windowStart) : [];
-              return (
-                <div key={ch.id||rowIdx} className="epg-prog-row">
-                  {progs.map((p,pi) => {
-                    const clampStart = Math.max(p.start, windowStart);
-                    const clampEnd = Math.min(p.stop, windowEnd);
-                    const leftPx = msToPx(clampStart);
-                    const widthPx = ((clampEnd - clampStart) / 60000) * PX_PER_MIN;
-                    if (widthPx < 2) return null;
-                    const isNow = p.start <= nowMs && p.stop > nowMs;
-                    const isPast = p.stop <= nowMs;
-                    const cls = `epg-prog-block${isNow?" now":""}${isPast?" past":""}`;
-                    return (
-                      <div key={pi} className={cls}
-                        style={{left:leftPx,width:widthPx}}
-                        onClick={()=> isPast && onPlayCatchup ? onPlayCatchup(ch, p) : onPlay(ch)}
-                        title={`${p.title}\n${fmtT(p.start)} \u2013 ${fmtT(p.stop)}${isPast ? "\nClick to play catchup" : ""}`}>
-                        {widthPx > 50 && <div className="epg-prog-t">{isPast && <span className="epg-catchup-icon">↩</span>}{p.title}</div>}
-                        {widthPx > 90 && <div className="epg-prog-s">{fmtT(p.start)} \u2013 {fmtT(p.stop)}</div>}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-
-            {/* Current time red line */}
-            {nowLinePx >= 0 && nowLinePx <= TOTAL_PX && (
-              <div className="epg-now-line" style={{left:nowLinePx}} />
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}));
 export default function App() {
   // ── auth state
   const [authUser, setAuthUser] = useState(null); // { id, username, role, limits }
@@ -3413,16 +2147,25 @@ export default function App() {
   }, []);
 
   async function handleAuth(user) {
+    const guestConns = connections?.length ? [...connections] : [];
+
     setAuthUser(user); setIsGuest(false); localStorage.removeItem("sv-guest-mode");
     // Use user ID for encryption key (consistent across devices)
     setEncKeySource(`user:${user.id}`);
-    // Migrate guest data to new user account
-    migrateGuestData();
+    
+    // Migrate guest data to new user account (favs, history)
+    await migrateGuestData();
+    
     // Always restore this user's connections from server
     const serverConns = await restoreConnectionsFromServer();
     if (serverConns?.length) {
       setConnections(serverConns);
       db.set("sv-connections", serverConns);
+    } else if (guestConns.length > 0) {
+      // No server data, but we had guest connections — import them to the new account!
+      setConnections(guestConns);
+      db.set("sv-connections", guestConns);
+      syncConnectionsToServer(guestConns);
     } else {
       // No server data — start fresh for this user
       setConnections([]);
@@ -3443,7 +2186,7 @@ export default function App() {
     setAuthUser(null); setIsGuest(false);
   }
   const userRole = authUser?.role || (isGuest ? "guest" : null);
-  const isAdEligible = userRole === "guest" || userRole === "free";
+  const isAdEligible = userRole === "guest" || userRole === "free" || userRole === "regular";
   const userLimits = authUser?.limits || (isGuest ? { maxConnections: 2, maxVod: 500, epg: true, sync: false } : null);
 
   // Show upgrade prompt for free/guest users on login
@@ -3485,13 +2228,8 @@ export default function App() {
   const PAGE_SIZE = 50;
   const [globalQ, setGlobalQ] = useState("");
   const [playing, setPlaying] = useState(null);
-  const [visibleLimit, setVisibleLimit] = useState(20);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
   const [showCatEditor, setShowCatEditor] = useState(null); // section name or null
-
-  useEffect(() => {
-    setVisibleLimit(20);
-  }, [cat, section]);
 
   // ── theme
   const [themeName, setThemeName] = useState("Dark");
@@ -3529,8 +2267,41 @@ export default function App() {
 
   // ── EPG
   const [epgURL, setEpgURL]   = useState("");
-  const [epgData, setEpgData] = useState(null);
+  const [epgSources, setEpgSources] = useState([]); // Array of { id, label, data }
+  const [activeEpgSource, setActiveEpgSource] = useState("all");
   const [epgLoading, setEpgLoading] = useState(false);
+  const epgLoadToken = useRef(0); // Tracks current connection to ignore stale loads
+
+  const epgData = useMemo(() => {
+    if (!epgSources.length) return null;
+    if (activeEpgSource !== "all") {
+      return epgSources.find(s => s.id === activeEpgSource)?.data || null;
+    }
+    // Merge all sources to prevent overlapping in the UI
+    const merged = {};
+    for (const source of epgSources) {
+      if (!source.data) continue;
+      for (const [chId, progs] of Object.entries(source.data)) {
+        if (!merged[chId]) merged[chId] = progs;
+      }
+    }
+    return Object.keys(merged).length ? merged : null;
+  }, [epgSources, activeEpgSource]);
+
+  // Reset activeEpgSource if the selected source is no longer available
+  useEffect(() => {
+    if (activeEpgSource === "all") return;
+    if (!epgSources.some(s => s.id === activeEpgSource)) {
+      setActiveEpgSource("all");
+    }
+  }, [epgSources]);
+
+  // Clear EPG sources whenever connection changes (safety net for all code paths)
+  useEffect(() => {
+    epgLoadToken.current++; // Invalidate any in-flight EPG loads
+    setEpgSources([]);
+    setActiveEpgSource("all");
+  }, [activeConnId]);
 
   // ── Stalker lazy-load
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
@@ -3561,7 +2332,7 @@ export default function App() {
         headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID },
         body: JSON.stringify({ message: fbMsg.trim(), guestId: GUEST_ID, timestamp: Date.now(), userAgent: navigator.userAgent }),
       });
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     setFbSending(false);
     setFbMsg("");
     setFbDone(true);
@@ -3625,7 +2396,7 @@ export default function App() {
           trailer: trailer ? `https://www.youtube.com/embed/${trailer.key}` : null,
           trailerKey: trailer?.key || null,
         });
-      } catch {}
+      } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     })();
     return () => { cancelled = true; };
   }, [expandedItem, tmdbKey]);
@@ -3676,7 +2447,7 @@ export default function App() {
         try {
           const connObj = conns.find(c => c.id === acId);
           if (connObj) await loadFromCache(acId, connObj);
-        } catch {}
+        } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     })();
   }, []);
@@ -3744,7 +2515,7 @@ export default function App() {
       localStorage.removeItem("sv-activeProfile");
       localStorage.removeItem("sv-lastConn");
       localStorage.removeItem("sv-history");
-    } catch {}
+    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   }
 
   // ── save theme
@@ -3794,7 +2565,8 @@ export default function App() {
         idbCache.set(`sync:${cId}`, { ...lastSynced, live: Date.now() });
         setLastSynced(prev => ({ ...prev, live: Date.now() }));
       }
-      if (conn.epgUrl) loadEPG(conn.epgUrl);
+      if (conn.epgUrls?.length) conn.epgUrls.forEach(u => loadEPG(u));
+      else if (conn.epgUrl) loadEPG(conn.epgUrl);
       else if (epgURL) loadEPG(epgURL);
     } else if (conn.type === "xtream") {
       fetchLive();
@@ -3813,6 +2585,7 @@ export default function App() {
     // Save connection to D1
     const cId = connId(conn);
     if (cId) {
+      // Intentionally empty, perhaps for future logic or a placeholder that was removed
     }
   }, [conn]);
 
@@ -3930,7 +2703,7 @@ export default function App() {
     let cats = null;
     // Check IDB first (permanent, no TTL)
     if (!force && cId) {
-      try { cats = await idbCache.get(`cats:${cId}:${sec}`); } catch {}
+      try { cats = await idbCache.get(`cats:${cId}:${sec}`); } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
     if (!cats) {
       if (!background) setLoading(true);
@@ -3978,7 +2751,7 @@ export default function App() {
           const items = cached.items || cached;
           if (items.length) { applyItems(items); fetchingCatRef.current.delete(refKey); return; }
         }
-      } catch {}
+      } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
     if (!silent) setCatLoading(true);
     try {
@@ -4049,17 +2822,31 @@ export default function App() {
     return stalkerPlayUrl(cmd, contentType);
   }
 
-  async function loadEPG(url) {
+  async function loadEPG(url, label) {
     if (!url) return;
+    const token = epgLoadToken.current;
     setEpgLoading(true);
     try {
       const res = await proxyFetch(url);
       const text = await res.text();
-      setEpgData(parseXMLTV(text));
+      if (token !== epgLoadToken.current) return; // Stale load, ignore
+      const data = parseXMLTV(text);
+      const id = url;
+      const newSource = { id, label: label || new URL(url).hostname, data };
+      setEpgSources(prev => {
+        if (token !== epgLoadToken.current) return prev; // Stale, don't update
+        const idx = prev.findIndex(s => s.id === id);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = newSource;
+          return copy;
+        }
+        return [...prev, newSource];
+      });
       setEpgURL(url);
       db.set("sv-epgURL", url);
-    } catch(e) { console.error("EPG error:", e); }
-    finally { setEpgLoading(false); }
+    } catch(e) { if (token === epgLoadToken.current) console.error("EPG error:", e); }
+    finally { if (token === epgLoadToken.current) setEpgLoading(false); }
   }
 
   // ── load EPG when connection is active
@@ -4069,6 +2856,7 @@ export default function App() {
 
   async function loadStalkerEPG() {
     if (!conn || conn.type !== "stalker") return;
+    const token = epgLoadToken.current;
     setEpgLoading(true);
     try {
       const params = new URLSearchParams({
@@ -4079,12 +2867,27 @@ export default function App() {
       if (conn.serial) params.set("serial", conn.serial);
       if (conn.deviceId) params.set("deviceId", conn.deviceId);
       if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
-      
+
       const res = await fetch(`${API}/stalker/epg?${params.toString()}`);
       const data = await res.json();
-      if (data.programs) setEpgData(data.programs);
-    } catch(e) { console.error("Stalker EPG error:", e); }
-    finally { setEpgLoading(false); }
+      if (token !== epgLoadToken.current) return; // Stale, ignore
+      if (data.programs) {
+        const id = `stalker:${conn.server}:${conn.mac}`;
+        const label = `Stalker · ${conn.mac.slice(-5)}`;
+        const newSource = { id, label, data: data.programs };
+        setEpgSources(prev => {
+          if (token !== epgLoadToken.current) return prev; // Stale, don't update
+          const idx = prev.findIndex(s => s.id === id);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = newSource;
+            return copy;
+          }
+          return [...prev, newSource];
+        });
+      }
+    } catch(e) { if (token === epgLoadToken.current) console.error("Stalker EPG error:", e); }
+    finally { if (token === epgLoadToken.current) setEpgLoading(false); }
   }
 
   function switchSection(s) {
@@ -4299,7 +3102,7 @@ export default function App() {
   // ── connection management
   function makeConnectionLabel(type, config) {
     if (type === "xtream") return `${config.user} · Xtream`;
-    if (type === "stalker") { try { const host = new URL(config.server).hostname.replace(/^(www|portal)\./, ""); return `${host} · ${(config.mac||"").slice(-8)}`; } catch {} return `Stalker · ${(config.mac||"").slice(-8)}`; }
+    if (type === "stalker") { try { const host = new URL(config.server).hostname.replace(/^(www|portal)\./, ""); return `${host} · ${(config.mac||"").slice(-8)}`; } catch (e) { console.warn("IDB/localStorage error:", e.message); } return `Stalker · ${(config.mac||"").slice(-8)}`; }
     if (type === "m3u") return `M3U · ${(config.url||"").split("/").pop()?.slice(0,20)||"playlist"}`;
     return "Direct HLS";
   }
@@ -4336,18 +3139,21 @@ export default function App() {
     const target = connections.find(c => c.id === id);
     if (!target) return;
     setShowConnManager(false);
+    epgLoadToken.current++; // Invalidate any in-flight EPG loads
     // Clear current content
     setChannels([]); setVod([]); setSeries([]);
+    setEpgSources([]); setActiveEpgSource("all");
     setStalkerVodCats([]); setStalkerSeriesCats([]);
 
     fetchingCatRef.current.clear(); setPrefetchProgress(null);
     setPlaying(null); setCat("All");
-    // Set active and load from IDB
+    // Set conn to new config FIRST so useEffect [activeConnId] sees correct conn
+    setConn(target.config);
     setActiveConnId(id);
     db.set("sv-activeConn", id);
     (async () => {
       const loaded = await loadFromCache(id, target);
-      if (!loaded) setConn(target.config);
+      if (!loaded) setConn(target.config); // fallback if not cached
     })();
   }
 
@@ -4553,6 +3359,30 @@ export default function App() {
     return [...channels, ...vod, ...series].filter(i => i.name?.toLowerCase().includes(q)).slice(0, 80);
   }, [globalQ, channels, vod, series]);
 
+  const onAllowedPage = (authUser || isGuest) && !!conn;
+  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
+  const activeConnection = connections.find(c => c.id === activeConnId);
+  const channelCount = channels.length + vod.length + series.length;
+  const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
+  const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
+  const hasMore = page * PAGE_SIZE < curItems.length;
+  const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
+
+  const vodLoadMoreRef = useRef(null);
+
+  // Infinite scroll for VOD/Series
+  useEffect(() => {
+    if (!hasMore || section === "live") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) setPage(p => p + 1);
+      },
+      { rootMargin: "400px" }
+    );
+    if (vodLoadMoreRef.current) observer.observe(vodLoadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, section, setPage]);
+
   function handleConnect(connConfig) {
     const err = saveConnection(connConfig);
     if (err) { alert(err); return; }
@@ -4600,7 +3430,7 @@ export default function App() {
   if (!authUser && !isGuest) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <AuthScreen onAuth={handleAuth} onGuest={handleGuest} />
+      <AuthScreen onAuth={handleAuth} onGuest={handleGuest} api={API} />
       {resetToken && createPortal(<ResetPasswordModal token={resetToken} onClose={() => setResetToken(null)} />, document.body)}
     </>
   );
@@ -4661,18 +3491,10 @@ export default function App() {
     </>
   );
 
-  const onAllowedPage = (authUser || isGuest) && !!conn;
-  const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
-  const activeConnection = connections.find(c => c.id === activeConnId);
-  const channelCount = channels.length + vod.length + series.length;
-  const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
-  const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
-  const hasMore = page * PAGE_SIZE < curItems.length;
-  const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
-
   return (
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
       <AdsterraSocialBar onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
+      <HilltopPushAd onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
       {/* ── MOBILE TOP BAR + DRAWER ── */}
       <div className="mob-topbar">
         <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>☰</button>
@@ -4835,8 +3657,14 @@ export default function App() {
           {section==="live" && (
             <span style={{fontSize:".73rem"}}><span className="live-dot" />LIVE</span>
           )}
-          {["live","vod","series"].includes(section) && (
-            <>
+          {section === "live" && epgSources.length > 0 && (
+            <select className="fi" style={{width:130,padding:".25rem",fontSize:".72rem"}} 
+              value={activeEpgSource} onChange={e=>setActiveEpgSource(e.target.value)}>
+              <option value="all">All</option>
+              {epgSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          )}
+          {["live","vod","series"].includes(section) && (            <>
               {conn?.type === "stalker" && (
                 <>
                   <button className="c-btn" title="Reload from portal" onClick={() => {
@@ -4922,6 +3750,7 @@ export default function App() {
           <DirectHLSView />
         ) : section==="epg" ? (
           <EPGView channels={channels} epgData={epgData} epgURL={epgURL} setEpgURL={setEpgURL}
+            epgSources={epgSources} activeEpgSource={activeEpgSource} setActiveEpgSource={setActiveEpgSource}
             epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} onPlayCatchup={playCatchup} t={t} />
         ) : section==="search" ? (
           <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} />
@@ -5006,16 +3835,21 @@ export default function App() {
                   </div>
                 )}
                 {section==="live" ? (
-                  <div className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  <div key="live-wrapper" className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                     <TimelineGrid
+                      key={activeEpgSource}
                       ref={liveGridRef}
-                      channels={paginatedItems.slice(0, visibleLimit)}
+                      channels={paginatedItems}
                       epgData={epgData}
                       onPlay={playItem}
-                      onPlayCatchup={playCatchup}                    />
+                      onPlayCatchup={playCatchup}
+                      hasMore={hasMore}
+                      onLoadMore={() => setPage(p=>p+1)}
+                      loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
+                    />
                   </div>
                 ) : (
-                  <div className="vod-grid">
+                  <div key="vod-wrapper" className="vod-grid">
                     {paginatedItems.map((item,i) => {
                       const faved = isFav(item);
                       const hist = historyMap.get(item.id || item.url);
@@ -5046,8 +3880,8 @@ export default function App() {
                     })}
                   </div>
                 )}
-                {hasMore && (
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
+                {hasMore && section !== "live" && (
+                  <div ref={vodLoadMoreRef} style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
                     <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
                   </div>
                 )}
@@ -5372,7 +4206,7 @@ export default function App() {
 // ══════════════════════════════════════════════════════════════════
 // SUB-VIEWS
 // ══════════════════════════════════════════════════════════════════
-const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, isFav, t }) {
+const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, t }) {
   const all = [...favItems.live, ...favItems.vod, ...favItems.series];
   if (!all.length) return (
     <div className="empty">
@@ -5500,21 +4334,14 @@ const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggle
 
 
 
-const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
+const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, activeEpgSource, setActiveEpgSource, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
   const PX_PER_MIN = 3;
   const CH_COL_W = 160;
   const MAX_CHANNELS = 200;
 
   const [urlInput, setUrlInput] = useState(epgURL || "");
   const [search, setSearch] = useState("");
-  const [nowMs, setNowMs] = useState(Date.now());
   const outerRef = useRef(null);
-
-  // Update current time every 30 seconds
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 30000);
-    return () => clearInterval(id);
-  }, []);
 
   // Auto-scroll to "now" on mount
   useEffect(() => {
@@ -5532,8 +4359,6 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
   }, [channels, search]);
 
   const handleNow = useCallback(() => {
-    const fresh = Date.now();
-    setNowMs(fresh);
     setTimeout(() => {
       if (!outerRef.current) return;
       const nowOffset = 60 * PX_PER_MIN;
@@ -5556,6 +4381,14 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
         <button className="btn-go" onClick={()=>loadEPG(urlInput)} disabled={epgLoading} style={{padding:".4rem .9rem",fontSize:".82rem"}}>
           {epgLoading ? t("loading") : t("loadEPG")}
         </button>
+
+        {epgSources.length > 0 && (
+          <select className="fi" style={{width:160}} value={activeEpgSource} onChange={e=>setActiveEpgSource(e.target.value)}>
+            <option value="all">All</option>
+            {epgSources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        )}
+
         {channels.length > 0 && (
           <input className="fi" style={{width:"160px"}} placeholder="Filter channels\u2026"
             value={search} onChange={e=>setSearch(e.target.value)} />
@@ -5575,6 +4408,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
         <>
           {/* Scrollable grid */}
           <TimelineGrid
+            key={activeEpgSource}
             ref={outerRef}
             channels={filteredChannels}
             epgData={epgData}
@@ -5594,8 +4428,8 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, setEpgURL, ep
 });
 
 // ── Settings View ──
-function SettingsView({ connections, favs, history, authUser, isGuest, activeConnId, onAuth, t: st }) {
-  const t = st || (k => k);
+function SettingsView({ connections, authUser, activeConnId, onAuth }) {
+  // st or t are unused here in SettingsView
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
   const [importOk, setImportOk] = useState("");

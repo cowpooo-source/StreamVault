@@ -7,6 +7,76 @@ const API_PATHS = [
   "stalker_portal/server/load.php",
 ];
 
+// SSRF protection: block private/internal IPs
+const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1|fc|fd|fe80|0\.0\.0\.0)/i;
+const DNS_JSON_ENDPOINT = "https://cloudflare-dns.com/dns-query";
+
+function isPrivateIP(ip) {
+  if (!ip) return true;
+  // Strip IPv6 brackets
+  const clean = ip.replace(/^\[|\]$/g, "");
+  if (PRIVATE_IP_RE.test(clean)) return true;
+  // Check for IPv4-mapped IPv6
+  const v4match = clean.match(/^::ffff:(.+)$/i);
+  if (v4match) return isPrivateIP(v4match[1]);
+  return false;
+}
+
+async function resolveHostAddresses(host) {
+  const types = ["A", "AAAA"];
+  const addresses = new Set();
+
+  for (const type of types) {
+    const url = `${DNS_JSON_ENDPOINT}?name=${encodeURIComponent(host)}&type=${type}`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/dns-json" },
+    });
+    if (!res.ok) throw new Error(`DNS lookup failed for ${host}`);
+
+    const data = await res.json();
+    const answers = Array.isArray(data?.Answer) ? data.Answer : [];
+    for (const answer of answers) {
+      if ((answer?.type === 1 || answer?.type === 28) && answer?.data) {
+        addresses.add(answer.data);
+      }
+    }
+  }
+
+  return [...addresses];
+}
+
+// Validate URL is safe (SSRF protection)
+async function isUrlAllowed(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    // Block localhost variants
+    if (
+      host === "localhost" ||
+      host === "localhost.localdomain" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "0.0.0.0"
+    ) return false;
+    // Block private IPs
+    if (/^[\d.]+$/.test(host)) return !isPrivateIP(host);
+    if (host.includes(":")) return !isPrivateIP(host); // IPv6
+
+    const addresses = await resolveHostAddresses(host);
+    if (!addresses.length) return false;
+    return addresses.every((address) => !isPrivateIP(address));
+  } catch {
+    return false;
+  }
+}
+
+// Validate MAC format
+const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;
+function isValidMac(mac) {
+  return MAC_RE.test(mac);
+}
+
 function cacheKey(portal, mac) {
   return `path:${portal.replace(/\/+$/, "")}|${mac}`;
 }
@@ -41,9 +111,19 @@ async function tryHandshake(base, apiPath, mac, portalUrl, opts = {}) {
     }
     if (res.status === 404) return null;
     if (res.ok) {
-      const data = await res.json();
+      const text = await res.text();
+      // Verify it's actual JSON (Stalker portals return JSON)
+      let data;
+      try { data = JSON.parse(text); } catch { return null; }
       const token = data?.js?.token;
-      if (token) return { token, base, apiPath };
+      if (!token) return null;
+      // Extra validation: Stalker responses typically have these fields
+      // This helps filter out non-Stalker servers that happen to return JSON with a token
+      const js = data.js;
+      const hasStalkerFields = js.server_time !== undefined || js.need_act !== undefined ||
+                              js.hw_req === undefined; // Stalker doesn't typically return hw_req
+      if (!hasStalkerFields) return null;
+      return { token, base, apiPath };
     }
   } catch (e) {
     if (e.code === "RATE_LIMITED") throw e;
@@ -52,6 +132,14 @@ async function tryHandshake(base, apiPath, mac, portalUrl, opts = {}) {
 }
 
 export async function getSession(portal, mac, opts = {}, kvCache = null) {
+  // SSRF check before anything else
+  if (!(await isUrlAllowed(portal))) {
+    throw new Error("Portal URL not allowed (SSRF check failed)");
+  }
+  if (!isValidMac(mac)) {
+    throw new Error("Invalid MAC format");
+  }
+
   const key = cacheKey(portal, mac);
 
   // Check KV for cached path
@@ -162,6 +250,8 @@ export async function portalFetch(session, params, timeout = 12000) {
 
   throw new Error(`Portal request failed: ${params.action || "unknown"}`);
 }
+
+export { isUrlAllowed, isPrivateIP };
 
 export async function portalFetchRetry(session, params, timeout) {
   let result = await portalFetch(session, params, timeout);

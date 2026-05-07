@@ -5,5 +5,6 @@ export default defineConfig({
     include: ["tests/**/*.test.js"],
     exclude: ["test/**"],
     testTimeout: 15000,
+    setupFiles: ["tests/setup.js"],
   },
 });

@@ -12,7 +12,7 @@ const ROLE_LIMITS = {
   pro:     { maxConnections: 10,  maxVod: Infinity, epg: true, sync: true, maxLogins: 5 },
   regular: { maxConnections: 5,   maxVod: Infinity, epg: true, sync: true, maxLogins: 3 },
   free:    { maxConnections: 2,   maxVod: 500,      epg: true, sync: true, maxLogins: 1 },
-  guest:   { maxConnections: 2,   maxVod: 500,      epg: true, sync: false, maxLogins: 1 },
+  guest:   { maxConnections: 2,   maxVod: 500,      epg: true, sync: true, maxLogins: 1 },
 };
 
 // Promo: new registrations get this role (validated against allowed set)

@@ -146,10 +146,12 @@ Nginx serves `Portal Heaven/dist/` as static files and proxies API routes to por
 | `REGISTRATION_OPEN` | `true` | Set `false` to disable public registration |
 | `ALLOWED_ORIGIN` | `*` | CORS allowed origins |
 | `TMDB_API_KEY` | — | TMDB v3 API key used by `/api/tmdb/*` for all users |
+| `BREVO_API_KEY` | — | Brevo API key used for auth emails |
+| `SMTP_FROM` | `portalheaven.stream@gmail.com` | Sender email address for outgoing mail |
+| `SMTP_FROM_NAME` | `Portal Heaven` | Sender name for outgoing mail |
 | `CACHE_DB` | `data/cache.db` | SQLite database path |
 
 ---
-
 ## API Reference
 
 ### Authentication
@@ -228,7 +230,7 @@ Portal Heaven/
 │   ├── src/index.js             # Express server + all routes
 │   ├── src/auth.js              # User auth (bcrypt, JWT, RBAC)
 │   ├── src/cache.js             # SQLite cache + analytics
-│   ├── src/email.js             # Email module (Resend, disabled)
+│   ├── src/email.js             # Email module (Brevo)
 │   └── src/analytics.html       # Admin dashboard
 ├── deploy-vps.sh                # Automated VPS deployment script
 └── README.md
@@ -245,3 +247,4 @@ Portal Heaven is a **media player application** only. It does not provide, host,
 ## License
 
 Private repository. All rights reserved.
+

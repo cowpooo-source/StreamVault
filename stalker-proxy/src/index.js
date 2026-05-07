@@ -96,10 +96,11 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://cdn.jsdelivr.net"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", "https://cdn.jsdelivr.net"],
       fontSrc: ["'self'"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
     }
   },
   crossOriginEmbedderPolicy: false,
@@ -624,7 +625,7 @@ async function portalFetch(session, params, timeout = 12000) {
   const url = `${session.base}${session.apiPath}?${qs}`;
 
   function parseResponse(text, res) {
-    if (text.includes("Authorization failed")) return null; // token expired, signal retry
+    if (text.includes("Authorization failed") || text.includes("Device not found") || text.includes("Access denied")) return null; // token/auth expired or invalid
     try {
       return JSON.parse(text);
     } catch {
@@ -851,6 +852,7 @@ app.post("/stalker/validate", async (req, res) => {
         result.error = "Account returned empty info — may be blocked";
       }
     } catch (e) {
+      result.status = "blocked";
       result.error = "Could not fetch account info: " + e.message;
     }
 
@@ -1619,24 +1621,28 @@ app.use("/api", authRoutes);
 // ── Cleanup expired sessions alongside cache cleanup ──
 setInterval(() => auth.cleanupSessions(), 60 * 60 * 1000);
 
-// ─────────────────────────────────────────────────────────────────
-const server = app.listen(PORT, () => {
-  console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
-  console.log(`   Cache: SQLite/better-sqlite3 (7-day TTL, WAL mode)`);
-});
+module.exports = app;
 
-// Graceful shutdown: close server, checkpoint WAL, then exit
-function shutdown(signal) {
-  console.log(`\n${signal} received — shutting down gracefully…`);
-  server.close(() => {
-    try { cache.db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
-    try { cache.db.close(); } catch {}
-    console.log("Shutdown complete.");
-    process.exit(0);
+// ─────────────────────────────────────────────────────────────────
+if (require.main === module) {
+  const server = app.listen(PORT, () => {
+    console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
+    console.log(`   Health: http://localhost:${PORT}/health`);
+    console.log(`   Cache: SQLite/better-sqlite3 (7-day TTL, WAL mode)`);
   });
-  // Force exit after 10s if connections don't close
-  setTimeout(() => { console.error("Forced shutdown after timeout"); process.exit(1); }, 10000);
+
+  // Graceful shutdown: close server, checkpoint WAL, then exit
+  function shutdown(signal) {
+    console.log(`\n${signal} received — shutting down gracefully…`);
+    server.close(() => {
+      try { cache.db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+      try { cache.db.close(); } catch {}
+      console.log("Shutdown complete.");
+      process.exit(0);
+    });
+    // Force exit after 10s if connections don't close
+    setTimeout(() => { console.error("Forced shutdown after timeout"); process.exit(1); }, 10000);
+  }
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));

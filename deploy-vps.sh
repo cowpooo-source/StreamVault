@@ -21,11 +21,16 @@ git pull --ff-only origin "$BRANCH"
 log "Building frontend"
 cd "$FRONTEND_DIR"
 npm install
+log "Running frontend tests"
+npm run test
 rm -rf dist
 npm run build
 
 log "Installing backend dependencies"
 cd "$BACKEND_DIR"
+npm install
+log "Running backend tests"
+npm run test
 npm install --omit=dev
 
 log "Updating PM2"
