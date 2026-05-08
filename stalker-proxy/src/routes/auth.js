@@ -31,8 +31,8 @@ async function verifyTurnstile(token, ip) {
 
 function setAuthCookie(res, token) {
   res.cookie("sv_auth", token, {
-    httpOnly: true, secure: process.env.NODE_ENV === "production",
-    sameSite: "strict", maxAge: 7 * 24 * 60 * 60 * 1000, path: "/",
+    httpOnly: true, secure: process.env.NODE_ENV === "production" || process.env.APP_URL?.startsWith("https"),
+    sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000, path: "/",
   });
 }
 
