@@ -1040,13 +1040,22 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         body: JSON.stringify({ portal: cfg.server, mac: cfg.mac, serial: cfg.serial, deviceId: cfg.deviceId, deviceId2: cfg.deviceId2 }),
       });
       const v = await vRes.json();
-      if (!v.portalReachable) { setErr("Portal unreachable. Check your connection."); return; }
+      if (!v.portalReachable) {
+        setErr("Portal unreachable. Connecting anyway...");
+        onReconnect(conn.id);
+        return;
+      }
       if (v.status === "expired" || v.status === "blocked" || v.status === "suspended" || v.status === "unregistered") {
         setExpiredPrompt({ conn, validation: v });
+        // Still allow reconnection despite status issues
+        onReconnect(conn.id);
         return;
       }
       onReconnect(conn.id);
-    } catch (e) { setErr(e.message); }
+    } catch (e) {
+      console.warn("Validation failed, reconnecting anyway:", e.message);
+      onReconnect(conn.id); // Proceed with reconnection even if validation fails
+    }
     finally { setLoading(false); }
   }
 
@@ -2442,11 +2451,17 @@ export default function App() {
         }
       }
 
-      // Auto-connect: if we have an active connection + cached content in IDB, skip Setup
+      // Auto-connect: if we have an active connection, set conn (load cache if available)
       if (acId) {
         try {
           const connObj = conns.find(c => c.id === acId);
-          if (connObj) await loadFromCache(acId, connObj);
+          if (connObj) {
+            const cached = await loadFromCache(acId, connObj);
+            if (!cached) {
+              // No cache, but active connection exists — set conn so app screen loads
+              setConn(connObj.config);
+            }
+          }
         } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     })();

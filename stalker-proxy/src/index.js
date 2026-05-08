@@ -1616,9 +1616,8 @@ app.use("/", analyticsRoutes);
 auth.init(cache.db);
 
 const authRoutes = require("./routes/auth");
-const ssoRoutes = require("./routes/sso");
 app.use("/api", authRoutes);
-app.use("/api", ssoRoutes);
+
 // ── Cleanup expired sessions alongside cache cleanup ──
 setInterval(() => auth.cleanupSessions(), 60 * 60 * 1000);
 
