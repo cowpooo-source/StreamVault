@@ -91,8 +91,8 @@ app.use(cors({
 const passport = require("passport");
 app.use(passport.initialize());
 
-// Security headersapp.use(helmet({
-  contentSecurityPolicy: {
+// Security headers
+app.use(helmet({  contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://cdn.jsdelivr.net"],

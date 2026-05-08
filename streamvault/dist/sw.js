@@ -1,6 +1,6 @@
-const CACHE = "sv-moris80x";
+const CACHE = "sv-mowdnq0k";
 
-self.addEventListener("install", e => {
+self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
