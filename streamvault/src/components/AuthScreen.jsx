@@ -22,8 +22,14 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       const p = params.get("provider") || "another provider";
       setErr(`That email is already registered. Please log in with your password to link your ${p} account.`);
       window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (errorParam === "already_linked") {
+      setErr("That account is already linked to another user.");
+      window.history.replaceState({}, document.title, window.location.pathname);
     } else if (errorParam === "sso_failed") {
       setErr("Single Sign-On failed. Please try again.");
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (errorParam === "not_configured") {
+      setErr("This login method is not fully configured on the server yet.");
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);

@@ -88,8 +88,10 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
 }));
 
-// Security headers
-app.use(helmet({
+const passport = require("passport");
+app.use(passport.initialize());
+
+// Security headersapp.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
