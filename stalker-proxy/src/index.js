@@ -23,11 +23,11 @@ const keepAliveAgent      = new http.Agent({ keepAlive: true, maxSockets: 50 });
 const keepAliveAgentHttps = new https.Agent({ keepAlive: true, maxSockets: 50 });
 const agentFor = (url) => url.startsWith("https") ? keepAliveAgentHttps : keepAliveAgent;
 
-// Total transfer timeout (prevents slow-loris). Returns { signal, clear }.
+// Total transfer timeout (prevents slow-loris). Returns { signal, clear, abort }.
 function transferTimeout(ms) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), ms);
-  return { signal: ac.signal, clear: () => clearTimeout(timer) };
+  return { signal: ac.signal, clear: () => clearTimeout(timer), abort: () => ac.abort() };
 }
 
 const app  = express();
@@ -1445,7 +1445,10 @@ app.get("/stream", async (req, res) => {
     const headers = { "User-Agent": req.headers["user-agent"] || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" };
     if (req.headers.range) headers["Range"] = req.headers.range;
 
-    const upstream = await fetch(url, { headers, redirect: "follow" });
+    const controller = new AbortController();
+    req.on("close", () => controller.abort());
+
+    const upstream = await fetch(url, { headers, redirect: "follow", signal: controller.signal });
     if (!upstream.ok && upstream.status !== 206) return res.status(upstream.status).end();
 
     const ct = upstream.headers.get("content-type") || "";
@@ -1518,15 +1521,18 @@ app.get("/img", async (req, res) => {
   if (!url) return res.status(400).end();
   if (!(await isUrlAllowed(url))) return res.status(403).end();
   try {
+    const controller = new AbortController();
+    req.on("close", () => controller.abort());
+
     // Try original URL first, fallback to HTTP for portals with broken HTTPS certs
     let fetchUrl = url;
     let upstream = await fetch(fetchUrl, {
-      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }
+      timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }, signal: controller.signal
     }).catch(() => null);
     if (!upstream && url.startsWith("https:")) {
       fetchUrl = url.replace(/^https:/, "http:");
       upstream = await fetch(fetchUrl, {
-        timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }
+        timeout: 10000, headers: { "User-Agent": "StreamVault/1.0" }, signal: controller.signal
       });
     }
     if (!upstream || !upstream.ok) return res.status(upstream?.status || 502).end();
@@ -1568,6 +1574,7 @@ app.get("/proxy", async (req, res) => {
   const start = Date.now();
   const tt = transferTimeout(60000); // 60s total transfer limit
   try {
+    req.on("close", () => { tt.clear(); tt.abort(); });
     const upstream = await fetch(url, { timeout: 30000, signal: tt.signal, headers: { "User-Agent": "StreamVault/1.0" } });
     const duration = Date.now() - start;
     cache.trackRequest("proxy", upstream.status, duration);
