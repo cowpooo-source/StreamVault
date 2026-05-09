@@ -54,7 +54,8 @@ if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
 }
 
 // Common OAuth Handler
-async function handleOAuthCallback(req, provider, subject, displayName, email, done) {
+async function handleOAuthCallback(req, provider, subjectRaw, displayName, email, done) {
+  const subject = String(subjectRaw);
   try {
     // Check if user is actively logged in (Linking flow)
     const token = req.cookies?.sv_auth || (req.headers.authorization ? req.headers.authorization.slice(7) : null);
@@ -73,6 +74,7 @@ async function handleOAuthCallback(req, provider, subject, displayName, email, d
           return done(null, user, { message: 'linked' });
         }
       } catch (e) {
+        console.error(`[SSO Linking Error for ${provider}]`, e);
         // Token invalid, ignore and fall through to login flow
       }
     }
