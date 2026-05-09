@@ -4,10 +4,12 @@ const os = require("os");
 const path = require("path");
 const cache = require("../cache");
 const auth = require("../auth");
-const { getNetworkStats, getDiskUsage, trackDailyBandwidth, getLastNetStat, setLastNetStat } = require("../services/system");
+const { getNetworkStats, getDiskUsage, getLastNetStat, setLastNetStat } = require("../services/system");
 
 const ADMIN_PASS = process.env.ADMIN_PASS;
 const crypto = require("crypto");
+const ANALYTICS_CACHE_TTL_MS = 15000;
+let analyticsCache = { expiresAt: 0, payload: null };
 
 function safeCompare(a, b) {
   if (!a || !b) return false;
@@ -23,10 +25,15 @@ router.get("/api/analytics", (req, res) => {
   const token = req.headers["x-admin-token"];
   if (!safeCompare(token, ADMIN_PASS)) return res.status(401).json({ error: "Unauthorized" });
 
+  const now = Date.now();
+  if (analyticsCache.payload && analyticsCache.expiresAt > now) {
+    res.set("Cache-Control", "no-store");
+    return res.json(analyticsCache.payload);
+  }
+
   const stats = cache.getStats();
   const mem = process.memoryUsage();
   const net = getNetworkStats();
-  const now = Date.now();
 
   // Calculate today's bandwidth
   const today = new Date().toISOString().slice(0, 10);
@@ -69,9 +76,7 @@ router.get("/api/analytics", (req, res) => {
   monthlyBw.tx_gb = Math.round(monthlyBw.tx_gb * 100) / 100;
   monthlyBw.total_gb = Math.round((monthlyBw.rx_gb + monthlyBw.tx_gb) * 100) / 100;
 
-  trackDailyBandwidth(); // ensure current snapshot
-
-  res.json({
+  const payload = {
     activeNow: stats.activeNow,
     health: stats.health,
     security: auth.getAuthStats(),
@@ -121,7 +126,11 @@ router.get("/api/analytics", (req, res) => {
     },
     feedback: cache.getFeedback(),
     generated_at: new Date().toISOString(),
-  });
+  };
+
+  analyticsCache = { expiresAt: now + ANALYTICS_CACHE_TTL_MS, payload };
+  res.set("Cache-Control", "no-store");
+  res.json(payload);
 });
 
 // ── GET /analytics — HTML dashboard (with login)

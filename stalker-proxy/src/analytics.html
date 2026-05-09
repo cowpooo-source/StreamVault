@@ -94,7 +94,10 @@
       <h1>Portal Heaven</h1>
       <div id="gen-at" class="sub">Real-time monitoring active</div>
     </div>
-    <div style="display:flex;gap:.5rem">
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <label style="font-size:.75rem;color:var(--t2);display:flex;align-items:center;gap:.3rem;margin-right:.5rem;cursor:pointer">
+        <input type="checkbox" id="auto-refresh"> Auto-refresh
+      </label>
       <button class="refresh" onclick="load()">Manual Refresh</button>
       <button class="refresh" style="color:var(--t2)" onclick="logout()">Logout</button>
     </div>
@@ -576,8 +579,11 @@ function updateTables(d) {
   `).join('');
 }
 
-// Auto-refresh every 30s
-setInterval(() => { if(TOKEN) load() }, 30000);
+// Auto-refresh every 120s
+setInterval(() => {
+  const isAuto = document.getElementById('auto-refresh').checked;
+  if(TOKEN && isAuto) load();
+}, 120000);
 </script>
 </body>
 </html>
