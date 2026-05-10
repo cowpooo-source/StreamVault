@@ -394,6 +394,61 @@ function updateUserEmail(userId, email) {
   db.prepare("UPDATE users SET email = ? WHERE id = ?").run(email, userId);
 }
 
+// ── Federated Credentials (SSO) ──
+
+function getFederatedCredential(provider, subject) {
+  const cred = db.prepare("SELECT * FROM federated_credentials WHERE provider = ? AND subject = ?").get(provider, subject);
+  if (!cred) return null;
+  return stmts.getUserById.get(cred.user_id);
+}
+
+function linkFederatedCredential(userId, provider, subject) {
+  try {
+    db.prepare("INSERT INTO federated_credentials (user_id, provider, subject) VALUES (?, ?, ?)").run(userId, provider, subject);
+  } catch (e) {
+    if (e.code === "SQLITE_CONSTRAINT_UNIQUE") throw new Error("This account is already linked to another user");
+    throw e;
+  }
+}
+
+async function createFederatedUser(username, email, provider, subject) {
+  if (!username) throw new Error("Username required");
+  if (email && stmts.getUserByEmail.get(email)) throw new Error("Email already registered");
+  if (stmts.getUserByUsername.get(username)) throw new Error("Username already taken");
+
+  const role = DEFAULT_ROLE;
+  const limits = ROLE_LIMITS[role] || ROLE_LIMITS.free;
+  
+  // Create a dummy uncrackable hash for pure SSO users so they can't login via password
+  const dummyHash = "!SSO_USER_" + crypto.randomBytes(16).toString("hex");
+  
+  const result = stmts.createUser.run(username, email || null, dummyHash, role, limits.maxConnections, Date.now());
+  const userId = result.lastInsertRowid;
+  
+  linkFederatedCredential(userId, provider, subject);
+  
+  return { id: userId, username, email, role };
+}
+
+function generateSSOToken(userId) {
+  const user = stmts.getUserById.get(userId);
+  if (!user || user.disabled) throw new Error("User account is invalid or disabled");
+  
+  stmts.updateLastLogin.run(Date.now(), user.id);
+
+  const token = jwt.sign(
+    { sub: user.id, username: user.username, role: user.role, jti: crypto.randomBytes(8).toString("hex") },
+    jwtSecret,
+    { expiresIn: TOKEN_EXPIRY }
+  );
+
+  const decoded = jwt.decode(token);
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  stmts.createSession.run(tokenHash, user.id, Date.now(), decoded.exp * 1000);
+
+  return token;
+}
+
 module.exports = {
   init,
   SALT_ROUNDS, ROLE_LIMITS, DEFAULT_ROLE,
@@ -404,4 +459,5 @@ module.exports = {
   createEmailToken, verifyEmailToken, consumeEmailToken, activateEmail,
   requestPasswordReset, resetPassword,
   updateUserEmail,
+  getFederatedCredential, linkFederatedCredential, createFederatedUser, generateSSOToken,
 };
