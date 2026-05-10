@@ -2252,6 +2252,7 @@ export default function App() {
     try { return localStorage.getItem("sv-lastSection") ? JSON.parse(localStorage.getItem("sv-lastSection")) : "live"; } catch { return "live"; }
   });
   const [cat, setCat]         = useState("All");
+  const [catSearch, setCatSearch] = useState("");
   const [search, setSearch]   = useState("");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
@@ -3803,9 +3804,20 @@ export default function App() {
                   setCtx({x:e.clientX, y:e.clientY, sec:section, type: "container"});
                 }
               }}>
-                {curCats.filter(c => c === "All" || !isCatHidden(section, c)).map(c => {
-                  return (
-                    <div key={c}
+                <div style={{ padding: "0.5rem", position: "sticky", top: 0, background: "var(--bg)", zIndex: 10, borderBottom: "1px solid var(--b1)" }}>
+                  <input
+                    className="fi"
+                    style={{ width: "100%", padding: "0.4rem", fontSize: "0.75rem", borderRadius: "4px" }}
+                    placeholder="Filter categories…"
+                    value={catSearch}
+                    onChange={e => setCatSearch(e.target.value)}
+                  />
+                </div>
+                {curCats
+                  .filter(c => c === "All" || !isCatHidden(section, c))
+                  .filter(c => !catSearch || c.toLowerCase().includes(catSearch.toLowerCase()))
+                  .map(c => {
+                  return (                    <div key={c}
                       className={`cat ${cat===c?"on":""}`}
                       title={c}
                       onClick={() => {
