@@ -50,6 +50,10 @@ function trackDailyBandwidth() {
   if (!cache.get(startKey)) cache.set(startKey, { rx: net.rx_bytes, tx: net.tx_bytes }, 30 * 24 * 60 * 60 * 1000);
 }
 
+trackDailyBandwidth();
+const dailyBandwidthTimer = setInterval(trackDailyBandwidth, 60 * 1000);
+if (typeof dailyBandwidthTimer.unref === "function") dailyBandwidthTimer.unref();
+
 function getLastNetStat() {
   return lastNetStat;
 }
