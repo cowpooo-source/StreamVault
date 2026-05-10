@@ -11,8 +11,8 @@ const CALLBACK_BASE = process.env.OAUTH_CALLBACK_URL_BASE || "http://localhost:3
 // Cookie options for JWT
 const cookieOptions = {
   httpOnly: true,
-  secure: APP_URL.startsWith("https"),
-  sameSite: APP_URL.startsWith("https") ? "none" : "lax",
+  secure: APP_URL.startsWith("https") || process.env.NODE_ENV === "production",
+  sameSite: "lax",
   maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
 };
 
