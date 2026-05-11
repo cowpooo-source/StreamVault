@@ -22,4 +22,9 @@
   - Extract general API (VAST, TMDB) into `src/routes/api.js`.
   - Create `src/app.js` for Express configuration and middleware.
   - Implement unit/integration tests for new modules to reach 80% backend coverage.
+- [ ] **Feature: Media Playback Duration Heartbeat**
+  - Implement a 60-second heartbeat ping in the frontend `Player.jsx` while media is actively playing.
+  - Create a new backend endpoint (e.g., `/api/track/duration`) to securely receive and validate these pings against the user's JWT/Guest ID.
+  - Add a new `watch_duration` table to the SQLite database to store accumulated watch time per user, per day/hour.
+  - Integrate these new duration metrics into the Analytics Dashboard.
 

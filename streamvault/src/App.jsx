@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
 import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL } from "./utils.js";
@@ -3407,26 +3407,34 @@ export default function App() {
   const vodLoadMoreRef = useRef(null);
 
   const contentScrollRef = useRef(null);
+  const hasUserScrolledContentRef = useRef(false);
 
   // Reset scroll position when section or category changes
-  useEffect(() => {
+  useLayoutEffect(() => {
+    hasUserScrolledContentRef.current = false;
     if (contentScrollRef.current) {
       contentScrollRef.current.scrollTop = 0;
     }
-  }, [section, cat]);
+  }, [section, cat, search]);
 
   // Infinite scroll for VOD/Series
   useEffect(() => {
     if (!hasMore || section === "live") return;
+    const root = contentScrollRef.current;
+    const target = vodLoadMoreRef.current;
+    if (!root || !target) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting) setPage(p => p + 1);
+        if (entries[0].isIntersecting && hasUserScrolledContentRef.current) {
+          setPage(p => p + 1);
+        }
       },
-      { rootMargin: "400px" }
+      { root, rootMargin: "250px 0px" }
     );
-    if (vodLoadMoreRef.current) observer.observe(vodLoadMoreRef.current);
+    observer.observe(target);
     return () => observer.disconnect();
-  }, [hasMore, section, setPage]);
+  }, [hasMore, section, page]);
 
   function handleConnect(connConfig) {
     const err = saveConnection(connConfig);
@@ -3871,7 +3879,13 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div ref={contentScrollRef} style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}>
+              <div
+                ref={contentScrollRef}
+                onScroll={(e) => {
+                  if (e.currentTarget.scrollTop > 0) hasUserScrolledContentRef.current = true;
+                }}
+                style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}
+              >
                 {/* Recommendations row */}
                 {recommendations.length > 0 && !search && cat === "All" && (
                   <div style={{marginBottom:".8rem",flexShrink:0}}>
@@ -4484,7 +4498,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 });
 
 // ── Settings View ──
-function SettingsView({ connections, authUser, activeConnId, onAuth }) {
+function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth }) {
   // st or t are unused here in SettingsView
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
