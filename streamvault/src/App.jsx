@@ -3793,7 +3793,7 @@ export default function App() {
         ) : section==="continue" ? (
           <ContinueView items={continueItems} onPlay={playItem} history={history} t={t} />
         ) : (
-          <div className="c-body">
+          <div className="c-body" key={`${section}:${cat}`}>
             {/* Categories sidebar */}
             {curCats.length > 1 && (
               <div className="cats" onContextMenu={(e) => {
