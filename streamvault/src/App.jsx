@@ -3417,25 +3417,6 @@ export default function App() {
     }
   }, [section, cat, search]);
 
-  // Infinite scroll for VOD/Series
-  useEffect(() => {
-    if (!hasMore || section === "live") return;
-    const root = contentScrollRef.current;
-    const target = vodLoadMoreRef.current;
-    if (!root || !target) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasUserScrolledContentRef.current) {
-          setPage(p => p + 1);
-        }
-      },
-      { root, rootMargin: "250px 0px" }
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [hasMore, section, page]);
-
   function handleConnect(connConfig) {
     const err = saveConnection(connConfig);
     if (err) { alert(err); return; }
