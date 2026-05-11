@@ -3406,6 +3406,15 @@ export default function App() {
 
   const vodLoadMoreRef = useRef(null);
 
+  const contentScrollRef = useRef(null);
+
+  // Reset scroll position when section or category changes
+  useEffect(() => {
+    if (contentScrollRef.current) {
+      contentScrollRef.current.scrollTop = 0;
+    }
+  }, [section, cat]);
+
   // Infinite scroll for VOD/Series
   useEffect(() => {
     if (!hasMore || section === "live") return;
