@@ -3166,7 +3166,7 @@ export default function App() {
     setActiveConnId(cId);
     db.set("sv-connections", newConns);
     db.set("sv-activeConn", cId);
-    if (authUser) syncConnectionsToServer(newConns);
+    if (authUser || isGuest) syncConnectionsToServer(newConns);
     return null;
   }
 
@@ -3197,7 +3197,7 @@ export default function App() {
     const newConns = connections.filter(c => c.id !== id);
     setConnections(newConns);
     db.set("sv-connections", newConns);
-    if (authUser) syncConnectionsToServer(newConns);
+    if (authUser || isGuest) syncConnectionsToServer(newConns);
     // Clean up localStorage
     localStorage.removeItem(`sv-favs-${id}`);
     localStorage.removeItem(`sv-history-${id}`);
@@ -3453,7 +3453,7 @@ export default function App() {
     // Single state update with all connections
     setConnections(newConns);
     db.set("sv-connections", newConns);
-    if (authUser) syncConnectionsToServer(newConns);
+    if (authUser || isGuest) syncConnectionsToServer(newConns);
     // Connect to the first imported one
     const firstCfg = configs[0];
     const firstId = connId(firstCfg);
@@ -4553,7 +4553,7 @@ function SettingsView({ connections, authUser, activeConnId, onAuth }) {
           if (newConns.length) {
             const merged = [...existing, ...newConns];
             db.set("sv-connections", merged);
-            if (authUser) syncConnectionsToServer(merged);
+            if (authUser || isGuest) syncConnectionsToServer(merged);
           }
         }
 
