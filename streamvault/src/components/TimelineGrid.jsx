@@ -11,19 +11,6 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
     return () => clearInterval(timer);
   }, []);
 
-  // Infinite scroll observer
-  useEffect(() => {
-    if (!hasMore || !onLoadMore) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) onLoadMore();
-      },
-      { rootMargin: '300px' }
-    );
-    if (loadMoreRef.current) observer.observe(loadMoreRef.current);
-    return () => observer.disconnect();
-  }, [hasMore, onLoadMore]);
-
   const windowStart = useMemo(() => nowMs - 3600000, [nowMs]);
   const windowEnd = useMemo(() => windowStart + TOTAL_MS, [windowStart]);
 
