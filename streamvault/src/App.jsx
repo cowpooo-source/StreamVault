@@ -3798,15 +3798,6 @@ export default function App() {
                   finally { setLoading(false); }
                 }}>↺ {t("refresh")}</button>
               )}
-              {["live","vod","series"].includes(section) && (
-                <button
-                  className={`c-btn ${autoLoadMore ? "active" : ""}`}
-                  title="Automatically load the next page when you scroll near the bottom"
-                  onClick={() => setAutoLoadMore(v => !v)}
-                >
-                  {autoLoadMore ? "Auto-load: on" : "Auto-load: off"}
-                </button>
-              )}
               {lastSynced[section] && (
                 <span style={{fontSize:".62rem",color:"var(--t3)",whiteSpace:"nowrap"}} title={new Date(lastSynced[section]).toLocaleString()}>
                   {t("synced")} {(() => {
