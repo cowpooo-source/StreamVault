@@ -23,7 +23,6 @@ const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
 
 function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
-    console.log("[Adsterra] Enabled:", ENABLE_ADSTERRA, "AllowedPage:", onAllowedPage, "Eligible:", isAdEligible);
     if (!ENABLE_ADSTERRA || !onAllowedPage || !isAdEligible) return;
 
     // ✅ Check cooldown BEFORE doing anything
@@ -71,7 +70,6 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
 // ── HilltopAds In-App Push ──
 function HilltopPushAd({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
-    console.log("[Hilltop] Enabled:", ENABLE_HILLTOP, "AllowedPage:", onAllowedPage, "Eligible:", isAdEligible);
     if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
 
     const script = document.createElement("script");
@@ -3845,7 +3843,8 @@ export default function App() {
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="settings" ? (
           <SettingsView connections={connections} favs={favs} history={history}
-            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId} onAuth={handleAuth} t={t} />
+            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId} 
+            onAuth={handleAuth} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} t={t} />
         ) : section==="hls" ? (
           <DirectHLSView />
         ) : section==="epg" ? (
@@ -4543,7 +4542,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 });
 
 // ── Settings View ──
-function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth }) {
+function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, autoLoadMore, setAutoLoadMore }) {
   // st or t are unused here in SettingsView
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
@@ -4729,8 +4728,26 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth }) 
       {tab === "general" && (
         <div style={{color:"var(--t2)",fontSize:".9rem"}}>
           <p>Language and theme settings are available in the sidebar.</p>
-          <div style={{marginTop:"1rem",padding:"1rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
-            <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem"}}>Active Connection</div>
+          
+          <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".8rem",letterSpacing:".05em"}}>Playback & Content</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:600}}>Auto-load next page</div>
+                <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem"}}>Automatically load more items when scrolling in Movies/Series.</div>
+              </div>
+              <button 
+                className={`c-btn ${autoLoadMore ? "active" : ""}`}
+                style={{minWidth:"100px"}}
+                onClick={() => setAutoLoadMore(v => !v)}
+              >
+                {autoLoadMore ? "Enabled" : "Disabled"}
+              </button>
+            </div>
+          </div>
+
+          <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem",letterSpacing:".05em"}}>Active Connection</div>
             <div style={{fontSize:".85rem",color:"var(--t1)"}}>
               {connections.find(c=>c.id===activeConnId)?.label || "None"}
             </div>
