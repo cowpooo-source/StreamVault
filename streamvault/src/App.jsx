@@ -4542,7 +4542,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 });
 
 // ── Settings View ──
-function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, autoLoadMore, setAutoLoadMore }) {
+function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth }) {
   // st or t are unused here in SettingsView
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
@@ -4728,23 +4728,6 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, au
       {tab === "general" && (
         <div style={{color:"var(--t2)",fontSize:".9rem"}}>
           <p>Language and theme settings are available in the sidebar.</p>
-          
-          <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
-            <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".8rem",letterSpacing:".05em"}}>Playback & Content</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <div>
-                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:600}}>Auto-load next page</div>
-                <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem"}}>Automatically load more items when scrolling in Movies/Series.</div>
-              </div>
-              <button 
-                className={`c-btn ${autoLoadMore ? "active" : ""}`}
-                style={{minWidth:"100px"}}
-                onClick={() => setAutoLoadMore(v => !v)}
-              >
-                {autoLoadMore ? "Enabled" : "Disabled"}
-              </button>
-            </div>
-          </div>
 
           <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
             <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem",letterSpacing:".05em"}}>Active Connection</div>
