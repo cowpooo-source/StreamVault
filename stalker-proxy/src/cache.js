@@ -63,6 +63,24 @@ db.exec(`CREATE TABLE IF NOT EXISTS guest_data (
   data TEXT NOT NULL, updated_at INTEGER NOT NULL,
   PRIMARY KEY (guest_id, conn_id, type)
 )`);
+db.exec(`CREATE TABLE IF NOT EXISTS playback_sessions (
+  session_id TEXT PRIMARY KEY,
+  user_id INTEGER,
+  guest_id TEXT,
+  connection_id TEXT,
+  item_id TEXT,
+  item_type TEXT,
+  item_name TEXT,
+  group_name TEXT,
+  started_at INTEGER,
+  last_seen_at INTEGER,
+  ended_at INTEGER,
+  watched_seconds INTEGER DEFAULT 0,
+  media_duration INTEGER,
+  position INTEGER,
+  completed BOOLEAN DEFAULT 0,
+  device_id TEXT
+)`);
 db.exec("CREATE TABLE IF NOT EXISTS health_logs (ts INTEGER, type TEXT, status INTEGER, duration INTEGER)");
 db.exec("CREATE INDEX IF NOT EXISTS idx_health_ts ON health_logs(ts)");
 
@@ -335,6 +353,57 @@ function trackWatch(name, type) {
     ON CONFLICT(name, type) DO UPDATE SET plays = plays + 1, last_watched = ?`).run(name, type || "live", now, now);
 }
 
+function trackPlaybackHeartbeat(payload) {
+  if (!payload || !payload.session_id) return;
+  const { session_id, user_id, guest_id, connection_id, item_id, item_type, item_name, group_name, position, media_duration, completed, device_id } = payload;
+  const now = Math.floor(Date.now() / 1000);
+  
+  db.prepare(`INSERT INTO playback_sessions 
+    (session_id, user_id, guest_id, connection_id, item_id, item_type, item_name, group_name, started_at, last_seen_at, position, media_duration, completed, device_id, watched_seconds)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 60)
+    ON CONFLICT(session_id) DO UPDATE SET
+      last_seen_at = excluded.last_seen_at,
+      position = excluded.position,
+      completed = CASE WHEN excluded.completed = 1 THEN 1 ELSE completed END,
+      watched_seconds = watched_seconds + 60
+  `).run(
+    session_id, user_id || null, guest_id || null, connection_id || null, 
+    item_id || null, item_type || null, item_name || null, group_name || null, 
+    now, now, position || null, media_duration || null, completed ? 1 : 0, device_id || null
+  );
+}
+
+function getPlaybackSummary(userId, guestId, range) {
+  let timeFilter = 0;
+  const now = Math.floor(Date.now() / 1000);
+  if (range === 'today') timeFilter = now - 86400;
+  else if (range === 'week') timeFilter = now - 7 * 86400;
+  else if (range === 'month') timeFilter = now - 30 * 86400;
+
+  let query = `SELECT 
+    COALESCE(SUM(watched_seconds), 0) as total_seconds,
+    COALESCE(SUM(CASE WHEN item_type = 'live' THEN watched_seconds ELSE 0 END), 0) as live_seconds,
+    COALESCE(SUM(CASE WHEN item_type = 'vod' THEN watched_seconds ELSE 0 END), 0) as vod_seconds,
+    COALESCE(SUM(CASE WHEN item_type = 'series' THEN watched_seconds ELSE 0 END), 0) as series_seconds,
+    COALESCE(SUM(CASE WHEN item_type = 'catchup' THEN watched_seconds ELSE 0 END), 0) as catchup_seconds
+    FROM playback_sessions 
+    WHERE started_at >= ? AND `;
+    
+  let params = [timeFilter];
+
+  if (userId) {
+    query += "user_id = ?";
+    params.push(userId);
+  } else if (guestId) {
+    query += "guest_id = ?";
+    params.push(guestId);
+  } else {
+    return null;
+  }
+
+  return db.prepare(query).get(...params);
+}
+
 function saveFeedback(message, guestId, userAgent, ip) {
   if (!message) return;
   const now = Math.floor(Date.now() / 1000);
@@ -382,4 +451,4 @@ cleanup();
 // Backward-compatible ready export (sync init, but consumers may still .then() on it)
 const ready = Promise.resolve();
 
-module.exports = { db, get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackPortalHealth, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };
+module.exports = { db, get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackPortalHealth, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, trackPlaybackHeartbeat, getPlaybackSummary, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };

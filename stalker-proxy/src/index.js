@@ -182,6 +182,54 @@ app.post("/api/track", express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
+// ── POST /api/playback/heartbeat — Track actual media watch duration
+app.post("/api/playback/heartbeat", express.json(), (req, res) => {
+  const payload = req.body;
+  
+  // Resolve user_id from token if present, fallback to guest_id
+  let userId = null;
+  const token = req.cookies?.sv_auth || (req.headers.authorization ? req.headers.authorization.slice(7) : null);
+  if (token) {
+    try {
+      const user = auth.verifyToken(token);
+      if (user) userId = user.id;
+    } catch (e) { /* ignore invalid token */ }
+  }
+  
+  if (!userId && !payload.guest_id) {
+    return res.status(400).json({ error: "Missing authentication or guest ID" });
+  }
+
+  cache.trackPlaybackHeartbeat({
+    ...payload,
+    user_id: userId
+  });
+  
+  res.json({ ok: true });
+});
+
+// ── GET /api/playback/summary — Retrieve watch duration summaries
+app.get("/api/playback/summary", (req, res) => {
+  let userId = null;
+  const token = req.cookies?.sv_auth || (req.headers.authorization ? req.headers.authorization.slice(7) : null);
+  if (token) {
+    try {
+      const user = auth.verifyToken(token);
+      if (user) userId = user.id;
+    } catch (e) { /* ignore invalid token */ }
+  }
+  
+  const guestId = req.query.guest_id;
+  if (!userId && !guestId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const range = req.query.range || "today"; // today, week, month
+  const summary = cache.getPlaybackSummary(userId, guestId, range);
+  
+  res.json({ data: summary });
+});
+
 // ── POST /api/feedback — submit user feedback
 app.post("/api/feedback", express.json(), (req, res) => {
   const { message, guestId, timestamp, userAgent } = req.body;

@@ -440,6 +440,71 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     const video = videoRef.current;
     if (!video || !current.url) return;
 
+    // Playback Telemetry Heartbeat
+    const playbackSessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    let heartbeatTimer = null;
+    let isTracking = false;
+
+    const sendHeartbeat = (completed = false, useBeacon = false) => {
+      if (!isTracking || !video) return;
+      const payload = {
+        session_id: playbackSessionId,
+        guest_id: localStorage.getItem("sv-guest-id"),
+        connection_id: current.connId || null,
+        item_id: current.id || current.epgId || null,
+        item_type: current.type || "live",
+        item_name: current.name || current.title || "Unknown",
+        group_name: current.group || null,
+        position: Math.floor(video.currentTime || 0),
+        media_duration: Math.floor(video.duration || 0),
+        completed: completed
+      };
+      
+      if (useBeacon && navigator.sendBeacon) {
+        navigator.sendBeacon(`${API}/api/playback/heartbeat`, JSON.stringify(payload));
+      } else {
+        fetch(`${API}/api/playback/heartbeat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }).catch(() => {});
+      }
+    };
+
+    const handlePlay = () => {
+      if (!isTracking) {
+        isTracking = true;
+        // First ping to register session immediately
+        sendHeartbeat();
+        heartbeatTimer = setInterval(() => sendHeartbeat(), 60000);
+      }
+    };
+
+    const handlePauseOrWait = () => {
+      if (isTracking) {
+        isTracking = false;
+        clearInterval(heartbeatTimer);
+        sendHeartbeat(); // send last known position
+      }
+    };
+
+    const handleEnd = () => {
+      handlePauseOrWait();
+      sendHeartbeat(true);
+    };
+
+    const handleUnload = () => {
+      if (isTracking) {
+        sendHeartbeat(false, true);
+      }
+    };
+
+    video.addEventListener("playing", handlePlay);
+    video.addEventListener("pause", handlePauseOrWait);
+    video.addEventListener("waiting", handlePauseOrWait);
+    video.addEventListener("ended", handleEnd);
+    window.addEventListener("beforeunload", handleUnload);
+
     async function start() {
       setStreamErr(null);
       setAdState(null);
