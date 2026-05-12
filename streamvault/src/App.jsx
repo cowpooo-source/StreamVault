@@ -3437,7 +3437,7 @@ export default function App() {
     const el = e.currentTarget;
     if (el.scrollTop > 0) hasUserScrolledContentRef.current = true;
 
-    if (!autoLoadMore || !hasMore || section === "live" || !hasUserScrolledContentRef.current) return;
+    if (!autoLoadMore || !hasMore || !["live","vod","series"].includes(section) || !hasUserScrolledContentRef.current) return;
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distanceFromBottom > autoLoadThresholdPx * 2) {
@@ -3455,7 +3455,7 @@ export default function App() {
   }, [autoLoadMore, hasMore, section]);
 
   useEffect(() => {
-    if (!autoLoadMore || !hasMore || section === "live" || !contentScrollRef.current) return;
+    if (!autoLoadMore || !hasMore || !["live","vod","series"].includes(section) || !contentScrollRef.current) return;
     const el = contentScrollRef.current;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distanceFromBottom > autoLoadThresholdPx) return;
@@ -3798,7 +3798,7 @@ export default function App() {
                   finally { setLoading(false); }
                 }}>↺ {t("refresh")}</button>
               )}
-              {section !== "live" && (
+              {["live","vod","series"].includes(section) && (
                 <button
                   className={`c-btn ${autoLoadMore ? "active" : ""}`}
                   title="Automatically load the next page when you scroll near the bottom"
@@ -3957,6 +3957,9 @@ export default function App() {
                       epgData={epgData}
                       onPlay={playItem}
                       onPlayCatchup={playCatchup}
+                      hasMore={hasMore}
+                      onLoadMore={() => setPage(p=>p+1)}
+                      loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
                     />
                   </div>
                 ) : (
