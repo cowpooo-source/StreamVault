@@ -3867,8 +3867,8 @@ export default function App() {
                 }}
                 style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}
               >
-                {/* Recommendations row */}
-                {recommendations.length > 0 && !search && cat === "All" && (
+                {/* Recommendations row (Temporarily disabled for debugging) */}
+                {false && recommendations.length > 0 && !search && cat === "All" && (
                   <div style={{marginBottom:".8rem",flexShrink:0}}>
                     <div style={{fontSize:".78rem",fontWeight:600,color:"var(--t2)",marginBottom:".4rem",paddingLeft:".2rem"}}>
                       Recommended for you
