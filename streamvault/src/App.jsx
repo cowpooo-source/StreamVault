@@ -2256,6 +2256,9 @@ export default function App() {
   const [search, setSearch]   = useState("");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
+  const [autoLoadMore, setAutoLoadMore] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sv-autoLoadMore") || "false"); } catch { return false; }
+  });
   const [globalQ, setGlobalQ] = useState("");
   const [playing, setPlaying] = useState(null);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
@@ -2563,6 +2566,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("sv-lang", lang);
   }, [lang]);
+
+  useEffect(() => {
+    localStorage.setItem("sv-autoLoadMore", JSON.stringify(autoLoadMore));
+  }, [autoLoadMore]);
 
   // ── load favs + history when active connection changes
   useEffect(() => {
@@ -3410,18 +3417,62 @@ export default function App() {
   const hasMore = page * PAGE_SIZE < curItems.length;
   const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
 
-  const vodLoadMoreRef = useRef(null);
-
   const contentScrollRef = useRef(null);
   const hasUserScrolledContentRef = useRef(false);
+  const autoLoadBurstRef = useRef(0);
+  const autoLoadCooldownRef = useRef(0);
+  const autoLoadThresholdPx = 500;
+  const autoLoadCooldownMs = 350;
+  const autoLoadBurstLimit = 3;
 
   // Reset scroll position when section or category changes
   useLayoutEffect(() => {
     hasUserScrolledContentRef.current = false;
+    autoLoadBurstRef.current = 0;
+    autoLoadCooldownRef.current = 0;
     if (contentScrollRef.current) {
       contentScrollRef.current.scrollTop = 0;
     }
   }, [section, cat, search]);
+
+  const handleContentScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    if (el.scrollTop > 0) hasUserScrolledContentRef.current = true;
+
+    if (!autoLoadMore || !hasMore || section === "live" || !hasUserScrolledContentRef.current) return;
+
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom > autoLoadThresholdPx * 2) {
+      autoLoadBurstRef.current = 0;
+      return;
+    }
+    if (distanceFromBottom > autoLoadThresholdPx) return;
+    if (autoLoadBurstRef.current >= autoLoadBurstLimit) return;
+    const now = Date.now();
+    if (now - autoLoadCooldownRef.current < autoLoadCooldownMs) return;
+
+    autoLoadBurstRef.current += 1;
+    autoLoadCooldownRef.current = now;
+    setPage(p => p + 1);
+  }, [autoLoadMore, hasMore, section]);
+
+  useEffect(() => {
+    if (!autoLoadMore || !hasMore || section === "live" || !contentScrollRef.current) return;
+    const el = contentScrollRef.current;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom > autoLoadThresholdPx) return;
+    if (!hasUserScrolledContentRef.current) return;
+    if (autoLoadBurstRef.current >= autoLoadBurstLimit) return;
+    const now = Date.now();
+    if (now - autoLoadCooldownRef.current < autoLoadCooldownMs) return;
+
+    const timer = setTimeout(() => {
+      autoLoadBurstRef.current += 1;
+      autoLoadCooldownRef.current = Date.now();
+      setPage(p => p + 1);
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [page, autoLoadMore, hasMore, section]);
 
   function handleConnect(connConfig) {
     const err = saveConnection(connConfig);
@@ -3749,6 +3800,15 @@ export default function App() {
                   finally { setLoading(false); }
                 }}>↺ {t("refresh")}</button>
               )}
+              {section !== "live" && (
+                <button
+                  className={`c-btn ${autoLoadMore ? "active" : ""}`}
+                  title="Automatically load the next page when you scroll near the bottom"
+                  onClick={() => setAutoLoadMore(v => !v)}
+                >
+                  {autoLoadMore ? "Auto-load: on" : "Auto-load: off"}
+                </button>
+              )}
               {lastSynced[section] && (
                 <span style={{fontSize:".62rem",color:"var(--t3)",whiteSpace:"nowrap"}} title={new Date(lastSynced[section]).toLocaleString()}>
                   {t("synced")} {(() => {
@@ -3868,9 +3928,7 @@ export default function App() {
             ) : (
               <div
                 ref={contentScrollRef}
-                onScroll={(e) => {
-                  if (e.currentTarget.scrollTop > 0) hasUserScrolledContentRef.current = true;
-                }}
+                onScroll={handleContentScroll}
                 style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}
               >
                 {/* Recommendations row */}
@@ -3938,7 +3996,7 @@ export default function App() {
                   </div>
                 )}
                 {hasMore && section !== "live" && (
-                  <div ref={vodLoadMoreRef} style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
                     <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
                   </div>
                 )}
