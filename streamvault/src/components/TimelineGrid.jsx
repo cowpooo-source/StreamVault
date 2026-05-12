@@ -2,9 +2,8 @@ import { useState, useEffect, useMemo, memo, forwardRef, useRef } from "react";
 import { imgSrc } from "../utils.js";
 import { epgLookup, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H, msToPx, fmtT } from "../epg.js";
 
-const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup, hasMore, onLoadMore, loadText }, outerRef) {
+const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup }, outerRef) {
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const loadMoreRef = useRef(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 60000);
@@ -31,8 +30,7 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
 
   const nowLinePx = msToPx(nowMs, windowStart);
   
-  // Calculate total height needed. If hasMore, add 1 extra row for the button.
-  const rowCount = channels.length + (hasMore ? 1 : 0);
+  const rowCount = channels.length;
 
   return (
     <div className="epg-outer" ref={outerRef}>
@@ -57,11 +55,6 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
                 <span className="epg-ch-name">{ch.name}</span>
               </div>
             ))}
-            {hasMore && (
-              <div ref={loadMoreRef} className="epg-ch-cell" style={{justifyContent: 'center', cursor: 'pointer', background: 'var(--s1)'}} onClick={onLoadMore}>
-                <button className="c-btn" style={{padding: '.2rem .5rem', fontSize: '.7rem', pointerEvents: 'none'}}>{loadText || "Load More"}</button>
-              </div>
-            )}
           </div>
 
           {/* Programs area (absolutely positioned blocks) */}
@@ -93,9 +86,6 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
                 </div>
               );
             })}
-            {hasMore && (
-              <div className="epg-prog-row" style={{borderBottom: 'none'}}></div>
-            )}
 
             {/* Current time red line */}
             {nowLinePx >= 0 && nowLinePx <= TOTAL_PX && (

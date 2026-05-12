@@ -3957,9 +3957,6 @@ export default function App() {
                       epgData={epgData}
                       onPlay={playItem}
                       onPlayCatchup={playCatchup}
-                      hasMore={hasMore}
-                      onLoadMore={() => setPage(p=>p+1)}
-                      loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
                     />
                   </div>
                 ) : (
