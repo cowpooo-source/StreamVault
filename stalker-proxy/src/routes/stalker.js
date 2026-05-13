@@ -6,6 +6,18 @@ function createStalkerRouter(deps) {
   const router = express.Router();
   const STREAM_CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS", "Access-Control-Allow-Headers": "Range, Content-Type", "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type" };
 
+  function normalizeResolvedUrl(streamUrl, portal) {
+    if (!streamUrl) return streamUrl;
+    let cleanUrl = String(streamUrl).replace(/^ffmpeg\s+/, "").trim();
+    if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
+      try {
+        const portalHost = new URL(portal).host;
+        cleanUrl = cleanUrl.replace(/localhost(:\d+)?/g, portalHost).replace(/127\.0\.0\.1(:\d+)?/g, portalHost);
+      } catch {}
+    }
+    return cleanUrl;
+  }
+
   router.post("/handshake", async (req, res) => {
     const { portal, mac, serial } = req.body;
     if (!portal || !mac) return res.status(400).end();
@@ -64,24 +76,113 @@ function createStalkerRouter(deps) {
     try {
       const session = await getSession(portal, mac, { serial });
       const raw = await fetchAllPages(session, "vod", cat);
-      res.json({ items: raw.map(v => ({ id: v.id, name: v.name, logo: v.screenshot_uri || v.cover || null, year: v.year, rating: v.rating_imdb || null, type: "vod" })), total: raw.length });
+      res.json({
+        items: raw.map(v => ({
+          id: v.id,
+          name: v.name,
+          logo: v.screenshot_uri || v.cover || null,
+          year: v.year,
+          rating: v.rating_imdb || null,
+          url: v.cmd || null,
+          type: "vod",
+        })),
+        total: raw.length,
+      });
     } catch (e) { res.status(502).json({ error: safeError(e) }); }
   });
 
   router.get("/play", async (req, res) => {
-    const { portal, mac, cmd, content_type, start, end, serial } = req.query;
+    const { portal, mac, cmd, content_type, episode, start, end, serial, deviceId, deviceId2 } = req.query;
     try {
-      const session = await getSession(portal, mac, { serial });
-      const data = await portalFetchRetry(session, { type: (content_type === "vod" || content_type === "series") ? "vod" : "itv", action: "create_link", cmd, start, end });
-      const streamUrl = data?.js?.cmd?.replace(/^ffmpeg\s+/, "").trim();
+      const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
+      const data = await portalFetchRetry(session, {
+        type: (content_type === "vod" || content_type === "series") ? "vod" : "itv",
+        action: "create_link",
+        cmd,
+        series: episode || 0,
+        forced_storage: 0,
+        disable_ad: 0,
+        download: 0,
+        force_ch_link_check: 0,
+        start,
+        end,
+      });
+      const streamUrl = normalizeResolvedUrl(data?.js?.cmd, portal);
       if (!streamUrl) throw new Error("No URL");
       if (!(await isUrlAllowed(streamUrl))) return res.status(403).end();
       if (req.query.resolve === "1") return res.json({ url: streamUrl });
-      
+
+      const watchName = req.query.name || cmd || "Unknown";
+      cache.trackWatch(watchName, content_type === "vod" ? "vod" : content_type === "series" ? "series" : "live");
+
       const fetchHeaders = buildStalkerStreamHeaders(session, req.headers);
       const upstream = await fetch(streamUrl, { headers: fetchHeaders, redirect: "follow" });
+      const upstreamSummary = summarizeUpstreamHeaders(upstream.headers);
+      if (!upstream.ok && upstream.status !== 206) {
+        return res.status(upstream.status).json({
+          error: `Stream server returned ${upstream.status}`,
+          status: upstream.status,
+          upstreamHeaders: upstreamSummary,
+        });
+      }
       Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
-      upstream.body.pipe(res);
+      res.set("Accept-Ranges", "bytes");
+      const ct = upstream.headers.get("content-type") || "";
+      if (upstream.status === 206) {
+        res.status(206);
+        const cr = upstream.headers.get("content-range");
+        if (cr) res.set("Content-Range", cr);
+      }
+      const cl = upstream.headers.get("content-length");
+      if (cl) res.set("Content-Length", cl);
+      if (ct.includes("mpegurl") || ct.includes("m3u") || streamUrl.endsWith(".m3u8")) {
+        const parsedStreamUrl = new URL(streamUrl);
+        const playOrigin = parsedStreamUrl.origin;
+        const playBaseDir = streamUrl.substring(0, streamUrl.lastIndexOf("/") + 1);
+        const proto = req.get("x-forwarded-proto") || req.protocol;
+        const selfBase = `${proto}://${req.get("host")}`;
+        res.set("Content-Type", ct);
+        let leftover = "";
+        const rewriter = new Transform({
+          transform(chunk, enc, cb) {
+            const text = leftover + chunk.toString();
+            const lines = text.split("\n");
+            leftover = lines.pop();
+            const rewritten = lines.map(line => {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("#")) return line;
+              if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                return `${selfBase}/stream?url=${encodeURIComponent(trimmed)}`;
+              }
+              if (trimmed.startsWith("/")) {
+                return `${selfBase}/stream?url=${encodeURIComponent(playOrigin + trimmed)}`;
+              }
+              return `${selfBase}/stream?url=${encodeURIComponent(playBaseDir + trimmed)}`;
+            }).join("\n") + "\n";
+            cb(null, rewritten);
+          },
+          flush(cb) {
+            if (leftover.trim()) {
+              const trimmed = leftover.trim();
+              if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                cb(null, `${selfBase}/stream?url=${encodeURIComponent(trimmed)}`);
+              } else if (trimmed.startsWith("/")) {
+                cb(null, `${selfBase}/stream?url=${encodeURIComponent(playOrigin + trimmed)}`);
+              } else if (!trimmed.startsWith("#")) {
+                cb(null, `${selfBase}/stream?url=${encodeURIComponent(playBaseDir + trimmed)}`);
+              } else {
+                cb(null, leftover);
+              }
+            } else {
+              cb();
+            }
+          }
+        });
+        upstream.body.pipe(rewriter).pipe(res);
+      } else {
+        if (ct) res.set("Content-Type", ct);
+        upstream.body.pipe(res);
+      }
     } catch (e) { res.status(502).json({ error: safeError(e) }); }
   });
 
@@ -115,12 +216,104 @@ function createStalkerRouter(deps) {
     const { portal, mac, serial, deviceId, deviceId2 } = req.body;
     if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
     const start = Date.now();
+    const result = {
+      valid: false,
+      status: "unknown",
+      statusCode: null,
+      expiry: null,
+      daysLeft: null,
+      serial: null,
+      deviceId: null,
+      deviceId2: null,
+      maxConnections: null,
+      tariff: null,
+      phone: null,
+      portalReachable: false,
+      error: null,
+    };
+
+    function parseExpiryDate(expiryStr) {
+      if (!expiryStr || expiryStr === "0000-00-00" || expiryStr === "0000-00-00 00:00:00") return null;
+      let expDate = null;
+      const m1 = expiryStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m1) expDate = new Date(parseInt(m1[1]), parseInt(m1[2]) - 1, parseInt(m1[3]));
+      if (!expDate) {
+        const m2 = expiryStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+        if (m2) expDate = new Date(parseInt(m2[3]), parseInt(m2[1]) - 1, parseInt(m2[2]));
+      }
+      if (!expDate) expDate = new Date(expiryStr);
+      return expDate && !isNaN(expDate.getTime()) ? expDate : null;
+    }
+
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 }, { forceRefresh: true });
-      res.json({ valid: true, token: session.token, latency: Date.now() - start });
+      result.portalReachable = true;
+
+      try {
+        const profileParams = {
+          type: "stb",
+          action: "get_profile",
+          auth_second_step: 1,
+          hw_version_2: "8b80dfaa8cf83485567849b7202a79360fc988e3",
+        };
+        if (serial) profileParams.sn = serial;
+        if (deviceId) profileParams.device_id = deviceId;
+        if (deviceId2 || deviceId) profileParams.device_id2 = deviceId2 || deviceId;
+        const profile = await portalFetchRetry(session, profileParams);
+        const p = profile?.js || {};
+        result.serial = p.serial_number || p.sn || serial || null;
+        result.deviceId = p.device_id || deviceId || null;
+        result.deviceId2 = p.device_id2 || deviceId2 || deviceId || null;
+      } catch {}
+
+      try {
+        const account = await portalFetchRetry(session, { type: "account_info", action: "get_main_info" });
+        const a = account?.js || {};
+        const statusVal = a.status !== undefined ? parseFloat(a.status) : 0;
+        if (statusVal === 0) result.status = "active";
+        else if (statusVal === 1) result.status = "unregistered";
+        else if (statusVal === 2) result.status = "suspended";
+        else if (statusVal === 3) result.status = "expired";
+        else if (statusVal === 4) result.status = "blocked";
+        else result.status = `status:${statusVal}`;
+        result.statusCode = statusVal;
+
+        const expiryStr = a.expire_billing_date || a.expired_date || a.expire_date || null;
+        const expDate = parseExpiryDate(expiryStr);
+        if (expDate) {
+          result.expiry = expDate.toISOString().slice(0, 10);
+          result.daysLeft = Math.ceil((expDate.getTime() - Date.now()) / 86400000);
+          if (result.daysLeft < 0) result.status = "expired";
+        }
+
+        result.tariff = a.tariff_plan || a.tariff || null;
+        result.phone = a.phone || null;
+        result.maxConnections = a.max_cur || a.max_connections || null;
+
+        if (Object.keys(a).length === 0) {
+          result.status = "blocked";
+          result.error = "Account returned empty info - may be blocked";
+        }
+
+        const hasValidId = a.id || a.login || a.user_id || a.account_number || a.mac;
+        if (!hasValidId && result.status === "active") {
+          result.status = "unregistered";
+          result.valid = false;
+          result.error = "No valid user ID found - MAC may not be registered";
+        }
+      } catch (e) {
+        result.error = "Could not fetch account info: " + e.message;
+      }
+
+      result.valid = (result.status === "active" && (result.daysLeft === null || result.daysLeft > 0));
+      result.token = session.token;
+      result.latency = Date.now() - start;
+      res.json(result);
     } catch (e) {
       console.error("Validate error:", e.message);
-      res.json({ valid: false, error: safeError(e), latency: Date.now() - start });
+      result.error = safeError(e);
+      result.latency = Date.now() - start;
+      res.json(result);
     }
   });
 
@@ -131,12 +324,17 @@ function createStalkerRouter(deps) {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const data = await portalFetchRetry(session, {
         type: (content_type === "vod" || content_type === "series") ? "vod" : "itv",
-        action: "create_link", cmd
+        action: "create_link",
+        cmd,
+        series: 0,
+        forced_storage: 0,
+        disable_ad: 0,
+        download: 0,
+        force_ch_link_check: 0,
       });
-      const streamUrl = data?.js?.cmd;
+      const streamUrl = normalizeResolvedUrl(data?.js?.cmd, portal);
       if (!streamUrl) throw new Error("No stream URL returned");
-      const cleanUrl = streamUrl.replace(/^ffmpeg\s+/, "").trim();
-      res.json({ url: cleanUrl });
+      res.json({ url: streamUrl });
     } catch (e) {
       console.error("Stream error:", e.message);
       res.status(502).json({ error: safeError(e) });
@@ -320,6 +518,64 @@ function createStalkerRouter(deps) {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const data = await portalFetchRetry(session, {
         type: "account_info", action: "get_main_info",
+      });
+      res.json(data?.js || {});
+    } catch (e) {
+      console.error("Account error:", e.message);
+      res.status(502).json({ error: safeError(e) });
+    }
+  });
+
+  router.get("/", async (req, res) => {
+    const { portal, mac, action, ...params } = req.query;
+    if (!portal || !mac) return res.status(400).json({ error: "Portal and MAC required" });
+    const start = Date.now();
+
+    try {
+      const session = await getSession(portal, mac);
+      const data = await portalFetchRetry(session, { action, ...params });
+      const duration = Date.now() - start;
+      cache.trackRequest("stalker", 200, duration);
+      res.json(data);
+    } catch (e) {
+      const duration = Date.now() - start;
+      cache.trackRequest("stalker", 502, duration);
+      res.status(502).json({ error: e.message });
+    }
+  });
+
+  router.get("/profile", async (req, res) => {
+    const { portal, mac, serial, deviceId, deviceId2 } = req.query;
+    if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+    try {
+      const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
+      const params = {
+        type: "stb",
+        action: "get_profile",
+        auth_second_step: 1,
+        hw_version_2: "8b80dfaa8cf83485567849b7202a79360fc988e3",
+      };
+      if (serial) params.sn = serial;
+      if (deviceId) params.device_id = deviceId;
+      if (deviceId2 || deviceId) params.device_id2 = deviceId2 || deviceId;
+      const data = await portalFetchRetry(session, params);
+      res.json(data?.js || {});
+    } catch (e) {
+      console.error("Profile error:", e.message);
+      res.status(502).json({ error: safeError(e) });
+    }
+  });
+
+  router.get("/account", async (req, res) => {
+    const { portal, mac, serial, deviceId, deviceId2 } = req.query;
+    if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
+
+    try {
+      const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
+      const data = await portalFetchRetry(session, {
+        type: "account_info",
+        action: "get_main_info",
       });
       res.json(data?.js || {});
     } catch (e) {

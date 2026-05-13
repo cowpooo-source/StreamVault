@@ -117,10 +117,11 @@ function createApp(deps) {
 
   const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry };
 
+  app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));
   app.use("/api", createSSORouter(routerDeps));
   app.use("/stalker", stalkerLimit, createStalkerRouter(routerDeps));
-  app.use("/api", apiLimit, createApiRouter(routerDeps));
+  app.use("/api", createApiRouter(routerDeps));
   app.use("/", createAnalyticsRouter(routerDeps));
 
   // ── MEDIA PROXY ROUTES (Legacy support or shared) ──
