@@ -342,8 +342,8 @@ function getStats() {
     todayReqs, daily, cacheBreakdown, activeNow: activeCount,
     health: { avg_latency: Math.round(health.avg_lat || 0), error_rate: health.total ? Math.round(health.errs / health.total * 100) : 0 },
     visitors: { total: totalVisitors, active_1h: active1h, active_24h: active24h, active_24h_ago: active24h_ago, active_7d: active7d },
-    recentVisitors, portals, portalsByType,
-    guests: { total: totalGuests }, recentGuests, mostWatched,
+    recent_visitors, portals, portalsByType,
+    guests: { total: totalGuests }, recent_guests: recentGuests, most_watched: mostWatched,
     playbackBreakdown,
     engagement: {
       geo: Object.fromEntries(geoDist.map(r => [r.country, r.cnt])),
