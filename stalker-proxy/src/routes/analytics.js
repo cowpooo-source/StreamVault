@@ -109,6 +109,7 @@ router.get("/api/analytics", (req, res) => {
     guests: stats.guests,
     recent_guests: stats.recentGuests,
     most_watched: stats.mostWatched,
+    playbackBreakdown: stats.playbackBreakdown,
     portals: { connections: stats.portals, by_type: stats.portalsByType },
     engagement: stats.engagement,
     cache: {
