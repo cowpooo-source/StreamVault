@@ -443,10 +443,15 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     // Playback Telemetry Heartbeat
     const playbackSessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     let heartbeatTimer = null;
+    let debounceTimer = null;
     let isTracking = false;
+    let lastHeartbeatTime = 0;
 
     const sendHeartbeat = (completed = false, useBeacon = false) => {
-      if (!isTracking || !video) return;
+      if (!isTracking && !useBeacon && !completed) return;
+      if (!video) return;
+      
+      lastHeartbeatTime = Date.now();
       const payload = {
         session_id: playbackSessionId,
         guest_id: localStorage.getItem("sv-guest-id"),
@@ -472,24 +477,33 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     };
 
     const handlePlay = () => {
+      clearTimeout(debounceTimer);
       if (!isTracking) {
         isTracking = true;
-        // First ping to register session immediately
-        sendHeartbeat();
+        // Only send immediate ping if it's been more than 5 seconds since the last one
+        if (Date.now() - lastHeartbeatTime > 5000) {
+          sendHeartbeat();
+        }
         heartbeatTimer = setInterval(() => sendHeartbeat(), 60000);
       }
     };
 
     const handlePauseOrWait = () => {
-      if (isTracking) {
-        isTracking = false;
-        clearInterval(heartbeatTimer);
-        sendHeartbeat(); // send last known position
-      }
+      clearTimeout(debounceTimer);
+      // Wait 1.5 seconds to confirm they actually paused and aren't just scrubbing/seeking
+      debounceTimer = setTimeout(() => {
+        if (isTracking) {
+          isTracking = false;
+          clearInterval(heartbeatTimer);
+          sendHeartbeat(); // log the position where they paused
+        }
+      }, 1500);
     };
 
     const handleEnd = () => {
-      handlePauseOrWait();
+      clearTimeout(debounceTimer);
+      isTracking = false;
+      clearInterval(heartbeatTimer);
       sendHeartbeat(true);
     };
 
@@ -501,7 +515,6 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     video.addEventListener("playing", handlePlay);
     video.addEventListener("pause", handlePauseOrWait);
-    video.addEventListener("waiting", handlePauseOrWait);
     video.addEventListener("ended", handleEnd);
     window.addEventListener("beforeunload", handleUnload);
 
