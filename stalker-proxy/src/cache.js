@@ -303,18 +303,34 @@ function getStats() {
 
   // Guest/user stats
   const totalGuests = db.prepare("SELECT COUNT(*) AS cnt FROM guests").get().cnt;
+  const todayStart = Math.floor(new Date().setHours(0,0,0,0) / 1000);
+  
   const recentGuestRows = db.prepare(`
-    SELECT g.*, COALESCE(SUM(ps.watched_seconds), 0) as watch_time
+    SELECT g.*, 
+           COALESCE(SUM(ps.watched_seconds), 0) as watch_time,
+           COALESCE(SUM(CASE WHEN ps.started_at >= ? THEN ps.watched_seconds ELSE 0 END), 0) as watch_time_today
     FROM guests g
     LEFT JOIN playback_sessions ps ON g.guest_id = ps.guest_id
     GROUP BY g.guest_id
     ORDER BY g.last_seen DESC LIMIT 20
-  `).all();
-  const recentGuests = recentGuestRows.map(({ guest_id, ip, created_at, last_seen, connections, favorites, history, role, watch_time }) => ({
+  `).all(todayStart);
+
+  const recentGuests = recentGuestRows.map(({ guest_id, ip, created_at, last_seen, connections, favorites, history, role, watch_time, watch_time_today }) => ({
     guest_id: guest_id?.substring(0, 8) + "...", ip: ip?.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '$1.$2.***.$4') || "",
     created_at, last_seen, connections: connections || 0, favorites: favorites || 0, history: history || 0,
-    role: role || 'guest', watch_time: watch_time || 0
+    role: role || 'guest', watch_time: watch_time || 0, watch_time_today: watch_time_today || 0
   }));
+
+  // Playback breakdown
+  const playbackBreakdownRows = db.prepare(`
+    SELECT item_type, SUM(watched_seconds) as seconds 
+    FROM playback_sessions 
+    GROUP BY item_type
+  `).all();
+  const playbackBreakdown = {};
+  playbackBreakdownRows.forEach(r => {
+    if (r.item_type) playbackBreakdown[r.item_type] = r.seconds;
+  });
 
   // Most watched
   const watchedRows = db.prepare("SELECT name, type, plays FROM watch_log ORDER BY plays DESC LIMIT 15").all();
@@ -328,6 +344,7 @@ function getStats() {
     visitors: { total: totalVisitors, active_1h: active1h, active_24h: active24h, active_24h_ago: active24h_ago, active_7d: active7d },
     recentVisitors, portals, portalsByType,
     guests: { total: totalGuests }, recentGuests, mostWatched,
+    playbackBreakdown,
     engagement: {
       geo: Object.fromEntries(geoDist.map(r => [r.country, r.cnt])),
       devices: Object.fromEntries(deviceDist.map(r => [r.device, r.cnt])),

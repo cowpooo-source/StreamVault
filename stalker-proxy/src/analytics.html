@@ -116,9 +116,9 @@
       <div class="sub">Users active yesterday</div>
     </div>
     <div class="card">
-      <div class="card-label">Health Status</div>
-      <div id="v-health-status" class="card-value text-green">Optimal</div>
-      <div id="v-error-rate" class="sub">0% error rate (24h)</div>
+      <div class="card-label">Avg. Session</div>
+      <div class="card-value"><span id="v-avg-session">0</span><span class="card-unit">min</span></div>
+      <div class="sub">Mean watch time</div>
     </div>
     <div class="card">
       <div class="card-label">Avg. Latency</div>
@@ -220,6 +220,35 @@
           <thead><tr><th>Portal</th><th>Type</th><th>Latency</th><th>Reliability</th><th>Hits</th></tr></thead>
           <tbody></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Watch Time Breakdown -->
+  <div class="section">
+    <div class="section-title">Watch Time Breakdown</div>
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 1rem">
+      <div class="card" style="height: 250px">
+        <div class="card-label">Content Type Distribution</div>
+        <canvas id="watchBreakdownChart"></canvas>
+      </div>
+      <div class="card" style="display:flex;flex-direction:column;justify-content:center;gap:1rem">
+         <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:.5rem">
+            <span style="color:var(--t2)">Live TV</span>
+            <span id="v-breakdown-live" style="font-weight:700">0m</span>
+         </div>
+         <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:.5rem">
+            <span style="color:var(--t2)">Movies (VOD)</span>
+            <span id="v-breakdown-vod" style="font-weight:700">0m</span>
+         </div>
+         <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:.5rem">
+            <span style="color:var(--t2)">Series</span>
+            <span id="v-breakdown-series" style="font-weight:700">0m</span>
+         </div>
+         <div style="display:flex;justify-content:space-between">
+            <span style="color:var(--t2)">Catch-up</span>
+            <span id="v-breakdown-catchup" style="font-weight:700">0m</span>
+         </div>
       </div>
     </div>
   </div>
@@ -364,6 +393,11 @@ function updateSummary(d) {
   document.getElementById('v-bw-today').textContent = d.bandwidth?.today?.total_gb || 0;
   document.getElementById('v-bw-month').textContent = d.bandwidth?.monthly?.total_gb || 0;
   
+  // Avg session
+  const totalWatch = Object.values(d.playbackBreakdown || {}).reduce((a,b)=>a+b, 0);
+  const avgMin = d.visitors.total > 0 ? Math.round((totalWatch / d.visitors.total) / 60) : 0;
+  document.getElementById('v-avg-session').textContent = avgMin;
+
   const errRate = d.health.error_rate || 0;
   const hStatus = document.getElementById('v-health-status');
   hStatus.textContent = errRate > 15 ? 'Critical' : errRate > 5 ? 'Warning' : 'Optimal';
@@ -378,6 +412,12 @@ function updateSummary(d) {
   document.getElementById('v-cache-hit').textContent = d.cache.hit_rate + '%';
   document.getElementById('v-cache-valid').textContent = d.cache.valid_entries;
   
+  // Breakdown text
+  document.getElementById('v-breakdown-live').textContent = fmtDuration(d.playbackBreakdown?.live);
+  document.getElementById('v-breakdown-vod').textContent = fmtDuration(d.playbackBreakdown?.vod);
+  document.getElementById('v-breakdown-series').textContent = fmtDuration(d.playbackBreakdown?.series);
+  document.getElementById('v-breakdown-catchup').textContent = fmtDuration(d.playbackBreakdown?.catchup);
+
   // Hardware Metrics
   const hw = d.hardware;
   if (hw) {
@@ -489,6 +529,36 @@ function updateCharts(d) {
     });
   }
 
+  // Watch Time breakdown donut
+  if (d.playbackBreakdown) {
+    const ctxWatch = document.getElementById('watchBreakdownChart').getContext('2d');
+    const watchLabels = ['Live TV', 'VOD', 'Series', 'Catch-up'];
+    const watchData = [
+      d.playbackBreakdown.live || 0,
+      d.playbackBreakdown.vod || 0,
+      d.playbackBreakdown.series || 0,
+      d.playbackBreakdown.catchup || 0
+    ];
+    
+    if(charts.watch) charts.watch.destroy();
+    charts.watch = new Chart(ctxWatch, {
+      type: 'doughnut',
+      data: {
+        labels: watchLabels,
+        datasets: [{
+          data: watchData,
+          backgroundColor: ['#ff6b35', '#00d4ff', '#7c3aed', '#a78bfa'],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '75%'
+      }
+    });
+  }
+
   // Cache breakdown donut
   const ctxCache = document.getElementById('cacheChart').getContext('2d');
   const cacheLabels = Object.keys(d.cache.breakdown);
@@ -563,7 +633,10 @@ function updateTables(d) {
           <span class="tag" style="background:var(--border)">${g.favorites} favs</span>
         </div>
       </td>
-      <td class="text-purple" style="font-weight:600">${fmtDuration(g.watch_time)}</td>
+      <td class="text-purple" style="font-weight:600">
+        ${fmtDuration(g.watch_time)}
+        <div style="font-size:.65rem;color:var(--t3);font-weight:400">${fmtDuration(g.watch_time_today)} today</div>
+      </td>
       <td style="white-space:nowrap">${ago(g.last_seen)}</td>
     </tr>
   `}).join('');
