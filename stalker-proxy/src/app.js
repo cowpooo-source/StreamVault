@@ -136,8 +136,22 @@ function createApp(deps) {
       const controller = new AbortController();
       req.on("close", () => controller.abort());
       const upstream = await fetch(url, { headers, redirect: "follow", signal: controller.signal });
+      
       const STREAM_CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS", "Access-Control-Allow-Headers": "Range, Content-Type", "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type" };
       Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
+      
+      res.set("Accept-Ranges", "bytes");
+      if (upstream.status === 206) {
+        res.status(206);
+        const cr = upstream.headers.get("content-range");
+        if (cr) res.set("Content-Range", cr);
+      } else if (!upstream.ok) {
+        return res.status(upstream.status).end();
+      }
+
+      const cl = upstream.headers.get("content-length");
+      if (cl) res.set("Content-Length", cl);
+      
       const ct = upstream.headers.get("content-type") || "";
       if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
         const { Transform } = require("stream");
