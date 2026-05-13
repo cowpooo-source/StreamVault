@@ -80,10 +80,27 @@ describe('Integration Tests - Routes', () => {
       getSystemMetrics: vi.fn().mockReturnValue({})
     }));
 
-    // 4. Require app and its components
+    // 4. Require app factory and its real components (which will be replaced by mocks via vi.doMock)
     vi.resetModules();
-    const index = require('../src/index');
-    app = index.app || index; // Handle different export styles
+    const { createApp } = require('../src/app');
+    
+    // Inject the MOCKED dependencies defined above directly into the factory!
+    app = createApp({ 
+      auth: mockAuth, 
+      cache: mockCache, 
+      fetch: vi.fn(), // we can mock fetch here too if needed
+      system: {
+        getNetworkStats: vi.fn().mockReturnValue({ rx_bytes: 0, tx_bytes: 0, rx_gb: 0, tx_gb: 0 }),
+        getDiskUsage: vi.fn().mockReturnValue({ total_gb: 100, used_gb: 50, percent: 50 }),
+        trackDailyBandwidth: vi.fn(),
+        getLastNetStat: vi.fn(),
+        setLastNetStat: vi.fn(),
+        getSystemMetrics: vi.fn().mockReturnValue({})
+      },
+      email: {
+        sendPasswordReset: vi.fn().mockResolvedValue(true)
+      }
+    });
   });
 
   beforeEach(() => {

@@ -7,8 +7,12 @@ vi.mock('node-fetch', () => ({
   __esModule: true
 }));
 
-import app from '../src/index';
+import { createApp } from '../src/app';
+import cache from '../src/cache';
+import auth from '../src/auth';
 import fetch from 'node-fetch';
+
+const app = createApp({ cache, auth, fetch });
 
 describe('Backend Integration Tests (index.js)', () => {
   const adminToken = 'secret'; // From tests/setup.js
