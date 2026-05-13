@@ -303,11 +303,17 @@ function getStats() {
 
   // Guest/user stats
   const totalGuests = db.prepare("SELECT COUNT(*) AS cnt FROM guests").get().cnt;
-  const recentGuestRows = db.prepare("SELECT guest_id, ip, created_at, last_seen, connections, favorites, history, role FROM guests ORDER BY last_seen DESC LIMIT 20").all();
-  const recentGuests = recentGuestRows.map(({ guest_id, ip, created_at, last_seen, connections, favorites, history, role }) => ({
+  const recentGuestRows = db.prepare(`
+    SELECT g.*, COALESCE(SUM(ps.watched_seconds), 0) as watch_time
+    FROM guests g
+    LEFT JOIN playback_sessions ps ON g.guest_id = ps.guest_id
+    GROUP BY g.guest_id
+    ORDER BY g.last_seen DESC LIMIT 20
+  `).all();
+  const recentGuests = recentGuestRows.map(({ guest_id, ip, created_at, last_seen, connections, favorites, history, role, watch_time }) => ({
     guest_id: guest_id?.substring(0, 8) + "...", ip: ip?.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '$1.$2.***.$4') || "",
     created_at, last_seen, connections: connections || 0, favorites: favorites || 0, history: history || 0,
-    role: role || 'guest'
+    role: role || 'guest', watch_time: watch_time || 0
   }));
 
   // Most watched

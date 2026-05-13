@@ -268,7 +268,7 @@
       <div class="section-title">Recent Activity (Last 20)</div>
       <div class="table-wrapper">
         <table id="v-guest-table">
-          <thead><tr><th>User</th><th>Role</th><th>Location</th><th>Activity</th><th>Last Seen</th></tr></thead>
+          <thead><tr><th>User</th><th>Role</th><th>Location</th><th>Activity</th><th>Watch Time</th><th>Last Seen</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -302,6 +302,13 @@ let charts = {};
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function ago(ts){if(!ts)return'—';const d=Date.now()-ts*1000;const m=Math.floor(d/60000);if(m<1)return'Just now';if(m<60)return m+'m ago';if(m<1440)return Math.floor(m/60)+'h ago';return Math.floor(m/1440)+'d ago'}
+function fmtDuration(sec) {
+  if (!sec || sec < 1) return '0m';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 
 async function doLogin(){
   const pass = document.getElementById('pass').value;
@@ -556,6 +563,7 @@ function updateTables(d) {
           <span class="tag" style="background:var(--border)">${g.favorites} favs</span>
         </div>
       </td>
+      <td class="text-purple" style="font-weight:600">${fmtDuration(g.watch_time)}</td>
       <td style="white-space:nowrap">${ago(g.last_seen)}</td>
     </tr>
   `}).join('');
