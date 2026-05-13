@@ -7,15 +7,18 @@ const rateLimit = require("express-rate-limit");
 const passport = require("passport");
 const path = require("path");
 
-const { 
-  transferTimeout, agentFor, isUrlAllowed, 
-  summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, 
-  getSession, portalFetchRetry 
-} = require("./utils/proxyHelpers");
+const { createProxyHelpers } = require("./utils/proxyHelpers");
 
 function createApp(deps) {
   const { cache, auth, fetch, system, email } = deps;
   const app = express();
+
+  const helpers = createProxyHelpers({ fetch });
+  const { 
+    transferTimeout, agentFor, isUrlAllowed, 
+    summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, 
+    getSession, portalFetchRetry 
+  } = helpers;
 
   if (process.env.TRUST_PROXY !== "false") app.set("trust proxy", 1);
 

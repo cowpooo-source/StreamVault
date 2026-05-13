@@ -1,9 +1,8 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
-const fetch = require("node-fetch");
 
 function createAuthRouter(deps) {
-  const { auth, email } = deps;
+  const { auth, email, fetch } = deps;
   const router = express.Router();
 
   const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY;

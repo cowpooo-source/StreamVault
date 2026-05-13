@@ -14,30 +14,37 @@ auth.init(cache.db);
 // Create the application with dependencies
 const app = createApp({ cache, auth, fetch, system, email });
 
-const server = app.listen(PORT, () => {
-  console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
-  console.log(`   Health: http://localhost:${PORT}/health`);
-  console.log(`   Cache: SQLite/better-sqlite3 (7-day TTL, WAL mode)`);
-  console.log(`   Auth: ${auth.listUsers().length} users, JWT auto-secret`);
-});
+let server;
+if (require.main === module) {
+  server = app.listen(PORT, () => {
+    console.log(`✅ Stalker proxy running on http://localhost:${PORT}`);
+    console.log(`   Health: http://localhost:${PORT}/health`);
+    console.log(`   Cache: SQLite/better-sqlite3 (7-day TTL, WAL mode)`);
+    console.log(`   Auth: ${auth.listUsers().length} users, JWT auto-secret`);
+  });
 
-// ── Background Tasks ──
-setInterval(system.trackDailyBandwidth, 60000); // every minute
-setInterval(() => auth.cleanupSessions(), 60 * 60 * 1000); // every hour
+  // ── Background Tasks ──
+  setInterval(system.trackDailyBandwidth, 60000); // every minute
+  setInterval(() => auth.cleanupSessions(), 60 * 60 * 1000); // every hour
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
 
 // Graceful shutdown
 function shutdown(signal) {
   console.log(`\n${signal} received — shutting down gracefully…`);
-  server.close(() => {
-    try { cache.db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
-    try { cache.db.close(); } catch {}
-    console.log("Shutdown complete.");
+  if (server) {
+    server.close(() => {
+      try { cache.db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+      try { cache.db.close(); } catch {}
+      console.log("Shutdown complete.");
+      process.exit(0);
+    });
+  } else {
     process.exit(0);
-  });
+  }
   setTimeout(() => { console.error("Forced shutdown after timeout"); process.exit(1); }, 10000);
 }
-
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
 
 module.exports = app;

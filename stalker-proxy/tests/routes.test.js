@@ -141,4 +141,31 @@ describe('Integration Tests - Routes', () => {
       .set('x-admin-token', 'secret');
     expect(res.status).toBe(200);
   });
+
+  // --- Stalker Proxy Smoke Tests ---
+  
+  it('POST /stalker/validate returns 400 without params', async () => {
+    const res = await request(app).post('/stalker/validate').send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stalker/series/categories returns 400 without params', async () => {
+    const res = await request(app).get('/stalker/series/categories');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stalker/series returns 400 without params', async () => {
+    const res = await request(app).get('/stalker/series');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stalker/series/seasons returns 400 without params', async () => {
+    const res = await request(app).get('/stalker/series/seasons');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stalker/series/episode/stream returns 400 without params', async () => {
+    const res = await request(app).get('/stalker/series/episode/stream');
+    expect(res.status).toBe(400);
+  });
 });
