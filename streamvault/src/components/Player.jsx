@@ -245,7 +245,14 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (hlsRef.current || mpegtsRef.current) return;
       const e = video.error;
       const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
-      setStreamErr({ icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" });
+      const errorPayload = { icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
+      setStreamErr(errorPayload);
+      trackAnalytics("playback_error", {
+        error_type: "native_video_error",
+        error_code: e?.code,
+        content_id: current.id,
+        content_title: current.name
+      });
     };
 
     function startHls(u) {
