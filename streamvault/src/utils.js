@@ -140,6 +140,15 @@ export function parseM3U(text) {
 // Google Analytics Tracking
 const GA_ID = import.meta.env.VITE_GA_MEASUREMENT_ID;
 
+export function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    const context = this;
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(context, args), wait);
+  };
+}
+
 export function trackAnalytics(eventName, payload) {
   if (!GA_ID || typeof gtag !== 'function') return;
 
