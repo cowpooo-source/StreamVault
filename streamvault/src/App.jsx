@@ -2988,6 +2988,16 @@ export default function App() {
       openSeriesDetail(item);
       return;
     }
+
+    trackAnalytics("play_item", {
+      content_type: item.type || "live",
+      content_id: item.id,
+      content_title: item.name,
+      provider_type: conn?.type || "unknown",
+      category: cat || "All",
+      is_favorite: isFav(item)
+    });
+    
     track("play", { name: item.name, type: item.type || "live" });
     track("history");
     if (conn?.type === "stalker" && item._stalkerCmd && !item.url) {
@@ -3014,6 +3024,16 @@ export default function App() {
       _catchupProgram: program.title,
       type: "vod", // treat catchup as VOD for seeking support
     };
+
+    trackAnalytics("play_item", {
+      content_type: "catchup",
+      content_id: channel.id,
+      content_title: catchupItem.name,
+      provider_type: conn?.type || "unknown",
+      category: cat || "All",
+      is_favorite: isFav(channel)
+    });
+
     track("play", { name: catchupItem.name, type: "catchup" });
     track("history");
 
@@ -3477,6 +3497,12 @@ export default function App() {
   function handleConnect(connConfig) {
     const err = saveConnection(connConfig);
     if (err) { alert(err); return; }
+    
+    trackAnalytics("portal_connect", {
+      provider_type: connConfig.type,
+      auth_type: connConfig.authType
+    });
+    
     setConn(connConfig);
   }
 

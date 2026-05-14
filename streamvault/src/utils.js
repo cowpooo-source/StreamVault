@@ -137,6 +137,20 @@ export function parseM3U(text) {
   return out;
 }
 
+// Google Analytics Tracking
+const GA_ID = import.meta.env.VITE_GA_MEASUREMENT_ID;
+
+export function trackAnalytics(eventName, payload) {
+  if (!GA_ID || typeof gtag !== 'function') return;
+
+  const eventData = {
+    event_name: eventName,
+    ...payload,
+  };
+  
+  gtag('event', eventName, eventData);
+}
+
 // Generate CSS variables from theme object
 export function genCSS(t) {
   if (!t) return "";
