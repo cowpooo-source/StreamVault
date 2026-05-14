@@ -565,12 +565,14 @@ function updateCharts(d) {
   }
 
   // Cache breakdown donut
-  const ctxCache = document.getElementById('cacheChart').getContext('2d');
-  const cacheLabels = Object.keys(d.cache.breakdown);
-  const cacheData = Object.values(d.cache.breakdown);
-  
-  if(charts.cache) charts.cache.destroy();
-  charts.cache = new Chart(ctxCache, {
+  const elCache = document.getElementById('cacheChart');
+  if (elCache && d.cache && d.cache.breakdown) {
+    const ctxCache = elCache.getContext('2d');
+    const cacheLabels = Object.keys(d.cache.breakdown);
+    const cacheData = Object.values(d.cache.breakdown);
+    
+    if(charts.cache) charts.cache.destroy();
+    charts.cache = new Chart(ctxCache, {
     type: 'doughnut',
     data: {
       labels: cacheLabels,
