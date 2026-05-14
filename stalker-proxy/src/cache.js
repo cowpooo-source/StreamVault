@@ -222,6 +222,13 @@ function trackPortalHealth(portal, latency = 0, status = 200) {
   // We use a dummy mac to update global portal stats if mac is unknown
   const key = `${portal}|global`;
   stmtTrackPortal.run(key, portal, "global", "api", now, now, latency, errors, now);
+  
+  try {
+    const ga = require("./services/ga");
+    ga.trackPortalHealth(portal, latency, status);
+  } catch (e) {
+    // ignore if ga is missing
+  }
 }
 
 function getStats() {

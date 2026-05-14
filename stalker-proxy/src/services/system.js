@@ -2,6 +2,7 @@ const fs = require("fs");
 const os = require("os");
 const { execSync } = require("child_process");
 const cache = require("../cache");
+const ga = require("./ga");
 
 let lastNetStat = { rx: 0, tx: 0, ts: Date.now() };
 
@@ -43,16 +44,41 @@ function trackDailyBandwidth() {
   const net = getNetworkStats();
   if (!net) return;
   const today = new Date().toISOString().slice(0, 10);
+  
+  // Calculate hourly diff for GA tracking (if start exists)
+  const startKey = `bw:${today}:start`;
+  const existingStart = cache.get(startKey);
+  if (existingStart && (new Date().getMinutes() === 0)) { // rough hourly trigger
+    const diffRxGb = (net.rx_bytes - existingStart.rx) / 1073741824;
+    const diffTxGb = (net.tx_bytes - existingStart.tx) / 1073741824;
+    // We send the day's total so far periodically
+    ga.trackBandwidth(diffTxGb, diffRxGb); 
+  }
+
   // Store current cumulative values — diff is calculated at read time
   cache.set(`bw:${today}:current`, { rx: net.rx_bytes, tx: net.tx_bytes }, 30 * 24 * 60 * 60 * 1000);
   // Store start-of-day snapshot if not exists
-  const startKey = `bw:${today}:start`;
-  if (!cache.get(startKey)) cache.set(startKey, { rx: net.rx_bytes, tx: net.tx_bytes }, 30 * 24 * 60 * 60 * 1000);
+  if (!existingStart) cache.set(startKey, { rx: net.rx_bytes, tx: net.tx_bytes }, 30 * 24 * 60 * 60 * 1000);
 }
 
+function trackServerHeartbeat() {
+  const metrics = getSystemMetrics();
+  const disk = getDiskUsage() || { percent: 0 };
+  ga.trackServerHeartbeat({
+    cpu_percent: Math.round(metrics.cpu.load[0] * 100 / metrics.cpu.cores),
+    ram_percent: metrics.mem.percent,
+    disk_percent: disk.percent
+  });
+}
+
+// Set up periodic tracking
 trackDailyBandwidth();
 const dailyBandwidthTimer = setInterval(trackDailyBandwidth, 60 * 1000);
 if (typeof dailyBandwidthTimer.unref === "function") dailyBandwidthTimer.unref();
+
+// Send GA server heartbeat every 15 mins
+const gaHeartbeatTimer = setInterval(trackServerHeartbeat, 15 * 60 * 1000);
+if (typeof gaHeartbeatTimer.unref === "function") gaHeartbeatTimer.unref();
 
 function getLastNetStat() {
   return lastNetStat;
