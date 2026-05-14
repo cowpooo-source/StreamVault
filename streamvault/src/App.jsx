@@ -1011,6 +1011,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
   async function diagnose(c) {
     setDiagLoading(p => ({ ...p, [c.id]: true }));
     setDiagResults(p => ({ ...p, [c.id]: null }));
+    const startTime = Date.now();
     try {
       const cfg = c.config || c;
       const body = { type: c.type };
@@ -1022,8 +1023,21 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
       });
       const data = await res.json();
       setDiagResults(p => ({ ...p, [c.id]: data }));
+      
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        status: data.reachable ? "success" : "failure",
+        latency_ms: Date.now() - startTime,
+        error: data.details?.status || data.details?.error || null
+      });
     } catch (e) {
       setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        status: "error",
+        latency_ms: Date.now() - startTime,
+        error: e.message
+      });
     }
     setDiagLoading(p => ({ ...p, [c.id]: false }));
   }
@@ -1655,6 +1669,7 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
   async function diagnose(c) {
     setDiagLoading(p => ({ ...p, [c.id]: true }));
     setDiagResults(p => ({ ...p, [c.id]: null }));
+    const startTime = Date.now();
     try {
       const cfg = c.config || c;
       const body = { type: c.type };
@@ -1666,8 +1681,21 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
       });
       const data = await res.json();
       setDiagResults(p => ({ ...p, [c.id]: data }));
+      
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        status: data.reachable ? "success" : "failure",
+        latency_ms: Date.now() - startTime,
+        error: data.details?.status || data.details?.error || null
+      });
     } catch (e) {
       setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        status: "error",
+        latency_ms: Date.now() - startTime,
+        error: e.message
+      });
     }
     setDiagLoading(p => ({ ...p, [c.id]: false }));
   }
@@ -2383,7 +2411,7 @@ export default function App() {
 
   // ── Debounced Search for Analytics
   const debouncedSearch = useCallback(debounce((term, type) => {
-    if (term.length > 2) trackAnalytics("search", { search_term: term, search_type: type });
+    if (term.length > 2) trackAnalytics("search", { search_length: term.length, search_type: type });
   }, 500), []);
 
   function handleSearch(term) {

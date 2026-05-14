@@ -320,7 +320,6 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           trackAnalytics("playback_error", {
             error_type: `hls_${data.type}`,
             error_code: code,
-            error_details: data.details,
             content_id: current.id,
             content_title: current.name
           });
@@ -861,3 +860,4 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 }
 
 export default memo(Player);
+

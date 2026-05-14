@@ -16,6 +16,53 @@ function createApiRouter(deps) {
     return crypto.timingSafeEqual(bufA, bufB);
   }
 
+  router.post("/diagnose", async (req, res) => {
+    const { type, server, portal, mac, user, pass, url: m3uUrl } = req.body;
+    const result = { latency: null, reachable: false, details: {} };
+    try {
+      if (type === "stalker" && portal) {
+        if (mac) {
+          const start = Date.now();
+          try {
+            const session = await getSession(portal, mac);
+            result.latency = Date.now() - start;
+            result.reachable = true;
+            result.details.handshake = "ok";
+            result.details.token = session.token ? "received" : "none";
+          } catch (e) {
+            result.latency = Date.now() - start;
+            result.details.handshake = e.message?.slice(0, 80);
+            result.reachable = e.message?.startsWith("Portal") || false;
+            result.details.status = result.reachable ? "portal error" : "unreachable";
+          }
+        } else { result.details.status = "MAC required"; }
+      } else if (type === "xtream" && server) {
+        const start = Date.now();
+        const apiUrl = `${server}/player_api.php?username=${encodeURIComponent(user || "")}&password=${encodeURIComponent(pass || "")}`;
+        const r = await fetch(apiUrl, { timeout: 8000, agent: agentFor(server) }).catch(() => null);
+        result.latency = Date.now() - start;
+        if (r) {
+          result.reachable = true;
+          result.details.httpStatus = r.status;
+          if (r.ok) {
+            try {
+              const data = await r.json();
+              result.details.auth = data?.user_info?.auth === 1 ? "ok" : "failed";
+              result.details.status = data?.user_info?.status || "—";
+            } catch { result.details.parse = "non-JSON"; }
+          }
+        } else { result.details.status = "unreachable"; }
+      } else if (type === "m3u" && m3uUrl) {
+        const start = Date.now();
+        const r = await fetch(m3uUrl, { timeout: 8000, redirect: "follow", agent: agentFor(m3uUrl) }).catch(() => null);
+        result.latency = Date.now() - start;
+        result.reachable = r?.ok || false;
+        result.details.status = r?.status || "unreachable";
+      }
+    } catch (e) { result.details.error = e.message?.slice(0, 100); }
+    res.json(result);
+  });
+
   router.post("/track", express.json(), (req, res) => {
     const { name, type, guestId, event } = req.body;
     if (event === "play" && name) cache.trackWatch(name, type);
