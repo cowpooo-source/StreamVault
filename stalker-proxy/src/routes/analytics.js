@@ -95,7 +95,7 @@ function createAnalyticsRouter(deps) {
       playbackBreakdown: stats.playbackBreakdown,
       portals: { connections: stats.portals, by_type: stats.portalsByType },
       engagement: stats.engagement,
-      cache: { hit_rate: stats.cacheHitRate, valid_entries: stats.cacheValid },
+      cache: { hit_rate: stats.cacheHitRate, valid_entries: stats.cacheValid, breakdown: stats.cacheBreakdown },
       requests: { today: stats.todayReqs, daily: stats.daily },
       feedback: cache.getFeedback(),
       generated_at: new Date().toISOString(),
