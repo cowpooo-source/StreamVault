@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
-import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST } from "../utils.js";
+import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalytics } from "../utils.js";
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 
@@ -317,6 +317,13 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
           }
           setStreamErr({ icon: "⚠️", title, body });
+          trackAnalytics("playback_error", {
+            error_type: `hls_${data.type}`,
+            error_code: code,
+            error_details: data.details,
+            content_id: current.id,
+            content_title: current.name
+          });
           destroyPlayers();
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {

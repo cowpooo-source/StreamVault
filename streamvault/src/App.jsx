@@ -2359,6 +2359,9 @@ export default function App() {
   const sendFeedback = useCallback(async () => {
     if (!fbMsg.trim() || fbSending) return;
     setFbSending(true);
+    
+    trackAnalytics("user_feedback", { message_length: fbMsg.trim().length });
+
     try {
       await fetch(`${API}/api/feedback`, {
         method: "POST",
@@ -2377,6 +2380,22 @@ export default function App() {
     const el = document.getElementById("sv-css") || (() => { const s = document.createElement("style"); s.id="sv-css"; document.head.appendChild(s); return s; })();
     el.textContent = genCSS(THEMES[themeName]);
   }, [themeName]);
+
+  // ── Debounced Search for Analytics
+  const debouncedSearch = useCallback(debounce((term, type) => {
+    if (term.length > 2) trackAnalytics("search", { search_term: term, search_type: type });
+  }, 500), []);
+
+  function handleSearch(term) {
+    setSearch(term);
+    setPage(1);
+    debouncedSearch(term, "category");
+  }
+
+  function handleGlobalSearch(term) {
+    setGlobalQ(term);
+    debouncedSearch(term, "global");
+  }
 
   // ── TMDB enrichment for detail modal
   function tmdbUrl(path, params = "") {
