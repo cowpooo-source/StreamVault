@@ -392,69 +392,69 @@ async function load(){
 }
 
 function updateSummary(d) {
-  document.getElementById('v-active-now').textContent = d.activeNow || 0;
-  document.getElementById('v-active-24h-ago').textContent = d.visitors?.active_24h_ago || 0;
-  document.getElementById('v-latency').textContent = d.health.avg_latency || 0;
-  document.getElementById('v-bw-today').textContent = d.bandwidth?.today?.total_gb || 0;
-  document.getElementById('v-bw-month').textContent = d.bandwidth?.monthly?.total_gb || 0;
+  const el1 = document.getElementById('v-active-now'); if(el1) el1.textContent = d.activeNow || 0;
+  const el2 = document.getElementById('v-active-24h-ago'); if(el2) el2.textContent = d.visitors?.active_24h_ago || 0;
+  const el3 = document.getElementById('v-latency'); if(el3) el3.textContent = d.health.avg_latency || 0;
+  const el4 = document.getElementById('v-bw-today'); if(el4) el4.textContent = d.bandwidth?.today?.total_gb || 0;
+  const el5 = document.getElementById('v-bw-month'); if(el5) el5.textContent = d.bandwidth?.monthly?.total_gb || 0;
   
   // Avg session
   const totalWatch = Object.values(d.playbackBreakdown || {}).reduce((a,b)=>a+b, 0);
   const avgMin = d.visitors.total > 0 ? Math.round((totalWatch / d.visitors.total) / 60) : 0;
-  document.getElementById('v-avg-session').textContent = avgMin;
+  const el6 = document.getElementById('v-avg-session'); if(el6) el6.textContent = avgMin;
 
   const errRate = d.health.error_rate || 0;
   const hStatus = document.getElementById('v-health-status');
-  hStatus.textContent = errRate > 15 ? 'Critical' : errRate > 5 ? 'Warning' : 'Optimal';
-  hStatus.className = 'card-value ' + (errRate > 15 ? 'text-red' : errRate > 5 ? 'text-orange' : 'text-green');
+  if(hStatus) hStatus.textContent = errRate > 15 ? 'Critical' : errRate > 5 ? 'Warning' : 'Optimal';
+  if(hStatus) hStatus.className = 'card-value ' + (errRate > 15 ? 'text-red' : errRate > 5 ? 'text-orange' : 'text-green');
   
   const v24h = d.visitors.active_24h || 0;
   const v24h_ago = d.visitors.active_24h_ago || 0;
   const diff = v24h - v24h_ago;
   const diffStr = diff >= 0 ? `+${diff}` : `${diff}`;
-  document.getElementById('v-error-rate').innerHTML = `${errRate}% errors | 24h: <b>${v24h}</b> (<span class="${diff >= 0 ? 'text-green' : 'text-red'}">${diffStr}</span> vs yesterday)`;
+  const el7 = document.getElementById('v-error-rate'); if(el7) el7.innerHTML = `${errRate}% errors | 24h: <b>${v24h}</b> (<span class="${diff >= 0 ? 'text-green' : 'text-red'}">${diffStr}</span> vs yesterday)`;
   
-  document.getElementById('v-cache-hit').textContent = d.cache.hit_rate + '%';
-  document.getElementById('v-cache-valid').textContent = d.cache.valid_entries;
+  const el8 = document.getElementById('v-cache-hit'); if(el8) el8.textContent = d.cache.hit_rate + '%';
+  const el9 = document.getElementById('v-cache-valid'); if(el9) el9.textContent = d.cache.valid_entries;
   
   // Breakdown text
-  document.getElementById('v-breakdown-live').textContent = fmtDuration(d.playbackBreakdown?.live);
-  document.getElementById('v-breakdown-vod').textContent = fmtDuration(d.playbackBreakdown?.vod);
-  document.getElementById('v-breakdown-series').textContent = fmtDuration(d.playbackBreakdown?.series);
-  document.getElementById('v-breakdown-catchup').textContent = fmtDuration(d.playbackBreakdown?.catchup);
+  const b1 = document.getElementById('v-breakdown-live'); if(b1) b1.textContent = fmtDuration(d.playbackBreakdown?.live);
+  const b2 = document.getElementById('v-breakdown-vod'); if(b2) b2.textContent = fmtDuration(d.playbackBreakdown?.vod);
+  const b3 = document.getElementById('v-breakdown-series'); if(b3) b3.textContent = fmtDuration(d.playbackBreakdown?.series);
+  const b4 = document.getElementById('v-breakdown-catchup'); if(b4) b4.textContent = fmtDuration(d.playbackBreakdown?.catchup);
 
   // Hardware Metrics
   const hw = d.hardware;
   if (hw) {
-    document.getElementById('v-cpu-load').textContent = hw.cpu_load[0].toFixed(2);
-    document.getElementById('v-cpu-cores').textContent = `${hw.cpu_cores} cores detected`;
+    const h1 = document.getElementById('v-cpu-load'); if(h1) h1.textContent = hw.cpu_load[0].toFixed(2);
+    const h2 = document.getElementById('v-cpu-cores'); if(h2) h2.textContent = `${hw.cpu_cores} cores detected`;
     
     if (hw.ram) {
-      document.getElementById('v-ram-percent').textContent = hw.ram.percent;
-      document.getElementById('v-ram-sub').textContent = `${hw.ram.used_gb} GB / ${hw.ram.total_gb} GB`;
-      document.getElementById('v-ram-bar').style.width = hw.ram.percent + '%';
+      const h3 = document.getElementById('v-ram-percent'); if(h3) h3.textContent = hw.ram.percent;
+      const h4 = document.getElementById('v-ram-sub'); if(h4) h4.textContent = `${hw.ram.used_gb} GB / ${hw.ram.total_gb} GB`;
+      const h5 = document.getElementById('v-ram-bar'); if(h5) h5.style.width = hw.ram.percent + '%';
     }
 
-    document.getElementById('v-net-rx').textContent = hw.network_speed.rx_mbps.toFixed(1);
-    document.getElementById('v-net-tx').textContent = hw.network_speed.tx_mbps.toFixed(1);
+    const h6 = document.getElementById('v-net-rx'); if(h6) h6.textContent = hw.network_speed.rx_mbps.toFixed(1);
+    const h7 = document.getElementById('v-net-tx'); if(h7) h7.textContent = hw.network_speed.tx_mbps.toFixed(1);
     
     if (hw.disk) {
-      document.getElementById('v-disk-percent').textContent = hw.disk.percent;
-      document.getElementById('v-disk-sub').textContent = `${hw.disk.used_gb} GB / ${hw.disk.total_gb} GB`;
-      document.getElementById('v-disk-bar').style.width = hw.disk.percent + '%';
+      const h8 = document.getElementById('v-disk-percent'); if(h8) h8.textContent = hw.disk.percent;
+      const h9 = document.getElementById('v-disk-sub'); if(h9) h9.textContent = `${hw.disk.used_gb} GB / ${hw.disk.total_gb} GB`;
+      const h10 = document.getElementById('v-disk-bar'); if(h10) h10.style.width = hw.disk.percent + '%';
     }
   }
 
   // Security Metrics
   const sec = d.security;
   if (sec) {
-    document.getElementById('v-active-sessions').textContent = sec.active_sessions || 0;
+    const s1 = document.getElementById('v-active-sessions'); if(s1) s1.textContent = sec.active_sessions || 0;
     
     const failed = sec.failed_logins_1h;
     const fStatus = document.getElementById('v-failed-total');
     fStatus.textContent = failed.total_attempts || 0;
     fStatus.className = 'card-value ' + (failed.total_attempts > 20 ? 'text-red' : failed.total_attempts > 0 ? 'text-orange' : 'text-green');
-    document.getElementById('v-failed-ips').textContent = `${failed.unique_ips || 0} unique IPs involved`;
+    const s3 = document.getElementById('v-failed-ips'); if(s3) s3.textContent = `${failed.unique_ips || 0} unique IPs involved`;
 
     const rDist = document.getElementById('v-role-dist');
     const roles = ['admin', 'pro', 'regular', 'free', 'guest', 'unactivated'];
