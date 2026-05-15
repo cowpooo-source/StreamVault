@@ -567,6 +567,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       destroyPlayers();
       clearTimeout(osdTimer.current);
       clearTimeout(qchTimer.current);
+      
+      // Cleanup heartbeat timers and listeners
+      clearTimeout(debounceTimer);
+      clearInterval(heartbeatTimer);
+      if (video) {
+        video.removeEventListener("playing", handlePlay);
+        video.removeEventListener("pause", handlePauseOrWait);
+        video.removeEventListener("ended", handleEnd);
+      }
+      window.removeEventListener("beforeunload", handleUnload);
     };
   }, [current.url]);
 

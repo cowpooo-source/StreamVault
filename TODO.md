@@ -1,3 +1,6 @@
+- [x] **BUG: Playback heartbeat continues after media stops**
+  The heartbeat ping initiated in `Player.jsx` is not stopping even after the media has stopped playing or the player is closed. Investigate the cleanup logic and ensure all timers/intervals are cleared.
+
 - [x] **Bug: Ad banner issue when navigating between categories.**
   When navigating from "Live TV" to "Movies" or "Series", the native banner is not displayed. It appears only after a page refresh, but disappears again upon navigating back from another category. Ad ID: 5731560.
 - [x] **Bug: Settings navigation layout broken on desktop.**
