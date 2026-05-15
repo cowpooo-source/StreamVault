@@ -565,19 +565,30 @@ function updateCharts(d) {
   }
 
   // Cache breakdown donut
-  const ctxCache = document.getElementById('cacheChart').getContext('2d');
-  const cacheLabels = Object.keys(d.cache.breakdown);
-  const cacheData = Object.values(d.cache.breakdown);
-  
-  if(charts.cache) charts.cache.destroy();
-  charts.cache = new Chart(ctxCache, {
-    type: 'doughnut',
-    data: {
-      labels: cacheLabels,
-      datasets: [{
-        data: cacheData,
-        backgroundColor: ['#00d4ff', '#a78bfa', '#fbbf24', '#ff2d55', '#00e896', '#8080aa'],
-        borderWidth: 0
+  const elCache = document.getElementById('cacheChart');
+  if (elCache && d.cache && d.cache.breakdown) {
+    const ctxCache = elCache.getContext('2d');
+    const cacheLabels = Object.keys(d.cache.breakdown);
+    const cacheData = Object.values(d.cache.breakdown);
+    
+    if(charts.cache) charts.cache.destroy();
+    charts.cache = new Chart(ctxCache, {
+      type: 'doughnut',
+      data: {
+        labels: cacheLabels,
+        datasets: [{
+          data: cacheData,
+          backgroundColor: ['#00d4ff', '#a78bfa', '#fbbf24', '#ff2d55', '#00e896', '#8080aa'],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '75%'
+      }
+    });
+  }
       }]
     },
     options: {

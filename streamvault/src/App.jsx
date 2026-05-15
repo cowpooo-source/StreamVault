@@ -2388,7 +2388,7 @@ export default function App() {
     if (!fbMsg.trim() || fbSending) return;
     setFbSending(true);
     
-    trackAnalytics("user_feedback", { message_length: fbMsg.trim().length });
+    trackAnalytics("user_feedback", { has_text: true });
 
     try {
       await fetch(`${API}/api/feedback`, {
@@ -3038,8 +3038,8 @@ export default function App() {
 
     trackAnalytics("play_item", {
       content_type: item.type || "live",
-      content_id: item.id,
-      content_title: item.name,
+      content_id: String(item.id || ""),
+      content_title: (item.name || "Unknown").trim().slice(0, 100),
       provider_type: conn?.type || "unknown",
       category: cat || "All",
       is_favorite: isFav(item)
@@ -3074,8 +3074,8 @@ export default function App() {
 
     trackAnalytics("play_item", {
       content_type: "catchup",
-      content_id: channel.id,
-      content_title: catchupItem.name,
+      content_id: String(channel.id || ""),
+      content_title: (catchupItem.name || "Unknown").trim().slice(0, 100),
       provider_type: conn?.type || "unknown",
       category: cat || "All",
       is_favorite: isFav(channel)
@@ -3542,14 +3542,18 @@ export default function App() {
   }, [page, autoLoadMore, hasMore, section]);
 
   function handleConnect(connConfig) {
+    const startTime = Date.now();
     const err = saveConnection(connConfig);
-    if (err) { alert(err); return; }
     
     trackAnalytics("portal_connect", {
       provider_type: connConfig.type,
-      auth_type: connConfig.authType
+      auth_type: connConfig.authType || "direct",
+      status: err ? "failure" : "success",
+      latency_ms: Date.now() - startTime,
+      error: err || null
     });
-    
+
+    if (err) { alert(err); return; }
     setConn(connConfig);
   }
 

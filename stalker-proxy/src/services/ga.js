@@ -1,9 +1,17 @@
 // GA4 Measurement Protocol Service
 const fetch = require('node-fetch');
+const https = require('https');
 
 const MEASUREMENT_ID = process.env.GA_MEASUREMENT_ID;
 const API_SECRET = process.env.GA_API_SECRET;
 const GA_ENDPOINT = `https://www.google-analytics.com/mp/collect?measurement_id=${MEASUREMENT_ID}&api_secret=${API_SECRET}`;
+
+// Connection pooling for high-frequency events
+const agent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+  timeout: 60000
+});
 
 // Ensure we don't send events if disabled or missing config
 const isEnabled = () => MEASUREMENT_ID && API_SECRET && process.env.NODE_ENV !== 'test';
@@ -27,7 +35,8 @@ async function sendGAEvent(eventName, params = {}) {
     const response = await fetch(GA_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      agent: agent
     });
     
     if (!response.ok) {
