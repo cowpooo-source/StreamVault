@@ -1026,17 +1026,17 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
       
       trackAnalytics("portal_connect", {
         provider_type: c.type,
-        status: data.reachable ? "success" : "failure",
+        success: data.reachable ? "true" : "false",
         latency_ms: Date.now() - startTime,
-        error: data.details?.status || data.details?.error || null
+        error_code: String(data.details?.status || data.details?.error || "unknown").slice(0, 50)
       });
     } catch (e) {
       setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
       trackAnalytics("portal_connect", {
         provider_type: c.type,
-        status: "error",
+        success: "false",
         latency_ms: Date.now() - startTime,
-        error: e.message
+        error_code: String(e.message || "unknown").slice(0, 50)
       });
     }
     setDiagLoading(p => ({ ...p, [c.id]: false }));
@@ -1046,6 +1046,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
   async function validateAndReconnect(conn) {
     if (conn.type !== "stalker") { onReconnect(conn.id); return; }
     setLoading(true); setErr("");
+    const startTime = Date.now();
     try {
       const cfg = conn.config || {};
       const vRes = await fetch(`${API}/stalker/validate`, {
@@ -1056,18 +1057,22 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
       const v = await vRes.json();
       if (!v.portalReachable) {
         setErr("Portal unreachable. Connecting anyway...");
+        trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.error || "unreachable").slice(0,50) });
         onReconnect(conn.id);
         return;
       }
       if (v.status === "expired" || v.status === "blocked" || v.status === "suspended" || v.status === "unregistered") {
         setExpiredPrompt({ conn, validation: v });
+        trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.status).slice(0,50) });
         // Still allow reconnection despite status issues
         onReconnect(conn.id);
         return;
       }
+      trackAnalytics("portal_connect", { provider_type: "stalker", success: "true", latency_ms: Date.now() - startTime, error_code: null });
       onReconnect(conn.id);
     } catch (e) {
       console.warn("Validation failed, reconnecting anyway:", e.message);
+      trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(e.message || "unknown").slice(0,50) });
       onReconnect(conn.id); // Proceed with reconnection even if validation fails
     }
     finally { setLoading(false); }
@@ -1113,6 +1118,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 
   async function connect() {
     setErr(""); setLoading(true);
+    const startTime = Date.now();
     try {
       if (type === "xtream") {
         if (!f.server||!f.user||!f.pass) throw new Error("All fields required");
@@ -1120,7 +1126,8 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         const api = makeXtreamAPI(server, f.user, f.pass);
         const data = await api.auth();
         if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
-        // Connection saved by handleConnect in App
+        
+        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type, server, user:f.user, pass:f.pass, info:data?.user_info });
       } else if (type === "m3u") {
         if (!f.url) throw new Error("Playlist URL required");
@@ -1130,7 +1137,8 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
         const channels = parseM3U(text);
         if (!channels.length) throw new Error("No channels found");
-        // Connection saved by handleConnect in App
+        
+        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl, epgUrls: channels.epgUrls });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
@@ -1142,6 +1150,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 
         if (skipValidation) {
           track("connect");
+          trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
           onConnect({
             type, server, mac: macTrimmed,
             serial: serialTrimmed, deviceId: deviceIdTrimmed, deviceId2: deviceId2Trimmed,
@@ -1170,6 +1179,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
           }
 
           track("connect");
+          trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
           onConnect({
             type, server, mac: macTrimmed,
             serial: v.serial || serialTrimmed, deviceId: v.deviceId || deviceIdTrimmed,
@@ -1178,10 +1188,13 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
           });
         }
       } else {
-        // Connection saved by handleConnect in App
+        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type:"hls" });
       }
-    } catch(e) { setErr(e.message||"Connection failed"); }
+    } catch(e) {
+      setErr(e.message||"Connection failed");
+      trackAnalytics("portal_connect", { provider_type: type, success: "false", latency_ms: Date.now() - startTime, error_code: e.message || "failed" });
+    }
     finally { setLoading(false); }
   }
 
@@ -1684,17 +1697,17 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
       
       trackAnalytics("portal_connect", {
         provider_type: c.type,
-        status: data.reachable ? "success" : "failure",
+        success: data.reachable ? "true" : "false",
         latency_ms: Date.now() - startTime,
-        error: data.details?.status || data.details?.error || null
+        error_code: String(data.details?.status || data.details?.error || "unknown").slice(0, 50)
       });
     } catch (e) {
       setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
       trackAnalytics("portal_connect", {
         provider_type: c.type,
-        status: "error",
+        success: "false",
         latency_ms: Date.now() - startTime,
-        error: e.message
+        error_code: String(e.message || "unknown").slice(0, 50)
       });
     }
     setDiagLoading(p => ({ ...p, [c.id]: false }));
@@ -2411,7 +2424,7 @@ export default function App() {
 
   // ── Debounced Search for Analytics
   const debouncedSearch = useCallback(debounce((term, type) => {
-    if (term.length > 2) trackAnalytics("search", { search_length: term.length, search_type: type });
+    if (term.length > 2) trackAnalytics("search", { query_length: term.length, search_type: type });
   }, 500), []);
 
   function handleSearch(term) {
@@ -3548,9 +3561,9 @@ export default function App() {
     trackAnalytics("portal_connect", {
       provider_type: connConfig.type,
       auth_type: connConfig.authType || "direct",
-      status: err ? "failure" : "success",
+      success: err ? "false" : "true",
       latency_ms: Date.now() - startTime,
-      error: err || null
+      error_code: err ? String(err).slice(0, 50) : null
     });
 
     if (err) { alert(err); return; }
