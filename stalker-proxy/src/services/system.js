@@ -72,13 +72,15 @@ function trackServerHeartbeat() {
 }
 
 // Set up periodic tracking
-trackDailyBandwidth();
-const dailyBandwidthTimer = setInterval(trackDailyBandwidth, 60 * 1000);
-if (typeof dailyBandwidthTimer.unref === "function") dailyBandwidthTimer.unref();
+if (process.env.NODE_ENV !== "test") {
+  trackDailyBandwidth();
+  const dailyBandwidthTimer = setInterval(trackDailyBandwidth, 60 * 1000);
+  if (typeof dailyBandwidthTimer.unref === "function") dailyBandwidthTimer.unref();
 
-// Send GA server heartbeat every 15 mins
-const gaHeartbeatTimer = setInterval(trackServerHeartbeat, 15 * 60 * 1000);
-if (typeof gaHeartbeatTimer.unref === "function") gaHeartbeatTimer.unref();
+  // Send GA server heartbeat every 15 mins
+  const gaHeartbeatTimer = setInterval(trackServerHeartbeat, 15 * 60 * 1000);
+  if (typeof gaHeartbeatTimer.unref === "function") gaHeartbeatTimer.unref();
+}
 
 function getLastNetStat() {
   return lastNetStat;

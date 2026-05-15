@@ -115,7 +115,7 @@ function createApp(deps) {
   const { createApiRouter } = require("./routes/api");
   const { createStalkerRouter } = require("./routes/stalker");
 
-  const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry };
+  const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
 
   app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));

@@ -12,7 +12,22 @@ import cache from '../src/cache';
 import auth from '../src/auth';
 import fetch from 'node-fetch';
 
-const app = createApp({ cache, auth, fetch });
+const mockSystem = {
+  getNetworkStats: vi.fn().mockReturnValue({ rx_bytes: 0, tx_bytes: 0, rx_gb: 0, tx_gb: 0 }),
+  getDiskUsage: vi.fn().mockReturnValue({ total_gb: 100, used_gb: 50, percent: 50 }),
+  trackDailyBandwidth: vi.fn(),
+  getLastNetStat: vi.fn().mockReturnValue({ rx: 0, tx: 0, ts: Date.now() }),
+  setLastNetStat: vi.fn(),
+  getSystemMetrics: vi.fn().mockReturnValue({ cpu: { load: [0, 0, 0], cores: 1 }, mem: { percent: 0 } })
+};
+
+const mockEmail = {
+  sendEmail: vi.fn(),
+  sendVerificationEmail: vi.fn(),
+  sendPasswordResetEmail: vi.fn()
+};
+
+const app = createApp({ cache, auth, fetch, system: mockSystem, email: mockEmail });
 
 describe('Backend Integration Tests (index.js)', () => {
   const adminToken = 'secret'; // From tests/setup.js
