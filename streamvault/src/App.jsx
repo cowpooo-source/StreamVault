@@ -3093,14 +3093,14 @@ export default function App() {
       return;
     }
 
-    trackAnalytics("play_item", {
-      content_type: item.type || "live",
-      content_id: String(item.id || ""),
-      content_title: (item.name || "Unknown").trim().slice(0, 100),
-      provider_type: conn?.type || "unknown",
-      category: cat || "All",
-      is_favorite: isFav(item)
-    });
+  trackAnalytics("play_item", {
+    content_type: item.type || "live",
+    content_id: String(item.id || ""),
+    // Remove: content_title
+    provider_type: conn?.type || "unknown",
+    category: cat || "All",
+    is_favorite: isFav(item)
+  });
     
     track("play", { name: item.name, type: item.type || "live" });
     track("history");
@@ -3132,7 +3132,7 @@ export default function App() {
     trackAnalytics("play_item", {
       content_type: "catchup",
       content_id: String(channel.id || ""),
-      content_title: (catchupItem.name || "Unknown").trim().slice(0, 100),
+      // Remove: content_title
       provider_type: conn?.type || "unknown",
       category: cat || "All",
       is_favorite: isFav(channel)
