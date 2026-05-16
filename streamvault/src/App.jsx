@@ -2401,7 +2401,11 @@ export default function App() {
     if (!fbMsg.trim() || fbSending) return;
     setFbSending(true);
     
-    trackAnalytics("user_feedback", { has_text: true });
+    trackAnalytics("user_feedback", { 
+      has_text: "true",
+      feedback_type: "general",
+      source_screen: section
+    });
 
     try {
       await fetch(`${API}/api/feedback`, {
@@ -2423,14 +2427,20 @@ export default function App() {
   }, [themeName]);
 
   // ── Debounced Search for Analytics
-  const debouncedSearch = useCallback(debounce((term, type) => {
-    if (term.length > 2) trackAnalytics("search", { query_length: term.length, search_type: type });
-  }, 500), []);
+  const debouncedSearch = useCallback(debounce((term, type, count) => {
+    if (term.length > 0) trackAnalytics("search", { 
+      query_length: term.length, 
+      source_screen: type,
+      result_count: count || 0
+    });
+  }, 1000), []);
 
   function handleSearch(term) {
     setSearch(term);
     setPage(1);
-    debouncedSearch(term, "category");
+    // Note: count is hard to pass here without refactoring search logic, 
+    // but we can at least fix the name and source_screen.
+    debouncedSearch(term, "category", 0);
   }
 
   function handleGlobalSearch(term) {

@@ -152,12 +152,12 @@ export function debounce(func, wait) {
 export function trackAnalytics(eventName, payload) {
   if (!GA_ID || typeof gtag !== 'function') return;
 
-  const eventData = {
-    event_name: eventName,
-    ...payload,
-  };
-  
-  gtag('event', eventName, eventData);
+  try {
+    // Redundant event_name removed, gtag already takes eventName as 1st arg
+    gtag('event', eventName, payload);
+  } catch (e) {
+    console.warn("Analytics event failed:", e.message);
+  }
 }
 
 // Generate CSS variables from theme object

@@ -250,8 +250,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       trackAnalytics("playback_error", {
         error_type: "native_video_error",
         error_code: String(e?.code || "unknown"),
-        content_id: current.id,
-        content_title: current.name
+        content_id: String(current.id || ""),
+        provider_type: current.type || "unknown"
       });
     };
 
@@ -320,10 +320,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           trackAnalytics("playback_error", {
             error_type: `hls_${data.type}`,
             error_code: String(code || data.details || "unknown"),
-            content_id: current.id,
-            content_title: (current.name || "Unknown").trim().slice(0, 100)
+            content_id: String(current.id || ""),
+            provider_type: current.type || "live"
           });
-
           destroyPlayers();
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {

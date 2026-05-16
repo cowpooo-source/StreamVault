@@ -14,19 +14,24 @@ const agent = new https.Agent({
 });
 
 // Ensure we don't send events if disabled or missing config
-const isEnabled = () => MEASUREMENT_ID && API_SECRET && process.env.NODE_ENV !== 'test';
+const isEnabled = () => {
+  const active = !!(MEASUREMENT_ID && API_SECRET);
+  const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
+  return active && !isTest;
+};
 
 async function sendGAEvent(eventName, params = {}) {
   if (!isEnabled()) return;
 
   const payload = {
     // client_id is required. We use a static backend ID to group server events
+    // In the future, this could be the VPS hostname to distinguish multi-server setups
     client_id: 'streamvault_backend_service', 
     events: [{
       name: eventName,
       params: {
         ...params,
-        server_env: process.env.NODE_ENV || 'production'
+        server_env: process.env.NODE_ENV || 'development'
       }
     }]
   };
