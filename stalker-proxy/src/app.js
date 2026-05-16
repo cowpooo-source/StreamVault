@@ -39,7 +39,7 @@ function createApp(deps) {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://challenges.cloudflare.com", "https://cdn.jsdelivr.net", "https://www.googletagmanager.com"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "https:", "https://www.google-analytics.com"],
+        imgSrc: ["'self'", "data:", "https:"],
         connectSrc: ["'self'", "https://cdn.jsdelivr.net", "https://www.google-analytics.com"],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
