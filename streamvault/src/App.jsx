@@ -990,7 +990,7 @@ function transformStalkerItem(item) {
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, t: st }) {
+function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -1007,6 +1007,24 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
   const set = (k,v) => setF(p => ({...p,[k]:v}));
+
+  const handleFileImport = (e) => {
+    setErr("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        const resultMsg = await onImportFull(data);
+        alert(`Imported: ${resultMsg}. Refresh to see all changes.`);
+      } catch (err) {
+        setErr(err.message || "Import failed");
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  };
 
   async function diagnose(c) {
     setDiagLoading(p => ({ ...p, [c.id]: true }));
@@ -1530,6 +1548,22 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
                 onChange={e => { setRawText(e.target.value); const d = detectFromText(e.target.value); setDetected(d); setSelected(new Set()); }}
               />
             </div>
+
+            <div style={{margin:"1rem 0", display:"flex", alignItems:"center", gap:".8rem"}}>
+              <div style={{height:"1px", flex:1, background:"var(--b2)"}}></div>
+              <div style={{fontSize:".65rem", color:"var(--t3)", textTransform:"uppercase", fontWeight:600}}>OR</div>
+              <div style={{height:"1px", flex:1, background:"var(--b2)"}}></div>
+            </div>
+
+            <div className="fg">
+              <label className="fl">Import from Backup File</label>
+              <div style={{display:"flex", gap:".5rem", marginTop:".4rem"}}>
+                <input type="file" accept=".json" onChange={handleFileImport}
+                  style={{fontSize:".8rem", color:"var(--t2)", flex:1}} />
+              </div>
+              <div className="fhint">Select a .json file exported from Portal Heaven Settings.</div>
+            </div>
+
             {detected.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -3580,6 +3614,74 @@ export default function App() {
     setConn(connConfig);
   }
 
+  async function processFullImport(data) {
+    if (!data._portal_heaven_export) throw new Error("Not a valid Portal Heaven export file");
+
+    let favCount = 0, histCount = 0;
+    const parts = [];
+
+    // 1. Import connections
+    if (data.connections?.length) {
+      const existing = await db.get("sv-connections", []);
+      const existingIds = new Set(existing.map(c => c.id));
+      const newConns = data.connections.filter(c => !existingIds.has(c.id));
+      if (newConns.length) {
+        const merged = [...existing, ...newConns];
+        setConnections(merged);
+        db.set("sv-connections", merged);
+        if (authUser || isGuest) syncConnectionsToServer(merged);
+        parts.push(`${data.connections.length} connections`);
+      }
+    }
+
+    // 2. Import preferences
+    if (data.theme) { 
+      db.set("sv-theme", data.theme); 
+      setThemeName(data.theme); 
+      parts.push("theme"); 
+    }
+    if (data.language) { 
+      localStorage.setItem("sv-lang", data.language); 
+      setLang(data.language); 
+      parts.push("language"); 
+    }
+    if (data.hiddenCats) { 
+      db.set("sv-hiddenCats", data.hiddenCats); 
+      setHiddenCats(data.hiddenCats); 
+    }
+    if (data.epgURL) { 
+      db.set("sv-epgURL", data.epgURL); 
+      setEpgURL(data.epgURL); 
+    }
+
+    // 3. Import per-connection favorites and history
+    if (data.favorites) {
+      for (const [connId, fv] of Object.entries(data.favorites)) {
+        const existing = await db.get(`sv-favs-${connId}`, null);
+        if (!existing || (Object.keys(existing.live||{}).length === 0 && Object.keys(existing.vod||{}).length === 0)) {
+          db.set(`sv-favs-${connId}`, fv);
+          if (authUser) syncToServer("favorites", connId, fv);
+          favCount++;
+        }
+      }
+    }
+    if (data.history) {
+      for (const [connId, hi] of Object.entries(data.history)) {
+        const existing = await db.get(`sv-history-${connId}`, null);
+        if (!existing || existing.length === 0) {
+          db.set(`sv-history-${connId}`, hi);
+          if (authUser) syncToServer("history", connId, hi);
+          histCount++;
+        }
+      }
+    }
+
+    if (favCount) parts.push(`${favCount} favorite sets`);
+    if (histCount) parts.push(`${histCount} history sets`);
+    
+    return parts.join(", ") || "preferences";
+  }
+
   function handleImportMultiple(items) {
     if (!items.length) return;
     // Build configs for all items
@@ -3629,7 +3731,19 @@ export default function App() {
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} onImportMultiple={handleImportMultiple} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} onEdit={setEditingConn} authUser={authUser} isGuest={isGuest} onLogout={handleLogout} t={t} />
+      <Setup 
+        onConnect={handleConnect} 
+        onImportMultiple={handleImportMultiple} 
+        onImportFull={processFullImport}
+        connections={connections} 
+        onReconnect={switchConnection} 
+        onRemoveConn={removeConnection} 
+        onEdit={setEditingConn} 
+        authUser={authUser} 
+        isGuest={isGuest} 
+        onLogout={handleLogout} 
+        t={t} 
+      />
       {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
@@ -3936,8 +4050,9 @@ export default function App() {
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="settings" ? (
           <SettingsView connections={connections} favs={favs} history={history}
-            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId} 
-            onAuth={handleAuth} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} t={t} />
+            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId}
+            onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} t={t} />
+
         ) : section==="hls" ? (
           <DirectHLSView />
         ) : section==="epg" ? (
@@ -4635,8 +4750,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 });
 
 // ── Settings View ──
-function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, autoLoadMore, setAutoLoadMore }) {
-  // st or t are unused here in SettingsView
+function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, t }) {
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
   const [importOk, setImportOk] = useState("");
@@ -4686,6 +4800,7 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, au
       if (fv) data.favorites[conn.id] = fv;
       if (hi) data.history[conn.id] = hi;
     }
+
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -4703,55 +4818,8 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, au
     reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        if (!data._portal_heaven_export) throw new Error("Not a valid Portal Heaven export file");
-
-        // Import connections
-        if (data.connections?.length) {
-          const existing = await db.get("sv-connections", []);
-          const existingIds = new Set(existing.map(c => c.id));
-          const newConns = data.connections.filter(c => !existingIds.has(c.id));
-          if (newConns.length) {
-            const merged = [...existing, ...newConns];
-            db.set("sv-connections", merged);
-            if (authUser || isGuest) syncConnectionsToServer(merged);
-          }
-        }
-
-        // Import preferences
-        if (data.theme) db.set("sv-theme", data.theme);
-        if (data.language) localStorage.setItem("sv-lang", data.language);
-        if (data.hiddenCats) db.set("sv-hiddenCats", data.hiddenCats);
-        if (data.epgURL) db.set("sv-epgURL", data.epgURL);
-
-        // Import per-connection favorites and history
-        let favCount = 0, histCount = 0;
-        if (data.favorites) {
-          for (const [connId, fv] of Object.entries(data.favorites)) {
-            const existing = await db.get(`sv-favs-${connId}`, null);
-            if (!existing || (Object.keys(existing.live||{}).length === 0 && Object.keys(existing.vod||{}).length === 0)) {
-              db.set(`sv-favs-${connId}`, fv);
-              if (authUser) syncToServer("favorites", connId, fv);
-              favCount++;
-            }
-          }
-        }
-        if (data.history) {
-          for (const [connId, hi] of Object.entries(data.history)) {
-            const existing = await db.get(`sv-history-${connId}`, null);
-            if (!existing || existing.length === 0) {
-              db.set(`sv-history-${connId}`, hi);
-              if (authUser) syncToServer("history", connId, hi);
-              histCount++;
-            }
-          }
-        }
-
-        const parts = [];
-        if (data.connections?.length) parts.push(`${data.connections.length} connections`);
-        if (favCount) parts.push(`${favCount} favorite sets`);
-        if (histCount) parts.push(`${histCount} history sets`);
-        if (data.theme) parts.push("theme");
-        setImportOk(`Imported: ${parts.join(", ") || "preferences"}. Refresh to apply.`);
+        const resultMsg = await onImportFull(data);
+        setImportOk(`Imported: ${resultMsg}. Refresh to apply.`);
       } catch (err) {
         setImportErr(err.message || "Import failed");
       }
@@ -4759,6 +4827,7 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, au
     };
     reader.readAsText(file);
   }
+
 
   return (
     <div className="c-body" style={{padding:"1.5rem",maxWidth:640}}>
