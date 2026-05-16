@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
-import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST } from "../utils.js";
+import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalytics } from "../utils.js";
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 
@@ -245,7 +245,14 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (hlsRef.current || mpegtsRef.current) return;
       const e = video.error;
       const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
-      setStreamErr({ icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" });
+      const errorPayload = { icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
+      setStreamErr(errorPayload);
+      trackAnalytics("playback_error", {
+        error_type: "native_video_error",
+        error_code: String(e?.code || "unknown"),
+        content_id: String(current.id || ""),
+        provider_type: current.type || "unknown"
+      });
     };
 
     function startHls(u) {
@@ -310,6 +317,12 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
           }
           setStreamErr({ icon: "⚠️", title, body });
+          trackAnalytics("playback_error", {
+            error_type: `hls_${data.type}`,
+            error_code: String(code || data.details || "unknown"),
+            content_id: String(current.id || ""),
+            provider_type: current.type || "live"
+          });
           destroyPlayers();
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -553,6 +566,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       destroyPlayers();
       clearTimeout(osdTimer.current);
       clearTimeout(qchTimer.current);
+      
+      // Cleanup heartbeat timers and listeners
+      clearTimeout(debounceTimer);
+      clearInterval(heartbeatTimer);
+      if (video) {
+        video.removeEventListener("playing", handlePlay);
+        video.removeEventListener("pause", handlePauseOrWait);
+        video.removeEventListener("ended", handleEnd);
+      }
+      window.removeEventListener("beforeunload", handleUnload);
     };
   }, [current.url]);
 
@@ -847,3 +870,4 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 }
 
 export default memo(Player);
+

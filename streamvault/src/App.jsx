@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
-import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL } from "./utils.js";
+import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics } from "./utils.js";
 import Player from "./components/Player.jsx";
 import TimelineGrid from "./components/TimelineGrid.jsx";
 import AuthScreen from './components/AuthScreen.jsx';
@@ -990,7 +990,7 @@ function transformStalkerItem(item) {
 // ══════════════════════════════════════════════════════════════════
 // SETUP
 // ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, t: st }) {
+function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -1008,9 +1008,28 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
   const [diagLoading, setDiagLoading] = useState({});
   const set = (k,v) => setF(p => ({...p,[k]:v}));
 
+  const handleFileImport = (e) => {
+    setErr("");
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        const resultMsg = await onImportFull(data);
+        alert(`Imported: ${resultMsg}. Refresh to see all changes.`);
+      } catch (err) {
+        setErr(err.message || "Import failed");
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  };
+
   async function diagnose(c) {
     setDiagLoading(p => ({ ...p, [c.id]: true }));
     setDiagResults(p => ({ ...p, [c.id]: null }));
+    const startTime = Date.now();
     try {
       const cfg = c.config || c;
       const body = { type: c.type };
@@ -1022,8 +1041,21 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
       });
       const data = await res.json();
       setDiagResults(p => ({ ...p, [c.id]: data }));
+      
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        success: data.reachable ? "true" : "false",
+        latency_ms: Date.now() - startTime,
+        error_code: String(data.details?.status || data.details?.error || "unknown").slice(0, 50)
+      });
     } catch (e) {
       setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        success: "false",
+        latency_ms: Date.now() - startTime,
+        error_code: String(e.message || "unknown").slice(0, 50)
+      });
     }
     setDiagLoading(p => ({ ...p, [c.id]: false }));
   }
@@ -1032,6 +1064,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
   async function validateAndReconnect(conn) {
     if (conn.type !== "stalker") { onReconnect(conn.id); return; }
     setLoading(true); setErr("");
+    const startTime = Date.now();
     try {
       const cfg = conn.config || {};
       const vRes = await fetch(`${API}/stalker/validate`, {
@@ -1042,18 +1075,22 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
       const v = await vRes.json();
       if (!v.portalReachable) {
         setErr("Portal unreachable. Connecting anyway...");
+        trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.error || "unreachable").slice(0,50) });
         onReconnect(conn.id);
         return;
       }
       if (v.status === "expired" || v.status === "blocked" || v.status === "suspended" || v.status === "unregistered") {
         setExpiredPrompt({ conn, validation: v });
+        trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.status).slice(0,50) });
         // Still allow reconnection despite status issues
         onReconnect(conn.id);
         return;
       }
+      trackAnalytics("portal_connect", { provider_type: "stalker", success: "true", latency_ms: Date.now() - startTime, error_code: null });
       onReconnect(conn.id);
     } catch (e) {
       console.warn("Validation failed, reconnecting anyway:", e.message);
+      trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(e.message || "unknown").slice(0,50) });
       onReconnect(conn.id); // Proceed with reconnection even if validation fails
     }
     finally { setLoading(false); }
@@ -1099,6 +1136,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 
   async function connect() {
     setErr(""); setLoading(true);
+    const startTime = Date.now();
     try {
       if (type === "xtream") {
         if (!f.server||!f.user||!f.pass) throw new Error("All fields required");
@@ -1106,7 +1144,8 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         const api = makeXtreamAPI(server, f.user, f.pass);
         const data = await api.auth();
         if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
-        // Connection saved by handleConnect in App
+        
+        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type, server, user:f.user, pass:f.pass, info:data?.user_info });
       } else if (type === "m3u") {
         if (!f.url) throw new Error("Playlist URL required");
@@ -1116,7 +1155,8 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
         if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
         const channels = parseM3U(text);
         if (!channels.length) throw new Error("No channels found");
-        // Connection saved by handleConnect in App
+        
+        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl, epgUrls: channels.epgUrls });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
@@ -1128,6 +1168,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
 
         if (skipValidation) {
           track("connect");
+          trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
           onConnect({
             type, server, mac: macTrimmed,
             serial: serialTrimmed, deviceId: deviceIdTrimmed, deviceId2: deviceId2Trimmed,
@@ -1156,6 +1197,7 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
           }
 
           track("connect");
+          trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
           onConnect({
             type, server, mac: macTrimmed,
             serial: v.serial || serialTrimmed, deviceId: v.deviceId || deviceIdTrimmed,
@@ -1164,10 +1206,13 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
           });
         }
       } else {
-        // Connection saved by handleConnect in App
+        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type:"hls" });
       }
-    } catch(e) { setErr(e.message||"Connection failed"); }
+    } catch(e) {
+      setErr(e.message||"Connection failed");
+      trackAnalytics("portal_connect", { provider_type: type, success: "false", latency_ms: Date.now() - startTime, error_code: e.message || "failed" });
+    }
     finally { setLoading(false); }
   }
 
@@ -1503,6 +1548,22 @@ function Setup({ onConnect, onImportMultiple, connections = [], onReconnect, onR
                 onChange={e => { setRawText(e.target.value); const d = detectFromText(e.target.value); setDetected(d); setSelected(new Set()); }}
               />
             </div>
+
+            <div style={{margin:"1rem 0", display:"flex", alignItems:"center", gap:".8rem"}}>
+              <div style={{height:"1px", flex:1, background:"var(--b2)"}}></div>
+              <div style={{fontSize:".65rem", color:"var(--t3)", textTransform:"uppercase", fontWeight:600}}>OR</div>
+              <div style={{height:"1px", flex:1, background:"var(--b2)"}}></div>
+            </div>
+
+            <div className="fg">
+              <label className="fl">Import from Backup File</label>
+              <div style={{display:"flex", gap:".5rem", marginTop:".4rem"}}>
+                <input type="file" accept=".json" onChange={handleFileImport}
+                  style={{fontSize:".8rem", color:"var(--t2)", flex:1}} />
+              </div>
+              <div className="fhint">Select a .json file exported from Portal Heaven Settings.</div>
+            </div>
+
             {detected.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1655,6 +1716,7 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
   async function diagnose(c) {
     setDiagLoading(p => ({ ...p, [c.id]: true }));
     setDiagResults(p => ({ ...p, [c.id]: null }));
+    const startTime = Date.now();
     try {
       const cfg = c.config || c;
       const body = { type: c.type };
@@ -1666,8 +1728,21 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
       });
       const data = await res.json();
       setDiagResults(p => ({ ...p, [c.id]: data }));
+      
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        success: data.reachable ? "true" : "false",
+        latency_ms: Date.now() - startTime,
+        error_code: String(data.details?.status || data.details?.error || "unknown").slice(0, 50)
+      });
     } catch (e) {
       setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
+      trackAnalytics("portal_connect", {
+        provider_type: c.type,
+        success: "false",
+        latency_ms: Date.now() - startTime,
+        error_code: String(e.message || "unknown").slice(0, 50)
+      });
     }
     setDiagLoading(p => ({ ...p, [c.id]: false }));
   }
@@ -2359,6 +2434,13 @@ export default function App() {
   const sendFeedback = useCallback(async () => {
     if (!fbMsg.trim() || fbSending) return;
     setFbSending(true);
+    
+    trackAnalytics("user_feedback", { 
+      has_text: "true",
+      feedback_type: "general",
+      source_screen: section
+    });
+
     try {
       await fetch(`${API}/api/feedback`, {
         method: "POST",
@@ -2377,6 +2459,28 @@ export default function App() {
     const el = document.getElementById("sv-css") || (() => { const s = document.createElement("style"); s.id="sv-css"; document.head.appendChild(s); return s; })();
     el.textContent = genCSS(THEMES[themeName]);
   }, [themeName]);
+
+  // ── Debounced Search for Analytics
+  const debouncedSearch = useCallback(debounce((term, type, count) => {
+    if (term.length > 0) trackAnalytics("search", { 
+      query_length: term.length, 
+      source_screen: type,
+      result_count: count || 0
+    });
+  }, 1000), []);
+
+  function handleSearch(term) {
+    setSearch(term);
+    setPage(1);
+    // Note: count is hard to pass here without refactoring search logic, 
+    // but we can at least fix the name and source_screen.
+    debouncedSearch(term, "category", 0);
+  }
+
+  function handleGlobalSearch(term) {
+    setGlobalQ(term);
+    debouncedSearch(term, "global");
+  }
 
   // ── TMDB enrichment for detail modal
   function tmdbUrl(path, params = "") {
@@ -2988,6 +3092,16 @@ export default function App() {
       openSeriesDetail(item);
       return;
     }
+
+  trackAnalytics("play_item", {
+    content_type: item.type || "live",
+    content_id: String(item.id || ""),
+    // Remove: content_title
+    provider_type: conn?.type || "unknown",
+    category: cat || "All",
+    is_favorite: isFav(item)
+  });
+    
     track("play", { name: item.name, type: item.type || "live" });
     track("history");
     if (conn?.type === "stalker" && item._stalkerCmd && !item.url) {
@@ -3014,6 +3128,16 @@ export default function App() {
       _catchupProgram: program.title,
       type: "vod", // treat catchup as VOD for seeking support
     };
+
+    trackAnalytics("play_item", {
+      content_type: "catchup",
+      content_id: String(channel.id || ""),
+      // Remove: content_title
+      provider_type: conn?.type || "unknown",
+      category: cat || "All",
+      is_favorite: isFav(channel)
+    });
+
     track("play", { name: catchupItem.name, type: "catchup" });
     track("history");
 
@@ -3475,9 +3599,87 @@ export default function App() {
   }, [page, autoLoadMore, hasMore, section]);
 
   function handleConnect(connConfig) {
+    const startTime = Date.now();
     const err = saveConnection(connConfig);
+    
+    trackAnalytics("portal_connect", {
+      provider_type: connConfig.type,
+      auth_type: connConfig.authType || "direct",
+      success: err ? "false" : "true",
+      latency_ms: Date.now() - startTime,
+      error_code: err ? String(err).slice(0, 50) : null
+    });
+
     if (err) { alert(err); return; }
     setConn(connConfig);
+  }
+
+  async function processFullImport(data) {
+    if (!data._portal_heaven_export) throw new Error("Not a valid Portal Heaven export file");
+
+    let favCount = 0, histCount = 0;
+    const parts = [];
+
+    // 1. Import connections
+    if (data.connections?.length) {
+      const existing = await db.get("sv-connections", []);
+      const existingIds = new Set(existing.map(c => c.id));
+      const newConns = data.connections.filter(c => !existingIds.has(c.id));
+      if (newConns.length) {
+        const merged = [...existing, ...newConns];
+        setConnections(merged);
+        db.set("sv-connections", merged);
+        if (authUser || isGuest) syncConnectionsToServer(merged);
+        parts.push(`${data.connections.length} connections`);
+      }
+    }
+
+    // 2. Import preferences
+    if (data.theme) { 
+      db.set("sv-theme", data.theme); 
+      setThemeName(data.theme); 
+      parts.push("theme"); 
+    }
+    if (data.language) { 
+      localStorage.setItem("sv-lang", data.language); 
+      setLang(data.language); 
+      parts.push("language"); 
+    }
+    if (data.hiddenCats) { 
+      db.set("sv-hiddenCats", data.hiddenCats); 
+      setHiddenCats(data.hiddenCats); 
+    }
+    if (data.epgURL) { 
+      db.set("sv-epgURL", data.epgURL); 
+      setEpgURL(data.epgURL); 
+    }
+
+    // 3. Import per-connection favorites and history
+    if (data.favorites) {
+      for (const [connId, fv] of Object.entries(data.favorites)) {
+        const existing = await db.get(`sv-favs-${connId}`, null);
+        if (!existing || (Object.keys(existing.live||{}).length === 0 && Object.keys(existing.vod||{}).length === 0)) {
+          db.set(`sv-favs-${connId}`, fv);
+          if (authUser) syncToServer("favorites", connId, fv);
+          favCount++;
+        }
+      }
+    }
+    if (data.history) {
+      for (const [connId, hi] of Object.entries(data.history)) {
+        const existing = await db.get(`sv-history-${connId}`, null);
+        if (!existing || existing.length === 0) {
+          db.set(`sv-history-${connId}`, hi);
+          if (authUser) syncToServer("history", connId, hi);
+          histCount++;
+        }
+      }
+    }
+
+    if (favCount) parts.push(`${favCount} favorite sets`);
+    if (histCount) parts.push(`${histCount} history sets`);
+    
+    return parts.join(", ") || "preferences";
   }
 
   function handleImportMultiple(items) {
@@ -3529,7 +3731,19 @@ export default function App() {
   if (!conn) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
-      <Setup onConnect={handleConnect} onImportMultiple={handleImportMultiple} connections={connections} onReconnect={switchConnection} onRemoveConn={removeConnection} onEdit={setEditingConn} authUser={authUser} isGuest={isGuest} onLogout={handleLogout} t={t} />
+      <Setup 
+        onConnect={handleConnect} 
+        onImportMultiple={handleImportMultiple} 
+        onImportFull={processFullImport}
+        connections={connections} 
+        onReconnect={switchConnection} 
+        onRemoveConn={removeConnection} 
+        onEdit={setEditingConn} 
+        authUser={authUser} 
+        isGuest={isGuest} 
+        onLogout={handleLogout} 
+        t={t} 
+      />
       {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
@@ -3836,8 +4050,9 @@ export default function App() {
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="settings" ? (
           <SettingsView connections={connections} favs={favs} history={history}
-            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId} 
-            onAuth={handleAuth} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} t={t} />
+            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId}
+            onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} t={t} />
+
         ) : section==="hls" ? (
           <DirectHLSView />
         ) : section==="epg" ? (
@@ -4535,8 +4750,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 });
 
 // ── Settings View ──
-function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, autoLoadMore, setAutoLoadMore }) {
-  // st or t are unused here in SettingsView
+function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, t }) {
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
   const [importOk, setImportOk] = useState("");
@@ -4586,6 +4800,7 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, au
       if (fv) data.favorites[conn.id] = fv;
       if (hi) data.history[conn.id] = hi;
     }
+
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -4603,55 +4818,8 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, au
     reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        if (!data._portal_heaven_export) throw new Error("Not a valid Portal Heaven export file");
-
-        // Import connections
-        if (data.connections?.length) {
-          const existing = await db.get("sv-connections", []);
-          const existingIds = new Set(existing.map(c => c.id));
-          const newConns = data.connections.filter(c => !existingIds.has(c.id));
-          if (newConns.length) {
-            const merged = [...existing, ...newConns];
-            db.set("sv-connections", merged);
-            if (authUser || isGuest) syncConnectionsToServer(merged);
-          }
-        }
-
-        // Import preferences
-        if (data.theme) db.set("sv-theme", data.theme);
-        if (data.language) localStorage.setItem("sv-lang", data.language);
-        if (data.hiddenCats) db.set("sv-hiddenCats", data.hiddenCats);
-        if (data.epgURL) db.set("sv-epgURL", data.epgURL);
-
-        // Import per-connection favorites and history
-        let favCount = 0, histCount = 0;
-        if (data.favorites) {
-          for (const [connId, fv] of Object.entries(data.favorites)) {
-            const existing = await db.get(`sv-favs-${connId}`, null);
-            if (!existing || (Object.keys(existing.live||{}).length === 0 && Object.keys(existing.vod||{}).length === 0)) {
-              db.set(`sv-favs-${connId}`, fv);
-              if (authUser) syncToServer("favorites", connId, fv);
-              favCount++;
-            }
-          }
-        }
-        if (data.history) {
-          for (const [connId, hi] of Object.entries(data.history)) {
-            const existing = await db.get(`sv-history-${connId}`, null);
-            if (!existing || existing.length === 0) {
-              db.set(`sv-history-${connId}`, hi);
-              if (authUser) syncToServer("history", connId, hi);
-              histCount++;
-            }
-          }
-        }
-
-        const parts = [];
-        if (data.connections?.length) parts.push(`${data.connections.length} connections`);
-        if (favCount) parts.push(`${favCount} favorite sets`);
-        if (histCount) parts.push(`${histCount} history sets`);
-        if (data.theme) parts.push("theme");
-        setImportOk(`Imported: ${parts.join(", ") || "preferences"}. Refresh to apply.`);
+        const resultMsg = await onImportFull(data);
+        setImportOk(`Imported: ${resultMsg}. Refresh to apply.`);
       } catch (err) {
         setImportErr(err.message || "Import failed");
       }
@@ -4659,6 +4827,7 @@ function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, au
     };
     reader.readAsText(file);
   }
+
 
   return (
     <div className="c-body" style={{padding:"1.5rem",maxWidth:640}}>

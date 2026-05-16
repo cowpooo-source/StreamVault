@@ -2,7 +2,7 @@ const express = require("express");
 const { Transform } = require("stream");
 
 function createApiRouter(deps) {
-  const { cache, auth, fetch, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, safeError } = deps;
+  const { cache, auth, fetch, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, safeError, agentFor, getSession } = deps;
   const router = express.Router();
   const TMDB_KEY = process.env.TMDB_API_KEY || "";
   const ADMIN_PASS = process.env.ADMIN_PASS;

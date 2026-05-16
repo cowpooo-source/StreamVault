@@ -573,21 +573,21 @@ function updateCharts(d) {
     
     if(charts.cache) charts.cache.destroy();
     charts.cache = new Chart(ctxCache, {
-    type: 'doughnut',
-    data: {
-      labels: cacheLabels,
-      datasets: [{
-        data: cacheData,
-        backgroundColor: ['#00d4ff', '#a78bfa', '#fbbf24', '#ff2d55', '#00e896', '#8080aa'],
-        borderWidth: 0
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'right', labels: { color: '#8080aa', boxWidth: 10, font: { size: 10 } } } },
-      cutout: '70%'
-    }
-  });
+      type: 'doughnut',
+      data: {
+        labels: cacheLabels,
+        datasets: [{
+          data: cacheData,
+          backgroundColor: ['#00d4ff', '#a78bfa', '#fbbf24', '#ff2d55', '#00e896', '#8080aa'],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '75%'
+      }
+    });
   }
 }
 

@@ -37,10 +37,10 @@ function createApp(deps) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://challenges.cloudflare.com", "https://cdn.jsdelivr.net"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://challenges.cloudflare.com", "https://cdn.jsdelivr.net", "https://www.googletagmanager.com"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'", "https://cdn.jsdelivr.net"],
+        connectSrc: ["'self'", "https://cdn.jsdelivr.net", "https://www.google-analytics.com"],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
@@ -115,7 +115,7 @@ function createApp(deps) {
   const { createApiRouter } = require("./routes/api");
   const { createStalkerRouter } = require("./routes/stalker");
 
-  const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry };
+  const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
 
   app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));

@@ -137,6 +137,29 @@ export function parseM3U(text) {
   return out;
 }
 
+// Google Analytics Tracking
+const GA_ID = import.meta.env.VITE_GA_MEASUREMENT_ID;
+
+export function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    const context = this;
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(context, args), wait);
+  };
+}
+
+export function trackAnalytics(eventName, payload) {
+  if (!GA_ID || typeof gtag !== 'function') return;
+
+  try {
+    // Redundant event_name removed, gtag already takes eventName as 1st arg
+    gtag('event', eventName, payload);
+  } catch (e) {
+    console.warn("Analytics event failed:", e.message);
+  }
+}
+
 // Generate CSS variables from theme object
 export function genCSS(t) {
   if (!t) return "";
