@@ -280,6 +280,7 @@ function getStats() {
   bkRows.forEach(({ endpoint, cnt }) => { cacheBreakdown[endpoint] = cnt; });
 
   // Visitor stats (last 24h/48h)
+  const totalVisitors = db.prepare("SELECT COUNT(*) AS cnt FROM guests").get().cnt;
   const active24h = db.prepare("SELECT COUNT(*) AS cnt FROM guests WHERE last_seen >= ?").get(nowSec - 86400).cnt;
   const active24h_ago = db.prepare("SELECT COUNT(*) AS cnt FROM guests WHERE last_seen >= ? AND last_seen < ?").get(nowSec - 172800, nowSec - 86400).cnt;
   const active7d = db.prepare("SELECT COUNT(*) AS cnt FROM guests WHERE last_seen >= ?").get(nowSec - 7 * 86400).cnt;
