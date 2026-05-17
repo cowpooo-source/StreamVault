@@ -239,6 +239,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     destroyPlayers();
     video.removeAttribute("src");
 
+    const loadStartTime = Date.now();
+    
     // Native <video> error handler (for direct src= playback)
     video.onerror = () => {
       // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
@@ -251,7 +253,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         error_type: "native_video_error",
         error_code: String(e?.code || "unknown"),
         content_id: String(current.id || ""),
-        provider_type: current.type || "unknown"
+        content_type: current.type || "live",
+        provider_type: current.type || "unknown",
+        latency_ms: Date.now() - loadStartTime
       });
     };
 
