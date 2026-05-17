@@ -2218,6 +2218,25 @@ export default function App() {
 
   const liveGridRef = useRef(null);
 
+  // Configure GA4 Identity
+  useEffect(() => {
+    if (typeof window.gtag === "function") {
+      const gaId = import.meta.env.VITE_GA_MEASUREMENT_ID;
+      if (gaId && !gaId.startsWith('G-XXX')) {
+        let role = isGuest ? "guest" : "unauthenticated";
+        if (authUser) role = authUser.role || "regular";
+        
+        window.gtag('config', gaId, {
+          user_id: authUser ? String(authUser.id) : undefined, // Only use authenticated ID for user_id
+          user_properties: {
+            guest_role: role,
+            guest_id: GUEST_ID // Send guest_id as a property for local correlation
+          }
+        });
+      }
+    }
+  }, [authUser, isGuest]);
+
   // Check stored token on mount
   useEffect(() => {
     // Check for query params (activation, reset-password)
@@ -4667,12 +4686,23 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 
   // Auto-scroll to "now" on mount
   useEffect(() => {
+    trackAnalytics("epg_interaction", { action: "open", screen: "tvGuide", provider_type: "unknown" });
     if (outerRef.current && epgData) {
       const nowOffset = 60 * PX_PER_MIN; // 1 hour in = 180px
       const viewW = outerRef.current.clientWidth;
       outerRef.current.scrollLeft = Math.max(0, CH_COL_W + nowOffset - viewW / 3);
     }
   }, [epgData]);
+
+  // Track searches inside EPG
+  useEffect(() => {
+    if (search.length > 0) {
+      const timer = setTimeout(() => {
+        trackAnalytics("epg_interaction", { action: "filter", screen: "tvGuide", provider_type: "unknown" });
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [search]);
 
   const filteredChannels = useMemo(() => {
     let chs = channels;

@@ -1,3 +1,10 @@
+- [ ] **FEATURE: Multi-Portal Global Search**
+  Search across all saved user connections simultaneously instead of just the active one.
+  - Implement an async aggregator that queries `idbCache` for all items in the `connections` array.
+  - Add "Source" badges to search results to identify which portal a result belongs to.
+  - Implement automatic connection switching when a result from a non-active portal is selected for playback.
+  - (Optional) Use a Web Worker for filtering to prevent UI lag with large datasets.
+
 - [x] **BUG: Playback heartbeat continues after media stops**
   The heartbeat ping initiated in `Player.jsx` is not stopping even after the media has stopped playing or the player is closed. Investigate the cleanup logic and ensure all timers/intervals are cleared.
 
