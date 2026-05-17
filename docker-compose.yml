@@ -4,12 +4,13 @@ services:
       context: ./stalker-proxy
       dockerfile: Dockerfile
     volumes:
-      - ./stalker-proxy:/app
-      - /app/node_modules
-      - ./stalker-proxy/data:/app/data
+      - ./stalker-proxy/src:/home/node/app/src
+      - ./stalker-proxy/package.json:/home/node/app/package.json
+      - ./stalker-proxy/data:/home/node/app/data
     environment:
       - PORT=3001
       - ALLOWED_ORIGIN=*
+      - ADMIN_PASS=Mango!123
     networks:
       - streamvault-net
 
@@ -21,7 +22,7 @@ services:
       - ./streamvault:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=/api
+      - VITE_API_URL=
     networks:
       - streamvault-net
 
