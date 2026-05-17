@@ -272,12 +272,14 @@ function getStats() {
   const cacheBreakdown = {};
   bkRows.forEach(({ endpoint, cnt }) => { cacheBreakdown[endpoint] = cnt; });
 
-  // Visitor stats
-  const totalVisitors = db.prepare("SELECT COUNT(*) AS cnt FROM visitors").get().cnt;
-  const active1h = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ?").get(nowSec - 3600).cnt;
-  const active24h = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ?").get(nowSec - 86400).cnt;
-  const active24h_ago = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ? AND last_seen < ?").get(nowSec - 172800, nowSec - 86400).cnt;
-  const active7d = db.prepare("SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= ?").get(nowSec - 7 * 86400).cnt;
+  // Visitor stats (last 24h/48h)
+  const totalVisitors = db.prepare("SELECT COUNT(*) AS cnt FROM guests").get().cnt;
+  const active24h = db.prepare("SELECT COUNT(*) AS cnt FROM guests WHERE last_seen >= ?").get(nowSec - 86400).cnt;
+  const active24h_ago = db.prepare("SELECT COUNT(*) AS cnt FROM guests WHERE last_seen >= ? AND last_seen < ?").get(nowSec - 172800, nowSec - 86400).cnt;
+  const active7d = db.prepare("SELECT COUNT(*) AS cnt FROM guests WHERE last_seen >= ?").get(nowSec - 7 * 86400).cnt;
+
+  // Registered vs Guest breakdown (last 24h)
+  const reg24h = db.prepare("SELECT COUNT(*) AS cnt FROM guests WHERE last_seen >= ? AND role != 'guest'").get(nowSec - 86400).cnt;
 
   // Recent visitors
   const recentRows = db.prepare("SELECT ip, country, device, first_seen, last_seen, hits FROM visitors ORDER BY last_seen DESC LIMIT 15").all();
@@ -341,7 +343,7 @@ function getStats() {
     cacheHits, cacheMisses, cacheHitRate: cacheHits + cacheMisses > 0 ? Math.round(cacheHits / (cacheHits + cacheMisses) * 100) : 0,
     todayReqs, daily, cacheBreakdown, activeNow: activeCount,
     health: { avg_latency: Math.round(health.avg_lat || 0), error_rate: health.total ? Math.round(health.errs / health.total * 100) : 0 },
-    visitors: { total: totalVisitors, active_1h: active1h, active_24h: active24h, active_24h_ago: active24h_ago, active_7d: active7d },
+    visitors: { total: totalVisitors, active_24h: active24h, registered_24h: reg24h, previous_24h: active24h_ago, active_7d: active7d },
     recent_visitors: recentVisitors, portals, portalsByType,
     guests: { total: totalGuests }, recent_guests: recentGuests, most_watched: mostWatched,
     playbackBreakdown,
