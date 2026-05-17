@@ -111,9 +111,14 @@
       <div class="sub">Users in last 5 mins</div>
     </div>
     <div class="card">
-      <div class="card-label">Active 24hr ago</div>
-      <div class="card-value"><span id="v-active-24h-ago">0</span></div>
-      <div class="sub">Users active yesterday</div>
+      <div class="card-label">Active (24h)</div>
+      <div class="card-value"><span id="v-active-24h">0</span></div>
+      <div class="sub">Total unique users</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Registered (24h)</div>
+      <div class="card-value"><span id="v-reg-24h">0</span></div>
+      <div class="sub">Logged-in accounts</div>
     </div>
     <div class="card">
       <div class="card-label">Health Status</div>
@@ -393,7 +398,8 @@ async function load(){
 
 function updateSummary(d) {
   const el1 = document.getElementById('v-active-now'); if(el1) el1.textContent = d.activeNow || 0;
-  const el2 = document.getElementById('v-active-24h-ago'); if(el2) el2.textContent = d.visitors?.active_24h_ago || 0;
+  const el2 = document.getElementById('v-active-24h'); if(el2) el2.textContent = d.visitors?.active_24h || 0;
+  const elReg = document.getElementById('v-reg-24h'); if(elReg) elReg.textContent = d.visitors?.registered_24h || 0;
   const el3 = document.getElementById('v-latency'); if(el3) el3.textContent = d.health.avg_latency || 0;
   const el4 = document.getElementById('v-bw-today'); if(el4) el4.textContent = d.bandwidth?.today?.total_gb || 0;
   const el5 = document.getElementById('v-bw-month'); if(el5) el5.textContent = d.bandwidth?.monthly?.total_gb || 0;
@@ -409,7 +415,7 @@ function updateSummary(d) {
   if(hStatus) hStatus.className = 'card-value ' + (errRate > 15 ? 'text-red' : errRate > 5 ? 'text-orange' : 'text-green');
   
   const v24h = d.visitors.active_24h || 0;
-  const v24h_ago = d.visitors.active_24h_ago || 0;
+  const v24h_ago = d.visitors.previous_24h || 0;
   const diff = v24h - v24h_ago;
   const diffStr = diff >= 0 ? `+${diff}` : `${diff}`;
   const el7 = document.getElementById('v-error-rate'); if(el7) el7.innerHTML = `${errRate}% errors | 24h: <b>${v24h}</b> (<span class="${diff >= 0 ? 'text-green' : 'text-red'}">${diffStr}</span> vs yesterday)`;
