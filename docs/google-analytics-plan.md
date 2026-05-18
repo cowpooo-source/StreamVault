@@ -31,6 +31,9 @@ The existing `/analytics` dashboard in `stalker-proxy` remains the source of tru
 Use a small, consistent event set instead of mirroring every internal log.
 
 Recommended events:
+- `auth_success`
+  - Fired when login, register, or guest entry succeeds.
+  - Parameters: `auth_method`, `is_guest`, `guest_role`
 - `play_item`
   - Fired when a user starts Live TV, a movie, or a series episode.
   - Parameters: `content_type`, `content_id`, `content_title`, `provider_type`, `category`, `is_favorite`
@@ -92,6 +95,7 @@ Recommended local-only metadata:
 4. Keep local app tracking intact for any features that already depend on it.
 
 Frontend should call the helper from:
+- auth success and guest entry
 - playback start/resume points
 - connection creation and validation flows
 - feedback form submission
@@ -107,10 +111,12 @@ Suggested custom dimensions:
 - `source_screen`
 - `feedback_type`
 - `error_code`
+- `guest_role`
+- `auth_method`
 
 Suggested custom metrics:
 - `latency_ms`
-- `result_count`
+- `result_count` if you later wire the actual count into search telemetry
 
 ### Phase 3: Reporting
 Build a few practical GA4 explorations:
@@ -147,7 +153,7 @@ GA4 should complement that data, not replace it.
 ## Execution Checklist
 1. Add `GA_MEASUREMENT_ID` to the frontend environment.
 2. Implement a single `trackAnalytics(eventName, payload)` helper in `streamvault`.
-3. Wire the helper into playback, connection, feedback, EPG, and search flows.
+3. Wire the helper into auth, playback, connection, feedback, EPG, and search flows.
 4. Keep raw feedback and operational metrics in the local backend only.
 5. Register the GA4 custom dimensions and metrics needed for reports.
 6. Validate events in GA4 DebugView and Realtime.

@@ -2227,10 +2227,10 @@ export default function App() {
         if (authUser) role = authUser.role || "regular";
         
         window.gtag('config', gaId, {
-          user_id: authUser ? String(authUser.id) : undefined, // Only use authenticated ID for user_id
+          send_page_view: false,
+          user_id: authUser ? String(authUser.id) : null, // Only use authenticated ID for user_id
           user_properties: {
             guest_role: role,
-            guest_id: GUEST_ID // Send guest_id as a property for local correlation
           }
         });
       }
@@ -2275,6 +2275,12 @@ export default function App() {
     setAuthUser(user); setIsGuest(false); localStorage.removeItem("sv-guest-mode");
     // Use user ID for encryption key (consistent across devices)
     setEncKeySource(`user:${user.id}`);
+
+    trackAnalytics("auth_success", {
+      auth_method: "password",
+      is_guest: false,
+      guest_role: user.role || "regular",
+    });
     
     // Migrate guest data to new user account (favs, history)
     await migrateGuestData();
@@ -2295,7 +2301,15 @@ export default function App() {
       db.set("sv-connections", []);
     }
   }
-  function handleGuest() { setIsGuest(true); localStorage.setItem("sv-guest-mode", "1"); }
+  function handleGuest() {
+    setIsGuest(true);
+    localStorage.setItem("sv-guest-mode", "1");
+    trackAnalytics("auth_success", {
+      auth_method: "guest",
+      is_guest: true,
+      guest_role: "guest",
+    });
+  }
   function handleLogout() {
     authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
     localStorage.removeItem("sv-guest-mode");
@@ -2480,20 +2494,18 @@ export default function App() {
   }, [themeName]);
 
   // ── Debounced Search for Analytics
-  const debouncedSearch = useCallback(debounce((term, type, count) => {
-    if (term.length > 0) trackAnalytics("search", { 
-      query_length: term.length, 
-      source_screen: type,
-      result_count: count || 0
+  const debouncedSearch = useCallback(debounce((term, type) => {
+    const queryLength = term.trim().length;
+    if (queryLength > 0) trackAnalytics("search", { 
+      query_length: queryLength, 
+      source_screen: type
     });
   }, 1000), []);
 
   function handleSearch(term) {
     setSearch(term);
     setPage(1);
-    // Note: count is hard to pass here without refactoring search logic, 
-    // but we can at least fix the name and source_screen.
-    debouncedSearch(term, "category", 0);
+    debouncedSearch(term, "category");
   }
 
   function handleGlobalSearch(term) {

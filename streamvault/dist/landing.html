@@ -4,33 +4,92 @@
   <meta charset="UTF-8">
   <meta name="google-adsense-account" content="ca-pub-6795112280725010">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Portal Heaven - The Browser-Based IPTV Client</title>
-  <link rel="stylesheet" crossorigin href="/assets/landing-Dg99OhRh.css">
+  <meta name="description" content="Portal Heaven is an open-source, self-hosted web client for IPTV (Stalker, Xtream, M3U). Watch live TV, movies, and series directly in your browser with zero installation.">
+  <title>Portal Heaven - Open Source IPTV Web Client</title>
+  <link rel="stylesheet" crossorigin href="/assets/landing-BeK9LYmU.css">
 </head>
 <body>
   <div class="container">
     <header>
       <a href="/landing.html" class="logo">Portal Heaven</a>
-      <nav>
-        <a href="/index.html" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.9rem;">Open Player</a>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#architecture">How it Works</a>
+        <a href="#security">Security</a>
+        <a href="#faq">FAQ</a>
+        <a href="/index.html" class="btn btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.9rem; margin-left: 1rem;">Open Player</a>
       </nav>
     </header>
 
     <section class="hero">
-      <h1>The First Fully Browser-Based Stalker Portal Client</h1>
-      <p>No apps to install. No STB emulators. Just open a URL and stream your favorite content instantly across all your devices.</p>
+      <h1>The Modern Web Client for IPTV</h1>
+      <p>StreamVault (Portal Heaven) is an open-source, self-hosted proxy and web player. It connects securely to your Stalker, Xtream, or M3U providers, bringing a premium "TiviMate-like" experience directly to your web browser with zero installation.</p>
       <div class="cta-group">
-        <a href="/index.html" class="btn btn-primary">Open Player</a>
+        <a href="/index.html" class="btn btn-primary">Launch Web Player</a>
         <a href="https://github.com/cowpooo-source/StreamVault" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">View Source on GitHub</a>
       </div>
-      <div style="margin-top: 4rem; text-align: center;">
-        <img src="/hero.png" alt="Portal Heaven Movies Interface" style="max-width: 100%; border-radius: 14px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); border: 1px solid var(--border);">
+      
+      <!-- Visual App Gallery -->
+      <div class="gallery">
+        <div class="gallery-img">
+          <img src="/hero.png" alt="VOD Movies Interface" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'100%\' height=\'100%\'><rect width=\'100%\' height=\'100%\' fill=\'%23111827\'/><text x=\'50%\' y=\'50%\' fill=\'%234b5563\' text-anchor=\'middle\' font-family=\'sans-serif\'>VOD Interface</text></svg>'">
+          <div class="gallery-caption">Cinematic VOD & Series Browser</div>
+        </div>
+        <div class="gallery-img">
+          <img src="/hero.png" alt="Live TV EPG" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'100%\' height=\'100%\'><rect width=\'100%\' height=\'100%\' fill=\'%23111827\'/><text x=\'50%\' y=\'50%\' fill=\'%234b5563\' text-anchor=\'middle\' font-family=\'sans-serif\'>EPG Timeline</text></svg>'">
+          <div class="gallery-caption">Interactive EPG Timeline & Catch-up</div>
+        </div>
+        <div class="gallery-img">
+          <img src="/hero.png" alt="Analytics Dashboard" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'100%\' height=\'100%\'><rect width=\'100%\' height=\'100%\' fill=\'%23111827\'/><text x=\'50%\' y=\'50%\' fill=\'%234b5563\' text-anchor=\'middle\' font-family=\'sans-serif\'>Analytics Dashboard</text></svg>'">
+          <div class="gallery-caption">Admin Telemetry & Analytics</div>
+        </div>
       </div>
     </section>
 
-    <section class="section">
-      <h2 class="section-title">Why Portal Heaven?</h2>
+    <section id="architecture" class="section">
+      <h2 class="section-title">Open Source Architecture</h2>
+      <div class="arch-container">
+        <div class="arch-text">
+          <h3>Built for the Self-Hosted Community</h3>
+          <p>Portal Heaven was built to solve the fragmentation of the IPTV ecosystem. Instead of relying on closed-source Android APKs or struggling with browser CORS restrictions, we built a robust middleware proxy.</p>
+          <p>The backend is a lightweight Node.js/Express server that acts as a secure bridge, translating proprietary Stalker API handshakes into standard JSON for the React frontend. It also rewrites HLS manifests on the fly, allowing you to bypass strict CORS blocks and stream smoothly on any device.</p>
+          
+          <div class="tech-badges">
+            <span class="tech-badge">React 18</span>
+            <span class="tech-badge">Vite</span>
+            <span class="tech-badge">Node.js</span>
+            <span class="tech-badge">Express</span>
+            <span class="tech-badge">SQLite3</span>
+            <span class="tech-badge">HLS.js</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="security" class="section">
+      <h2 class="section-title">Zero-Knowledge Security</h2>
       <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🔐</div>
+          <h3>Client-Side AES-GCM</h3>
+          <p>Your portal credentials and MAC addresses are encrypted directly in your browser using military-grade AES-GCM encryption before they are ever sent to the server for cloud syncing.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🛡️</div>
+          <h3>Cloudflare Turnstile</h3>
+          <p>Our authentication system uses invisible Cloudflare Turnstile CAPTCHA to protect the application from botnets, brute-force attacks, and credential stuffing.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔑</div>
+          <h3>Secure SSO Integration</h3>
+          <p>Create an account instantly using Google or GitHub OAuth2 Single Sign-On. Your session is protected by secure, HttpOnly JSON Web Tokens (JWT) with strict SameSite policies.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="section">
+      <h2 class="section-title">Core Capabilities</h2>
+      <div class="features-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
         <div class="feature-card">
           <div class="feature-icon">🚀</div>
           <h3>Zero Install</h3>
@@ -42,246 +101,58 @@
           <p>Your portals, favorites, and watch history are securely synced across all your devices. Start watching on your TV and resume on your phone.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🛡️</div>
-          <h3>Proxy Bypassing</h3>
-          <p>Built-in smart proxies automatically handle CORS issues, bypass IP-blocks, and fix broken SSL certificates from upstream portal servers.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🔓</div>
-          <h3>Open Source & Free</h3>
-          <p>Transparent architecture. Self-hostable backend. Entirely free to use with no hidden fees or premium lock-ins for core features.</p>
-        </div>
-        <div class="feature-card">
           <div class="feature-icon">📺</div>
           <h3>Multi-Device Streaming</h3>
           <p>Login and watch on multiple devices at the same time, restricted only by your IPTV provider's simultaneous connection limits.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🎞️</div>
-          <h3>Supported Formats</h3>
-          <p>Full compatibility with <strong>Stalker Portals</strong> (MAC-based), <strong>Xtream Codes</strong> (User/Pass), <strong>M3U/M3U8</strong> playlists, and <strong>HLS/DASH</strong> adaptive streams.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2 class="section-title">App Experience</h2>
-      <div class="features-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
-        <div class="feature-card">
-          <div class="feature-icon">✨</div>
-          <h3>Discover</h3>
-          <p>Explore the latest and most popular shows across all your connected portals in one unified view.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">📡</div>
-          <h3>Live TV & EPG</h3>
-          <p>Seamless live streaming with an active Electronic Program Guide (EPG) that updates in real-time.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🎬</div>
-          <h3>Movie Recommendations</h3>
-          <p>Get personalized movie suggestions based on your watch history and favorites.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🍿</div>
-          <h3>TV Series</h3>
-          <p>Perfectly organized series with dedicated views for seasons and individual episodes.</p>
+          <div class="feature-icon">📊</div>
+          <h3>Advanced Analytics</h3>
+          <p>Admins have access to a real-time dashboard tracking concurrent users, bandwidth usage, and playback telemetry (Live vs. VOD breakdown).</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">📅</div>
-          <h3>TV Guide</h3>
-          <p>A full-featured interactive guide to browse what's playing now and what's coming up next.</p>
+          <h3>Live TV & EPG</h3>
+          <p>Seamless live streaming with an active Electronic Program Guide (EPG) that updates in real-time, including Catch-up TV support.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🔍</div>
-          <h3>Global Search</h3>
-          <p>Search across all categories and portals simultaneously to find exactly what you want to watch.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">⚡</div>
-          <h3>Direct Play</h3>
-          <p>Optimized streaming engine for minimal buffering and high-performance playback.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🌐</div>
-          <h3>Multi-Language</h3>
-          <p>Localized interface supporting multiple languages for a comfortable user experience.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🎨</div>
-          <h3>Multiple Themes</h3>
-          <p>Switch between Sleek Dark, Clean Light, and Neon themes to suit your style.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🔄</div>
-          <h3>Portal Switching</h3>
-          <p>Swap between different Stalker or Xtream connections on-the-fly without leaving the app.</p>
+          <div class="feature-icon">🎞️</div>
+          <h3>Universal Format Support</h3>
+          <p>Full compatibility with <strong>Stalker Portals</strong> (MAC-based), <strong>Xtream Codes</strong> (User/Pass), <strong>M3U/M3U8</strong> playlists, and <strong>HLS/DASH</strong> streams.</p>
         </div>
       </div>
     </section>
 
-    <section class="section">
-      <h2 class="section-title">How We Compare</h2>
-      <div style="overflow-x: auto; padding-bottom: 1rem;">
-        <table style="width: 100%; border-collapse: collapse; text-align: left; background: var(--card); border-radius: 14px; overflow: hidden; border: 1px solid var(--border); min-width: 800px;">
-          <thead style="background: rgba(0,0,0,0.03);">
-            <tr>
-              <th style="padding: 1.5rem; border-bottom: 1px solid var(--border);">Feature</th>
-              <th style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--accent);">Portal Heaven</th>
-              <th style="padding: 1.5rem; border-bottom: 1px solid var(--border);">TiviMate (Android)</th>
-              <th style="padding: 1.5rem; border-bottom: 1px solid var(--border);">STB Emu (Android)</th>
-              <th style="padding: 1.5rem; border-bottom: 1px solid var(--border);">Web Players</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); font-weight: bold; color: var(--t1);">Installation</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--green); font-weight: 600;">None (Browser-based)</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--t2);">APK Download</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--t2);">APK Download</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--green); font-weight: 600;">None</td>
-            </tr>
-            <tr>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); font-weight: bold; color: var(--t1);">Cross-Device Sync</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--green); font-weight: 600;">Automatic (Cloud)</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--orange);">Manual Backup/Restore</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--red);">None</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--red);">None</td>
-            </tr>
-            <tr>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); font-weight: bold; color: var(--t1);">Proxy Bypassing (CORS/SSL)</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--green); font-weight: 600;">Built-in</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--orange);">Requires VPN sometimes</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--orange);">Requires VPN sometimes</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--red);">Fails frequently</td>
-            </tr>
-            <tr>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); font-weight: bold; color: var(--t1);">Platform Support</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--green); font-weight: 600;">Any Browser (iOS, Android, PC, Mac, TV)</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--orange);">Android / FireTV Only</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--orange);">Android / FireTV Only</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--green); font-weight: 600;">Any Browser</td>
-            </tr>
-            <tr>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); font-weight: bold; color: var(--t1);">Concurrent Streams</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--green); font-weight: 600;">Unlimited (App-level)</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--orange);">Paid Multi-Device</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--red);">Single Device</td>
-              <td style="padding: 1.5rem; border-bottom: 1px solid var(--border); color: var(--orange);">Varies</td>
-            </tr>
-            <tr>
-              <td style="padding: 1.5rem; border-bottom: none; font-weight: bold; color: var(--t1);">Price</td>
-              <td style="padding: 1.5rem; border-bottom: none; color: var(--green); font-weight: 600;">Free (Open Source)</td>
-              <td style="padding: 1.5rem; border-bottom: none; color: var(--orange);">Paid Premium</td>
-              <td style="padding: 1.5rem; border-bottom: none; color: var(--orange);">Paid Premium / Ads</td>
-              <td style="padding: 1.5rem; border-bottom: none; color: var(--green); font-weight: 600;">Varies</td>
-            </tr>
-          </tbody>
-        </table>
+    <section id="faq" class="section">
+      <h2 class="section-title">Frequently Asked Questions</h2>
+      <div class="faq-container">
+        <div class="faq-item">
+          <h3>Does Portal Heaven provide any TV channels or movies?</h3>
+          <p><strong>No.</strong> Portal Heaven is strictly a media player and proxy tool. We do not host, distribute, or provide any content, streams, or IPTV subscriptions. You must provide your own legal content or possess a valid subscription to a third-party IPTV service to use this application.</p>
+        </div>
+        <div class="faq-item">
+          <h3>What is a Stalker Portal?</h3>
+          <p>A Stalker Portal (often powered by Ministra) is a popular middleware used by IPTV providers to manage and deliver Live TV, VOD, and Series to set-top boxes (like MAG boxes). Portal Heaven emulates this hardware environment entirely in your web browser.</p>
+        </div>
+        <div class="faq-item">
+          <h3>Why do I need a proxy to watch IPTV in my browser?</h3>
+          <p>Modern web browsers enforce strict security policies like CORS (Cross-Origin Resource Sharing) and Mixed Content blocks (preventing HTTP streams on HTTPS sites). Our Node.js backend proxy handles the handshake with your provider and securely routes the media to your browser, bypassing these restrictions seamlessly.</p>
+        </div>
+        <div class="faq-item">
+          <h3>Can I install this on my Smart TV or iPhone?</h3>
+          <p>Yes! Because Portal Heaven is a Progressive Web App (PWA), you can open the URL in Safari on iOS or Chrome on Android/Android TV and click "Add to Home Screen." It will install as a native-feeling app without needing to go through an App Store.</p>
+        </div>
+        <div class="faq-item">
+          <h3>Is my MAC address and password safe?</h3>
+          <p>Yes. If you create an account, your connection details are encrypted using AES-GCM on your device before they are synced to our database. Our server only stores the encrypted ciphertext, meaning we cannot read your passwords or MAC addresses.</p>
+        </div>
       </div>
     </section>
 
-    <section class="section">
-      <h2 class="section-title">Install the App</h2>
-      <p style="text-align: center; color: var(--t2); margin-bottom: 2rem;">Portal Heaven is a Progressive Web App (PWA). You can install it directly from your browser.</p>
-      
-      <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 3rem;">
-        <p style="margin-bottom: 1rem; font-weight: 600; color: var(--t1);">Scan to open on your mobile device:</p>
-        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://portalheaven.stream/" alt="QR Code to Portal Heaven" style="border-radius: 8px; padding: 10px; background: white; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid var(--border);">
-      </div>
-
-      <div class="tabs">
-        <button class="tab-btn active" onclick="openTab('ios')">iOS / iPadOS</button>
-        <button class="tab-btn" onclick="openTab('android')">Android</button>
-        <button class="tab-btn" onclick="openTab('desktop')">Desktop</button>
-      </div>
-
-      <div id="ios" class="tab-content active">
-        <ol>
-          <li>Open <strong>Portal Heaven</strong> in Safari.</li>
-          <li>Tap the <strong>Share</strong> icon (square with an arrow pointing up) at the bottom.</li>
-          <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
-          <li>Tap <strong>Add</strong> in the top right corner.</li>
-        </ol>
-      </div>
-
-      <div id="android" class="tab-content">
-        <ol>
-          <li>Open <strong>Portal Heaven</strong> in Chrome.</li>
-          <li>Tap the <strong>Menu</strong> icon (three dots) in the top right corner.</li>
-          <li>Tap <strong>Add to Home screen</strong> or <strong>Install app</strong>.</li>
-          <li>Follow the on-screen prompts to confirm.</li>
-        </ol>
-      </div>
-
-      <div id="desktop" class="tab-content">
-        <ol>
-          <li>Open <strong>Portal Heaven</strong> in Chrome, Edge, or Brave.</li>
-          <li>Look for the <strong>Install icon</strong> (a screen with a down arrow) on the right side of the address bar.</li>
-          <li>Click it and select <strong>Install</strong>.</li>
-        </ol>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2 class="section-title">User Tiers</h2>
-      <div class="tiers-grid">
-        <div class="tier-card">
-          <h3>Guest</h3>
-          <div class="price">Free</div>
-          <ul>
-            <li>2 IPTV connections</li>
-            <li>1 Concurrent login</li>
-            <li>500 VOD/Series items</li>
-            <li>EPG Support</li>
-            <li class="disabled">Server sync</li>
-          </ul>
-        </div>
-        <div class="tier-card">
-          <h3>Free</h3>
-          <div class="price">$0</div>
-          <ul>
-            <li>2 IPTV connections</li>
-            <li>1 Concurrent login</li>
-            <li>500 VOD/Series items</li>
-            <li>EPG Support</li>
-            <li>Server sync</li>
-          </ul>
-        </div>
-        <div class="tier-card highlight">
-          <h3>Regular</h3>
-          <div class="price">Default</div>
-          <ul>
-            <li>5 IPTV connections</li>
-            <li>3 Concurrent logins</li>
-            <li>Unlimited VOD/Series</li>
-            <li>EPG Support</li>
-            <li>Server sync</li>
-          </ul>
-        </div>
-        <div class="tier-card">
-          <h3>Pro</h3>
-          <div class="price">Power</div>
-          <ul>
-            <li>10 IPTV connections</li>
-            <li>5 Concurrent logins</li>
-            <li>Unlimited VOD/Series</li>
-            <li>EPG Support</li>
-            <li>Server sync</li>
-          </ul>
-        </div>
-        <div class="tier-card">
-          <h3>Admin</h3>
-          <div class="price">Unlimited</div>
-          <ul>
-            <li>Unlimited connections</li>
-            <li>Unlimited logins</li>
-            <li>Analytics Dashboard</li>
-            <li>User Management</li>
-            <li>Server sync</li>
-          </ul>
-        </div>
-      </div>
+    <section class="section" style="text-align: center;">
+      <h2 class="section-title">Ready to Stream?</h2>
+      <p style="color: var(--t2); margin-bottom: 2rem;">Join thousands of users who have cut the cord on restrictive apps.</p>
+      <a href="/index.html" class="btn btn-primary" style="font-size: 1.2rem; padding: 1rem 3rem;">Open Portal Heaven</a>
     </section>
 
   </div>
@@ -289,40 +160,66 @@
   <footer>
     <div class="container">
       <div class="footer-links">
-        <a href="https://github.com/cowpooo-source/StreamVault" target="_blank" rel="noopener noreferrer">GitHub</a>
-        <a href="/index.html">Open Player</a>
-        <a onclick="openModal('legal-modal')">Privacy & Legal</a>
-        <a id="email-support">Email Support</a>
+        <a href="https://github.com/cowpooo-source/StreamVault" target="_blank" rel="noopener noreferrer">GitHub Source</a>
+        <a href="/index.html">Open Web Player</a>
+        <a onclick="openModal('privacy-modal')">Privacy Policy</a>
+        <a onclick="openModal('tos-modal')">Terms of Service</a>
+        <a id="email-support">Contact Us</a>
       </div>
-      <p>Portal Heaven is a media player application only. It does not provide, host, or distribute any content, streams, or IPTV services.</p>
+      <p style="max-width: 800px; margin: 0 auto;">Portal Heaven is an open-source media player utility. It does not provide, host, or distribute any copyrighted media, streams, or IPTV subscriptions. Users are entirely responsible for the content they choose to access using this software.</p>
+      <p style="margin-top: 1rem; opacity: 0.5;">&copy; 2026 StreamVault Project.</p>
     </div>
   </footer>
 
-  <!-- Legal Modal -->
-  <div id="legal-modal" class="modal-overlay" onclick="closeModal(event, 'legal-modal')">
+  <!-- Privacy Policy Modal -->
+  <div id="privacy-modal" class="modal-overlay" onclick="closeModal(event, 'privacy-modal')">
     <div class="modal-content">
-      <button class="modal-close" onclick="closeModal(event, 'legal-modal', true)">&times;</button>
-      <h2>⚖️ Legal Disclaimer</h2>
-      <p style="margin-bottom: 1rem;">Portal Heaven is a media player application only. By using this software, you acknowledge and agree to the following:</p>
-      <ul>
-        <li>Portal Heaven does not provide, host, or distribute any content, streams, or IPTV services.</li>
-        <li>You must provide your own content or have a valid, legal subscription to a third-party IPTV service.</li>
-        <li>Portal Heaven and its developers bear no responsibility for the content or legality of third-party services you connect to.</li>
-      </ul>
+      <button class="modal-close" onclick="closeModal(event, 'privacy-modal', true)">&times;</button>
+      <h2>Privacy Policy</h2>
+      <div class="legal-text">
+        <p><strong>Last Updated: May 2026</strong></p>
+        <p>At Portal Heaven, your privacy is our priority. This Privacy Policy explains how we handle your data when you use our self-hosted web application.</p>
+        
+        <h4>1. Information We Collect</h4>
+        <p>We collect minimal information necessary to provide our service. If you create an account, we store your email address, username, and encrypted connection details. We also collect anonymous, aggregated telemetry (such as watch duration and device type) to improve platform stability.</p>
+        
+        <h4>2. How We Protect Your Data</h4>
+        <p>All sensitive connection details (such as IPTV portal URLs, MAC addresses, and passwords) are encrypted client-side using AES-GCM encryption before being transmitted to our servers. We do not have the decryption keys and cannot access your private connection data.</p>
+        
+        <h4>3. Data Sharing</h4>
+        <p>We do not sell, rent, or share your personal information or viewing habits with third parties or advertisers.</p>
+        
+        <h4>4. Cookies and Local Storage</h4>
+        <p>We use local storage and secure, HttpOnly cookies strictly for maintaining your active session and saving your UI preferences (like themes and language).</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terms of Service Modal -->
+  <div id="tos-modal" class="modal-overlay" onclick="closeModal(event, 'tos-modal')">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeModal(event, 'tos-modal', true)">&times;</button>
+      <h2>Terms of Service</h2>
+      <div class="legal-text">
+        <p><strong>Last Updated: May 2026</strong></p>
+        <p>By accessing or using Portal Heaven, you agree to be bound by these Terms of Service.</p>
+        
+        <h4>1. Nature of the Service</h4>
+        <p>Portal Heaven is a media player utility software. <strong>We do not provide, host, sell, or distribute any media content, live streams, or IPTV subscriptions.</strong> The software is provided "as is" solely as a tool for users to access their own legal content.</p>
+        
+        <h4>2. User Responsibility</h4>
+        <p>You are solely responsible for the content you access through Portal Heaven. You agree that you have the legal right or appropriate subscriptions to access the media you stream using our proxy utility.</p>
+        
+        <h4>3. Acceptable Use</h4>
+        <p>You agree not to use the service to distribute malware, overload the proxy servers through automated attacks, or attempt to reverse-engineer the authentication systems.</p>
+        
+        <h4>4. Limitation of Liability</h4>
+        <p>Under no circumstances shall the developers of Portal Heaven be held liable for any direct, indirect, or consequential damages resulting from the use or inability to use the software, or from the content accessed through it.</p>
+      </div>
     </div>
   </div>
 
   <script>
-    // Tab Switching
-    function openTab(tabId) {
-      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-      
-      document.getElementById(tabId).classList.add('active');
-      event.target.classList.add('active');
-    }
-
-    // Modal Handling
     function openModal(id) {
       document.getElementById(id).classList.add('active');
       document.body.style.overflow = 'hidden';
