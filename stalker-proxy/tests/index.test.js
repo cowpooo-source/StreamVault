@@ -119,7 +119,7 @@ describe('Backend Integration Tests (index.js)', () => {
         status: 200,
         ok: true,
         headers: new Map([['content-type', 'application/json']]),
-        json: () => Promise.resolve({ ok: true }),
+        body: { pipe: (res) => res.send(JSON.stringify({ ok: true })) },
       });
 
       const res = await request(app).get('/proxy?url=https://example.com/data');
