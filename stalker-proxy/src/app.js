@@ -199,13 +199,19 @@ function createApp(deps) {
     const { url } = req.query;
     if (!url || !(await isUrlAllowed(url))) return res.status(400).end();
     try {
-      const tt = transferTimeout(60000);
+      // Allow up to 5 minutes for massive VOD/Series JSON dumps
+      const tt = transferTimeout(300000);
       req.on("close", () => tt.abort());
-      const r = await fetch(url, { timeout: 60000, signal: tt.signal });
-      const ct = r.headers.get("content-type") || "";
-      if (ct.includes("json")) res.json(await r.json());
-      else { res.set("Content-Type", ct || "text/plain"); r.body.pipe(res); }
-    } catch { res.status(502).end(); }
+      const r = await fetch(url, { timeout: 300000, signal: tt.signal });
+      
+      const ct = r.headers.get("content-type") || "application/json";
+      res.set("Content-Type", ct);
+      
+      // Always pipe the stream to avoid buffering 100MB+ strings in memory
+      r.body.pipe(res);
+    } catch (e) { 
+      if (!res.headersSent) res.status(502).end(); 
+    }
   });
 
   return app;
