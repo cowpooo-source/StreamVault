@@ -1,6 +1,3 @@
-- [x] **BUG (Critical): Empty proxy responses for large Xtream lists**
-  When adding a new Xtream connection, large `get_series` or `get_vod_streams` requests (e.g., 115k items) sometimes return a `200 OK` but an empty response body from the `/proxy` endpoint, resulting in "No content found".
-
 - [ ] **FEATURE: Multi-Portal Global Search**
   Search across all saved user connections simultaneously instead of just the active one.
   - Implement an async aggregator that queries `idbCache` for all items in the `connections` array.
