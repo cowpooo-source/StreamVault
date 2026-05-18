@@ -202,15 +202,32 @@ function createApp(deps) {
       // Allow up to 5 minutes for massive VOD/Series JSON dumps
       const tt = transferTimeout(300000);
       req.on("close", () => tt.abort());
-      const r = await fetch(url, { timeout: 300000, signal: tt.signal });
-      
+
+      // Clean headers: Prevent 304s and provide a standard User-Agent,
+      // but do NOT forward the Host or Origin headers to the upstream provider.
+      const headers = { 
+        "User-Agent": req.headers["user-agent"] || "StreamVault/1.0",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+      };
+
+      const r = await fetch(url, { timeout: 300000, signal: tt.signal, headers });
+
       const ct = r.headers.get("content-type") || "application/json";
       res.set("Content-Type", ct);
-      
+
+      // Forward the upstream status code
+      res.status(r.status);
+
+      // Handle 304 edge case (though no-cache headers above should prevent it)
+      if (r.status === 304) {
+        return res.json([]);
+      }
+
       // Always pipe the stream to avoid buffering 100MB+ strings in memory
       r.body.pipe(res);
-    } catch (e) { 
-      if (!res.headersSent) res.status(502).end(); 
+    } catch (e) {
+      if (!res.headersSent) res.status(502).end();
     }
   });
 
