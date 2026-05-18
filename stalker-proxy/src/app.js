@@ -201,7 +201,7 @@ function createApp(deps) {
     try {
       const tt = transferTimeout(60000);
       req.on("close", () => tt.abort());
-      const r = await fetch(url, { timeout: 30000, signal: tt.signal });
+      const r = await fetch(url, { timeout: 60000, signal: tt.signal });
       const ct = r.headers.get("content-type") || "";
       if (ct.includes("json")) res.json(await r.json());
       else { res.set("Content-Type", ct || "text/plain"); r.body.pipe(res); }

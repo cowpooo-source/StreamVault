@@ -23,7 +23,6 @@ const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
 
 function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
-    console.log("[Adsterra] Enabled:", ENABLE_ADSTERRA, "AllowedPage:", onAllowedPage, "Eligible:", isAdEligible);
     if (!ENABLE_ADSTERRA || !onAllowedPage || !isAdEligible) return;
 
     // ✅ Check cooldown BEFORE doing anything
@@ -71,7 +70,6 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
 // ── HilltopAds In-App Push ──
 function HilltopPushAd({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
-    console.log("[Hilltop] Enabled:", ENABLE_HILLTOP, "AllowedPage:", onAllowedPage, "Eligible:", isAdEligible);
     if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
 
     const script = document.createElement("script");
