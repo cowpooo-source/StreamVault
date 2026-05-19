@@ -4078,7 +4078,7 @@ export default function App() {
               <div className="c-search-wrap">
                 <span className="c-search-icon">🔍</span>
                 <input className="c-search" placeholder={`${t("search")} ${LABEL[section]}…`}
-                  value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+                  value={search} onChange={e => handleSearch(e.target.value)} />
               </div>
             </>
           )}
@@ -4087,7 +4087,7 @@ export default function App() {
               <span className="c-search-icon">🔍</span>
               <input className="c-search" style={{width:"100%"}} placeholder={t("searchAll")}
                 autoFocus
-                value={globalQ} onChange={e => setGlobalQ(e.target.value)} />
+                value={globalQ} onChange={e => handleGlobalSearch(e.target.value)} />
             </div>
           )}
         </div>
@@ -4099,8 +4099,8 @@ export default function App() {
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="settings" ? (
           <SettingsView connections={connections} favs={favs} history={history}
-            authUser={authUser} isGuest={isGuest} activeConnId={activeConnId}
-            onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} t={t} />
+            authUser={authUser} activeConnId={activeConnId}
+            onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} />
 
         ) : section==="hls" ? (
           <DirectHLSView />
@@ -4816,7 +4816,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 });
 
 // ── Settings View ──
-function SettingsView({ connections, authUser, isGuest, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, t }) {
+function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore }) {
   const [tab, setTab] = useState("general");
   const [importErr, setImportErr] = useState("");
   const [importOk, setImportOk] = useState("");
