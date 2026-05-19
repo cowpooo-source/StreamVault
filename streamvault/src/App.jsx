@@ -3092,13 +3092,8 @@ export default function App() {
   }
 
   function switchSection(s) {
-    if ((s === "vod" || s === "series") && section !== s) {
-      localStorage.setItem("sv-lastSection", JSON.stringify(s));
-      window.location.reload();
-      return;
-    }
-
     setSection(s); setSearch(""); setPage(1); setExpandedItem(null);
+    localStorage.setItem("sv-lastSection", JSON.stringify(s));
     if (s === "vod") {
       if (conn?.type === "stalker") { setCat(null); loadStalkerCats("vod"); }
       else { setCat("All"); fetchVOD(); }
