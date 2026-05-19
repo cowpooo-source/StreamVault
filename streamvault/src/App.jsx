@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo, useDeferredValue } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { createPortal } from "react-dom";
 import "./app.css";
 import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics } from "./utils.js";
 import Player from "./components/Player.jsx";
-import TimelineGrid from "./components/TimelineGrid.jsx";
+import VirtualGrid from "./components/VirtualGrid.jsx";
 import AuthScreen from './components/AuthScreen.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 
@@ -4230,38 +4231,18 @@ export default function App() {
                     />
                   </div>
                 ) : (
-                  <div key="vod-wrapper" className="vod-grid">
-                    {paginatedItems.map((item,i) => {
-                      const faved = isFav(item);
-                      const hist = historyMap.get(item.id || item.url);
-                      const pct = hist?.position && hist?.duration ? Math.min(100, (hist.position/hist.duration)*100) : 0;
-                      return (
-                        <div key={item.id||i} className="vod-card" onClick={() => playItem(item)} title={item.name}>
-                          {item.logo
-                            ? <img className="vod-poster" loading="lazy" src={imgSrc(item.logo)} alt="" onError={e=>e.target.style.display="none"} />
-                            : <div className="vod-ph">{section==="series"?"📽":"🎬"}</div>}
-                          {pct > 2 && (
-                            <div className="resume-bar"><div className="resume-fill" style={{width:`${pct}%`}} /></div>
-                          )}
-                          <div className="vod-info">
-                            <div className="vod-title">{item.name}</div>
-                            <div className="vod-meta">
-                              {[item.year, item.rating && `★${parseFloat(item.rating||0).toFixed(1)}`].filter(Boolean).join(" · ")}
-                            </div>
-                          </div>
-                          <button className={`vod-fav ${faved?"on":""}`}
-                            onClick={e=>{e.stopPropagation();toggleFav(item);}}>
-                            {faved?"♥":"♡"}
-                          </button>
-                          {(item.type==="vod"||item.type==="series") && (
-                            <button className="vod-info-btn" onClick={e=>{e.stopPropagation();setExpandedItem(item);}} title="Details">ⓘ</button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <VirtualGrid 
+                    items={curItems}
+                    section={section}
+                    isFav={isFav}
+                    historyMap={historyMap}
+                    playItem={playItem}
+                    toggleFav={toggleFav}
+                    setExpandedItem={setExpandedItem}
+                    imgSrc={imgSrc}
+                  />
                 )}
-                {hasMore && section !== "live" && (
+                {hasMore && section === "live" && (
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
                     <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
                   </div>
