@@ -2324,12 +2324,15 @@ export default function App() {
   const isAdEligible = userRole === "guest" || userRole === "free" || userRole === "regular";
   const userLimits = authUser?.limits || (isGuest ? { maxConnections: 2, maxVod: 500, epg: true, sync: false } : null);
 
+  const upgradePromptShown = useRef(false);
+
   // Show upgrade prompt for free/guest users on login
   useEffect(() => {
-    if (!authLoading && (userRole === "free" || userRole === "guest")) {
+    if (!authLoading && (userRole === "free" || userRole === "guest") && !upgradePromptShown.current) {
       // Small delay to let the UI settle
       const timer = setTimeout(() => {
         setShowUpgradePrompt(true);
+        upgradePromptShown.current = true;
       }, 1500);
       return () => clearTimeout(timer);
     }
@@ -2341,6 +2344,8 @@ export default function App() {
   const [vod, setVod]         = useState([]);
   const [series, setSeries]   = useState([]);
   const [loading, setLoading] = useState(false);
+  const [vodSyncing, setVodSyncing] = useState(false);
+  const [seriesSyncing, setSeriesSyncing] = useState(false);
 
   // ── series detail modal
   const [seriesDetail, setSeriesDetail] = useState(null); // {item, seasons, activeSeason}
@@ -2800,7 +2805,10 @@ export default function App() {
       if (cached && cached.length) { setVod(cached); return; }
     }
     if (!force && vod.length) return;
+    
     if (!background) setLoading(true);
+    else setVodSyncing(true);
+
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getVODCategories(), api.getVOD()]);
@@ -2817,7 +2825,10 @@ export default function App() {
         setLastSynced(prev => { const n = { ...prev, vod: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
     } catch(e) { console.error(e); }
-    finally { if (!background) setLoading(false); }
+    finally { 
+      if (!background) setLoading(false); 
+      else setVodSyncing(false);
+    }
   }
 
   async function fetchSeries(force = false, background = false) {
@@ -2828,7 +2839,10 @@ export default function App() {
       if (cached && cached.length) { setSeries(cached); return; }
     }
     if (!force && series.length) return;
+    
     if (!background) setLoading(true);
+    else setSeriesSyncing(true);
+
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getSeriesCategories(), api.getSeries()]);
@@ -2844,7 +2858,10 @@ export default function App() {
         setLastSynced(prev => { const n = { ...prev, series: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
     } catch(e) { console.error(e); }
-    finally { if (!background) setLoading(false); }
+    finally { 
+      if (!background) setLoading(false); 
+      else setSeriesSyncing(false);
+    }
   }
 
   async function fetchStalkerChannels(force = false) {
@@ -4155,10 +4172,16 @@ export default function App() {
               </div>
             ) : curItems.length === 0 ? (
               <div className="empty">
-                <div className="empty-icon">{section==="live"?"📺":section==="vod"?"🎬":"📽"}</div>
-                <div className="empty-t">{t("noContent")}</div>
-                <div className="empty-s">
-                  {conn.type==="stalker" ? t("stalkerHint") : t("tryDifferent")}
+                <div className="empty-icon">
+                  {section === "vod" && vodSyncing ? "🔄" : section === "series" && seriesSyncing ? "🔄" : section === "live" ? "📺" : section === "vod" ? "🎬" : "📽"}
+                </div>
+                <div className="empty-t">
+                  {section === "vod" && vodSyncing ? "Synchronizing VOD library..." : section === "series" && seriesSyncing ? "Synchronizing Series library..." : t("noContent")}
+                </div>
+                <div className="empty-s" style={{maxWidth: "400px", margin: "0 auto", lineHeight: "1.5"}}>
+                  {section === "vod" && vodSyncing || section === "series" && seriesSyncing
+                    ? "Downloading data from provider in the background. Massive libraries (100k+ items) may take up to 5 minutes to generate on the provider's end."
+                    : conn.type === "stalker" ? t("stalkerHint") : t("tryDifferent")}
                 </div>
               </div>
             ) : (
