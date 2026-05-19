@@ -2798,6 +2798,10 @@ export default function App() {
 
   async function fetchVOD(force = false, background = false) {
     if (!conn || conn.type !== "xtream") return;
+    
+    // Prevent overlapping requests if a sync is already happening
+    if (vodSyncing && !background) return;
+
     const cId = connId(conn);
     // Check IDB first (unless force refresh)
     if (!force && cId && !vod.length) {
@@ -2833,6 +2837,10 @@ export default function App() {
 
   async function fetchSeries(force = false, background = false) {
     if (!conn || conn.type !== "xtream") return;
+
+    // Prevent overlapping requests
+    if (seriesSyncing && !background) return;
+
     const cId = connId(conn);
     if (!force && cId && !series.length) {
       const cached = await idbCache.get(`content:${cId}:series`);
