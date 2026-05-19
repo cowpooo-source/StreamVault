@@ -3045,7 +3045,7 @@ export default function App() {
       if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
 
       const res = await fetch(`${API}/stalker/epg?${params.toString()}`);
-      const data = await res.json();
+      const data = await safeJsonFetch(res);
       if (token !== epgLoadToken.current) return; // Stale, ignore
       if (data.programs) {
         const id = `stalker:${conn.server}:${conn.mac}`;
