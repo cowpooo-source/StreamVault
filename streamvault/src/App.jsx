@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo, useDeferredValue } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
 import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics } from "./utils.js";
@@ -2365,12 +2365,14 @@ export default function App() {
   const [cat, setCat]         = useState("All");
   const [catSearch, setCatSearch] = useState("");
   const [search, setSearch]   = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
   const [autoLoadMore, setAutoLoadMore] = useState(() => {
     try { return JSON.parse(localStorage.getItem("sv-autoLoadMore") || "false"); } catch { return false; }
   });
   const [globalQ, setGlobalQ] = useState("");
+  const deferredGlobalQ = useDeferredValue(globalQ);
   const [playing, setPlaying] = useState(null);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
   const [showCatEditor, setShowCatEditor] = useState(null); // section name or null
@@ -2407,7 +2409,7 @@ export default function App() {
       setCat("All");
       setPage(1);
     }
-  }, [hiddenCats, section, cat]);
+  }, [hiddenCats, section, cat, isCatHidden]);
 
   // ── EPG
   const [epgURL, setEpgURL]   = useState("");
@@ -2438,7 +2440,7 @@ export default function App() {
     if (!epgSources.some(s => s.id === activeEpgSource)) {
       setActiveEpgSource("all");
     }
-  }, [epgSources]);
+  }, [epgSources, activeEpgSource]);
 
   // Clear EPG sources whenever connection changes (safety net for all code paths)
   useEffect(() => {
@@ -2488,7 +2490,7 @@ export default function App() {
     setFbMsg("");
     setFbDone(true);
     setTimeout(() => { setFbDone(false); setFbOpen(false); }, 1800);
-  }, [fbMsg, fbSending]);
+  }, [fbMsg, fbSending, section]);
 
   // ── CSS injection
   useEffect(() => {
@@ -2497,7 +2499,7 @@ export default function App() {
   }, [themeName]);
 
   // ── Debounced Search for Analytics
-  const debouncedSearch = useCallback(debounce((term, type) => {
+  const debouncedSearch = useMemo(() => debounce((term, type) => {
     const queryLength = term.trim().length;
     if (queryLength > 0) trackAnalytics("search", { 
       query_length: queryLength, 
@@ -2517,12 +2519,14 @@ export default function App() {
   }
 
   // ── TMDB enrichment for detail modal
-  function tmdbUrl(path, params = "") {
-    if (tmdbKey === "server") return `${API}/api/tmdb/${path}?${params}`;
-    return `https://api.themoviedb.org/3/${path}?api_key=${tmdbKey}&${params}`;
-  }
   useEffect(() => {
     if (!expandedItem || !tmdbKey) { setTmdbData(null); setShowTrailer(false); return; }
+    
+    function tmdbUrl(path, params = "") {
+      if (tmdbKey === "server") return `${API}/api/tmdb/${path}?${params}`;
+      return `https://api.themoviedb.org/3/${path}?api_key=${tmdbKey}&${params}`;
+    }
+
     setTmdbData(null);
     setShowTrailer(false);
     const isMovie = expandedItem.type === "vod";
@@ -3520,10 +3524,10 @@ export default function App() {
       } else {
         catMatch = item.group === cat;
       }
-      const searchMatch = !search || item.name?.toLowerCase().includes(search.toLowerCase());
+      const searchMatch = !deferredSearch || item.name?.toLowerCase().includes(deferredSearch.toLowerCase());
       return catMatch && searchMatch;
     });
-  }, [cat, getItems, search, section, hiddenCats]);
+  }, [cat, getItems, deferredSearch, section, hiddenCats, isCatHidden]);
 
   const favItems = useMemo(() => ({
     live: Object.values(favs.live||{}),
@@ -3576,10 +3580,10 @@ export default function App() {
 
   // ── global search
   const searchResults = useMemo(() => {
-    if (globalQ.length <= 1) return [];
-    const q = globalQ.toLowerCase();
+    if (deferredGlobalQ.length <= 1) return [];
+    const q = deferredGlobalQ.toLowerCase();
     return [...channels, ...vod, ...series].filter(i => i.name?.toLowerCase().includes(q)).slice(0, 80);
-  }, [globalQ, channels, vod, series]);
+  }, [deferredGlobalQ, channels, vod, series]);
 
   const onAllowedPage = (authUser || isGuest) && !!conn;
   const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
