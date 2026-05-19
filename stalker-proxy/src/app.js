@@ -206,7 +206,17 @@ function createApp(deps) {
       
       const ct = r.headers.get("content-type") || "application/json";
       res.set("Content-Type", ct);
-      
+
+
+
+      // Forward the upstream status code
+      res.status(r.status);
+
+      // Handle 304 edge case (though no-cache headers above should prevent it)
+      if (r.status === 304) {
+        return res.json([]);
+      }
+
       // Always pipe the stream to avoid buffering 100MB+ strings in memory
       r.body.pipe(res);
     } catch (e) { 
