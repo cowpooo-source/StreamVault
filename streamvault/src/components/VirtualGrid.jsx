@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 const CARD_MIN_WIDTH = 132;
@@ -12,46 +12,47 @@ export default function VirtualGrid({
   playItem, 
   toggleFav, 
   setExpandedItem,
-  imgSrc
+  imgSrc,
+  scrollRef // Added prop for global scroll context
 }) {
-  const parentRef = useRef(null);
-  const [columns, setColumns] = useState(1);
+  const containerRef = useRef(null);
+  const [gridMetrics, setGridMetrics] = useState({ columns: 1, rowHeight: 285 });
 
-  // Measure parent width to calculate columns
+  // Measure parent width to calculate exact columns and row height dynamically
   useEffect(() => {
-    if (!parentRef.current) return;
+    if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
       for (let entry of entries) {
         const width = entry.contentRect.width;
-        // Calculate how many columns fit: (width + gap) / (minWidth + gap)
-        const cols = Math.floor((width + GAP) / (CARD_MIN_WIDTH + GAP));
-        setColumns(Math.max(1, cols));
+        if (width === 0) continue;
+        
+        // Calculate columns based on CSS grid logic
+        const columns = Math.max(1, Math.floor((width + GAP) / (CARD_MIN_WIDTH + GAP)));
+        
+        // Calculate exact width of a single card
+        const cardWidth = (width - ((columns - 1) * GAP)) / columns;
+        
+        // Poster aspect ratio is ~2:3 (1.5x width). Add ~60px for text info + gap
+        const rowHeight = (cardWidth * 1.5) + 60 + GAP;
+
+        setGridMetrics({ columns, rowHeight });
       }
     });
-    observer.observe(parentRef.current);
+    observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
 
-  const rowCount = Math.ceil(items.length / columns);
-  
-  // Approximate row height: Card width (1fr) is typically roughly equal to min-width on average.
-  // Aspect ratio is 2:3 for poster, plus ~60px for info.
-  // Assuming average width is 150px: poster height = 225px. Total height ~ 285px.
-  const estimateRowHeight = () => 285;
+  const rowCount = Math.ceil(items.length / gridMetrics.columns);
 
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
-    getScrollElement: () => parentRef.current,
-    estimateSize: estimateRowHeight,
-    overscan: 2, // Load 2 rows off-screen
+    getScrollElement: () => scrollRef?.current || null,
+    estimateSize: () => gridMetrics.rowHeight,
+    overscan: 3, // Load a few extra rows to prevent flickering during fast scroll
   });
 
   return (
-    <div 
-      ref={parentRef} 
-      style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}
-      className="virtual-scroll-container"
-    >
+    <div ref={containerRef} style={{ width: '100%', position: 'relative' }}>
       <div
         style={{
           height: `${rowVirtualizer.getTotalSize()}px`,
@@ -60,8 +61,8 @@ export default function VirtualGrid({
         }}
       >
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const startIndex = virtualRow.index * columns;
-          const rowItems = items.slice(startIndex, startIndex + columns);
+          const startIndex = virtualRow.index * gridMetrics.columns;
+          const rowItems = items.slice(startIndex, startIndex + gridMetrics.columns);
 
           return (
             <div
@@ -74,7 +75,7 @@ export default function VirtualGrid({
                 height: `${virtualRow.size}px`,
                 transform: `translateY(${virtualRow.start}px)`,
                 display: 'grid',
-                gridTemplateColumns: `repeat(${columns}, 1fr)`,
+                gridTemplateColumns: `repeat(${gridMetrics.columns}, 1fr)`,
                 gap: `${GAP}px`,
                 paddingBottom: `${GAP}px`, // act as row gap
                 boxSizing: 'border-box'

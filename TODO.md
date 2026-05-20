@@ -1,7 +1,10 @@
+- [ ] **BUG: EPG programs overlapping on top of each other**
+  Investigate the `TimelineGrid` rendering logic to identify why program blocks are overlapping. Check for duplicate timestamps, time zone mismatches, or CSS grid alignment issues.
+
 - [ ] **REFACTOR: Component Extraction from App.jsx**
   Extract large sub-components (`SettingsView`, `DiscoverView`, `Setup`, `StalkerPlayer`, etc.) into standalone files in `src/components/` to improve maintainability and hot-reloading speed.
 
-- [ ] **PERF: Implement Grid Virtualization**
+- [x] **PERF: Implement Grid Virtualization**
   Use `react-window` or a similar technique for VOD and Series grids to ensure only visible items are rendered, preventing browser crashes with 100k+ item libraries.
 
 - [ ] **TECH DEBT: Fix Exhaustive Hook Dependencies**

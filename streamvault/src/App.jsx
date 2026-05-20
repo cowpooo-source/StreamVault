@@ -4241,6 +4241,7 @@ export default function App() {
                     toggleFav={toggleFav}
                     setExpandedItem={setExpandedItem}
                     imgSrc={imgSrc}
+                    scrollRef={contentScrollRef}
                   />
                 )}
                 {hasMore && section === "live" && (
