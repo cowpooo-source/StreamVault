@@ -4194,45 +4194,34 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div
-                ref={contentScrollRef}
-                onScroll={handleContentScroll}
-                style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}
-              >
-                {/* Recommendations row */}
-                {recommendations.length > 0 && !search && cat === "All" && (
-                  <div style={{marginBottom:".8rem",flexShrink:0}}>
-                    <div style={{fontSize:".78rem",fontWeight:600,color:"var(--t2)",marginBottom:".4rem",paddingLeft:".2rem"}}>
-                      Recommended for you
-                    </div>
-                    <div style={{display:"flex",gap:".5rem",overflowX:"auto",paddingBottom:".4rem"}}>
-                      {recommendations.map((item, i) => (
-                        <div key={item.id||i} style={{flexShrink:0,width:110,cursor:"pointer"}} onClick={() => playItem(item)}>
-                          {item.logo
-                            ? <img src={imgSrc(item.logo)} alt="" style={{width:110,aspectRatio:"2/3",objectFit:"cover",borderRadius:8,background:"var(--s2)",display:"block"}} onError={e=>e.target.style.display="none"} />
-                            : <div style={{width:110,aspectRatio:"2/3",background:"var(--s2)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem"}}>{section==="series"?"📽":"🎬"}</div>}
-                          <div style={{fontSize:".65rem",marginTop:".2rem",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"var(--t2)"}}>{item.name}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 {section==="live" ? (
-                  <div key="live-wrapper" className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                    <TimelineGrid
-                      key={activeEpgSource}
-                      ref={liveGridRef}
-                      channels={paginatedItems}
-                      epgData={epgData}
-                      onPlay={playItem}
-                      onPlayCatchup={playCatchup}
-                      hasMore={hasMore}
-                      onLoadMore={() => setPage(p=>p+1)}
-                      loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
-                    />
+                  <div
+                    ref={contentScrollRef}
+                    onScroll={handleContentScroll}
+                    style={{flex:1,display:"flex",flexDirection:"column",overflow:"auto",minHeight:0}}
+                  >
+                    <div key="live-wrapper" className="live-timeline-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <TimelineGrid
+                        key={activeEpgSource}
+                        ref={liveGridRef}
+                        channels={paginatedItems}
+                        epgData={epgData}
+                        onPlay={playItem}
+                        onPlayCatchup={playCatchup}
+                        hasMore={hasMore}
+                        onLoadMore={() => setPage(p=>p+1)}
+                        loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
+                      />
+                    </div>
+                    {hasMore && (
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
+                        <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <VirtualGrid 
+                    key={section + cat + search}
                     items={curItems}
                     section={section}
                     isFav={isFav}
@@ -4241,15 +4230,28 @@ export default function App() {
                     toggleFav={toggleFav}
                     setExpandedItem={setExpandedItem}
                     imgSrc={imgSrc}
-                    scrollRef={contentScrollRef}
+                    header={
+                      recommendations.length > 0 && !search && cat === "All" && (
+                        <div style={{marginBottom:".8rem",flexShrink:0}}>
+                          <div style={{fontSize:".78rem",fontWeight:600,color:"var(--t2)",marginBottom:".4rem",paddingLeft:".2rem"}}>
+                            Recommended for you
+                          </div>
+                          <div style={{display:"flex",gap:".5rem",overflowX:"auto",paddingBottom:".4rem"}}>
+                            {recommendations.map((item, i) => (
+                              <div key={item.id||i} style={{flexShrink:0,width:110,cursor:"pointer"}} onClick={() => playItem(item)}>
+                                {item.logo
+                                  ? <img src={imgSrc(item.logo)} alt="" style={{width:110,aspectRatio:"2/3",objectFit:"cover",borderRadius:8,background:"var(--s2)",display:"block"}} onError={e=>e.target.style.display="none"} />
+                                  : <div style={{width:110,aspectRatio:"2/3",background:"var(--s2)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem"}}>{section==="series"?"📽":"🎬"}</div>}
+                                <div style={{fontSize:".65rem",marginTop:".2rem",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"var(--t2)"}}>{item.name}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    }
                   />
                 )}
-                {hasMore && section === "live" && (
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
-                    <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
-                  </div>
-                )}
-              </div>
+              </>
             )}
           </div>
         )}
