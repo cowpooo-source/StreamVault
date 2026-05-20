@@ -4194,8 +4194,9 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <>
-                {section==="live" ? (
+              ) : (
+                <>
+                  {section==="live" ? (
                   <div
                     ref={contentScrollRef}
                     onScroll={handleContentScroll}
