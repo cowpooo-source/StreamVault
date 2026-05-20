@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import "./app.css";
 import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics } from "./utils.js";
 import Player from "./components/Player.jsx";
+import TimelineGrid from "./components/TimelineGrid.jsx";
 import VirtualGrid from "./components/VirtualGrid.jsx";
 import AuthScreen from './components/AuthScreen.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
