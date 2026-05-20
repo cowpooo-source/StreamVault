@@ -158,13 +158,13 @@ function createApiRouter(deps) {
   });
 
   router.get("/tmdb/*", async (req, res) => {
-    if (!TMDB_KEY) return res.status(503).end();
+    if (!TMDB_KEY) return res.status(503).json({ error: "Server TMDB key not configured" });
     const qs = new URLSearchParams(req.query);
     qs.set("api_key", TMDB_KEY);
     try {
       const r = await fetch(`https://api.themoviedb.org/3/${req.params[0]}?${qs}`);
       res.json(await r.json());
-    } catch { res.status(502).end(); }
+    } catch { res.status(502).json({ error: "Failed to connect to TMDB" }); }
   });
 
   return router;

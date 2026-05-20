@@ -1,3 +1,12 @@
+- [ ] **REFACTOR: Component Extraction from App.jsx**
+  Extract large sub-components (`SettingsView`, `DiscoverView`, `Setup`, `StalkerPlayer`, etc.) into standalone files in `src/components/` to improve maintainability and hot-reloading speed.
+
+- [ ] **PERF: Implement Grid Virtualization**
+  Use `react-window` or a similar technique for VOD and Series grids to ensure only visible items are rendered, preventing browser crashes with 100k+ item libraries.
+
+- [ ] **TECH DEBT: Fix Exhaustive Hook Dependencies**
+  Surgically resolve all `react-hooks/exhaustive-deps` warnings in `App.jsx` and `Player.jsx` to prevent stale closure bugs.
+
 - [ ] **FEATURE: Multi-Portal Global Search**
   Search across all saved user connections simultaneously instead of just the active one.
   - Implement an async aggregator that queries `idbCache` for all items in the `connections` array.

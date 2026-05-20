@@ -2545,9 +2545,9 @@ export default function App() {
         if (!match || cancelled) return;
 
         const [details, credits, videos] = await Promise.all([
-          fetch(tmdbUrl(`${type}/${match.id}`, "language=en-US")).then(r => r.json()),
-          fetch(tmdbUrl(`${type}/${match.id}/credits`)).then(r => r.json()).catch(() => null),
-          fetch(tmdbUrl(`${type}/${match.id}/videos`, "language=en-US")).then(r => r.json()).catch(() => null),
+          fetch(tmdbUrl(`${type}/${match.id}`, "language=en-US")).then(safeJsonFetch),
+          fetch(tmdbUrl(`${type}/${match.id}/credits`)).then(safeJsonFetch).catch(() => null),
+          fetch(tmdbUrl(`${type}/${match.id}/videos`, "language=en-US")).then(safeJsonFetch).catch(() => null),
         ]);
         if (cancelled) return;
 
@@ -5062,9 +5062,9 @@ const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, seri
         ? `${API}/api/tmdb/${path}?language=en-US`
         : `https://api.themoviedb.org/3/${path}?api_key=${key}&language=en-US`;
       const [t, pm, ptv] = await Promise.all([
-        fetch(u("trending/all/week")).then(r => r.json()),
-        fetch(u("movie/popular")).then(r => r.json()),
-        fetch(u("tv/popular")).then(r => r.json()),
+        fetch(u("trending/all/week")).then(safeJsonFetch),
+        fetch(u("movie/popular")).then(safeJsonFetch),
+        fetch(u("tv/popular")).then(safeJsonFetch),
       ]);
       if (t.success === false) throw new Error(t.status_message || "Invalid API key");
       setTrending(t.results || []);
