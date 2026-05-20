@@ -4194,7 +4194,6 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              ) : (
                 <>
                   {section==="live" ? (
                   <div
