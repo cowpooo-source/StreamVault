@@ -3,7 +3,7 @@ import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalyti
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 
-function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, t: pt, isAdEligible }) {
+function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
@@ -826,7 +826,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
               💬
             </button>
           )}
-          {current.type === "live" && epgData?.[current.epgId] && (
+          {connType === "stalker" && current.type === "live" && epgData?.[current.epgId] && (
             <button className={`player-ctrl${showCatchupMenu?" on":""}`} onClick={() => { setShowCatchupMenu(s=>!s); setShowTracksMenu(false); }} title="Catch-up TV">
               ↩️
             </button>

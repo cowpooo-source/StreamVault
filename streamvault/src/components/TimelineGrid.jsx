@@ -27,7 +27,7 @@ function buildProgClickHandler(progs, channels, onPlay, onPlayCatchup) {
   };
 }
 
-const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup, hasMore, onLoadMore, loadText }, outerRef) {
+const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup, hasMore, onLoadMore, loadText, showCatchup }, outerRef) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const nowMsRef = useRef(nowMs);
   nowMsRef.current = nowMs;
@@ -153,11 +153,11 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
                         data-prog-idx={pi}
                         data-ch-idx={rowIdx}
                         data-is-past={p.isPast ? "1" : "0"}
-                        title={`${p.title}\n${p.startLabel} – ${p.stopLabel}${p.isPast ? "\nClick to play catchup" : ""}`}
+                        title={`${p.title}\n${p.startLabel} – ${p.stopLabel}${p.isPast && showCatchup ? "\nClick to play catchup" : ""}`}
                       >
                         {widthPx > 50 && (
                           <div className="epg-prog-t">
-                            {p.isPast && <span className="epg-catchup-icon">↩️</span>}
+                            {p.isPast && showCatchup && <span className="epg-catchup-icon">↩️</span>}
                             {p.title}
                           </div>
                         )}

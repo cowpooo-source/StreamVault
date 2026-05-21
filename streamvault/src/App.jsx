@@ -9,219 +9,7 @@ import VirtualGrid from "./components/VirtualGrid.jsx";
 import AuthScreen from './components/AuthScreen.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 
-// Guest ID for analytics tracking
-const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
-setEncKeySource(GUEST_ID);
-// Auth: relies solely on httpOnly cookies (no localStorage token fallback to prevent XSS theft)
-function authHeaders(extra = {}) { return { ...extra, "X-Guest-Id": GUEST_ID }; }
-function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
-function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
-
-// VAST functions are now in vast.js
-
-// ── Adsterra Social Bar ──
-const ADSTERRA_COOLDOWN_MS = 3 * 60 * 1000;
-const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
-
-function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
-  useEffect(() => {
-    if (!ENABLE_ADSTERRA || !onAllowedPage || !isAdEligible) return;
-
-    // ✅ Check cooldown BEFORE doing anything
-    const closedAt = localStorage.getItem(ADSTERRA_STORAGE_KEY);
-    if (closedAt && (Date.now() - parseInt(closedAt)) < ADSTERRA_COOLDOWN_MS) return;
-
-    const script = document.createElement("script");
-    script.type = "text/javascript";
-    script.src = ADSTERRA_URL;
-    script.async = true;
-    document.head.appendChild(script);
-
-    const observer = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        for (const node of m.removedNodes) {
-          if (node.nodeType === 1) {
-            const isAdBar =
-              node.id?.startsWith("at_") ||
-              node.className?.includes("adsterra") ||
-              node.className?.includes("social-bar");
-
-            if (isAdBar) {
-              localStorage.setItem(ADSTERRA_STORAGE_KEY, Date.now().toString());
-              observer.disconnect();
-              // ✅ No setTicket — don't re-trigger the effect at all
-            }
-          }
-        }
-      }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    return () => {
-      observer.disconnect();
-      if (document.head.contains(script)) {
-        document.head.removeChild(script);
-      }
-    };
-  }, [onAllowedPage, isAdEligible]); // ✅ Only re-evaluate if the page eligibility changes
-
-  return null;
-}
-
-// ── HilltopAds In-App Push ──
-function HilltopPushAd({ onAllowedPage, isAdEligible }) {
-  useEffect(() => {
-    if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
-
-    const script = document.createElement("script");
-    script.innerHTML = `
-      (function(ntjo){
-        var d = document,
-            s = d.createElement('script'),
-            l = d.scripts[d.scripts.length - 1];
-        s.settings = ntjo || {};
-        s.src = "//quarrelsomebitter.com/bZXCVus.dCGClN0XYMWvcM/neqmn9LudZDULlCkUPiT/c/w-Mlj_AQ0vNFDvE-tZNKzVA/yTMVDeQP0/NIQD";
-        s.async = true;
-        s.referrerPolicy = 'no-referrer-when-downgrade';
-        l.parentNode.insertBefore(s, l);
-      })({})
-    `;
-    document.head.appendChild(script);
-
-    return () => {
-      if (document.head.contains(script)) {
-        document.head.removeChild(script);
-      }
-    };
-  }, [onAllowedPage, isAdEligible]);
-
-  return null;
-}
-
-// ── Reset Password Modal ──
-function ResetPasswordModal({ token, onClose }) {
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [done, setDone] = useState(false);
-
-  async function submit(e) {
-    e?.preventDefault();
-    if (!password) return setErr("Password is required");
-    if (password !== confirm) return setErr("Passwords do not match");
-    setErr(""); setLoading(true);
-    try {
-      const res = await fetch(`${API}/api/auth/reset-password`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed");
-      setDone(true);
-    } catch (e) { setErr(e.message); }
-    finally { setLoading(false); }
-  }
-
-  return (
-    <div className="modal-ov">
-      <div className="modal" style={{maxWidth:380}}>
-        <div className="modal-title" style={{textAlign:"center",marginBottom:"1.5rem"}}>Reset Password</div>
-        {done ? (
-          <div style={{textAlign:"center"}}>
-            <div style={{background:"rgba(0,212,255,0.1)",color:"var(--accent)",padding:".8rem",borderRadius:8,fontSize:".85rem",marginBottom:"1.5rem",border:"1px solid var(--accent-22)"}}>
-              Password successfully reset! You can now log in with your new password.
-            </div>
-            <button className="btn-primary" onClick={onClose} style={{width:"100%"}}>Go to Login</button>
-          </div>
-        ) : (
-          <form onSubmit={submit}>
-            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
-            <div className="fg">
-              <label className="fl">New Password</label>
-              <input className="fi" type="password" placeholder="New Password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
-            </div>
-            <div className="fg">
-              <label className="fl">Confirm New Password</label>
-              <input className="fi" type="password" placeholder="Confirm Password" value={confirm} onChange={e => setConfirm(e.target.value)} />
-            </div>
-            <div className="modal-btns" style={{marginTop:"1.5rem"}}>
-              <button type="button" className="btn-cancel" onClick={onClose} disabled={loading} style={{flex:1}}>Cancel</button>
-              <button type="submit" className="btn-confirm" disabled={loading} style={{flex:1}}>{loading ? "..." : "Reset"}</button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-}
-
-
-
-// Server sync — fire-and-forget with debounce (uses auth token if logged in)
-const _syncTimers = {};
-function syncToServer(type, connId, data) {
-  const key = `${type}:${connId}`;
-  clearTimeout(_syncTimers[key]);
-  _syncTimers[key] = setTimeout(() => {
-    authFetch(`${API}/api/sync/${type}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ connId, data }),
-    }).catch(() => {});
-  }, 2000);
-}
-
-async function restoreFromServer(type, connId) {
-  try {
-    const res = await authFetch(`${API}/api/sync/${type}?connId=${encodeURIComponent(connId)}`);
-    if (!res.ok) return null;
-    const { data } = await res.json();
-    return data;
-  } catch { return null; }
-}
-
-// Sync connections list to server (encrypted)
-async function syncConnectionsToServer(conns) {
-  const encrypted = await encryptConnections(conns);
-  syncToServer("connections", "_all", encrypted);
-}
-
-// Restore connections from server (decrypt)
-async function restoreConnectionsFromServer() {
-  const data = await restoreFromServer("connections", "_all");
-  return decryptConnections(data);
-}
-
-// Migrate guest data to authenticated user
-async function migrateGuestData() {
-  try {
-    await authFetch(`${API}/api/sync/migrate-guest`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ guestId: GUEST_ID }),
-    });
-  } catch (e) { console.warn("Guest data migration failed:", e.message); }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// THEMES (OTT Navigator style multi-theme)
-// ══════════════════════════════════════════════════════════════════
-const THEMES = {
-  Dark:   { bg:"#07070f", s1:"#0f0f1c", s2:"#16162a", s3:"#1d1d35", accent:"#00d4ff", accent2:"#7c3aed", t1:"#dde0f5", t2:"#8080aa", t3:"#44445a" },
-  Navy:   { bg:"#030b1a", s1:"#061228", s2:"#0d1f3c", s3:"#152850", accent:"#4da6ff", accent2:"#6c63ff", t1:"#d0e8ff", t2:"#6090b8", t3:"#304560" },
-  AMOLED: { bg:"#000000", s1:"#0d0d0d", s2:"#181818", s3:"#222222", accent:"#ff6b35", accent2:"#ff2d55", t1:"#f0f0f0", t2:"#888888", t3:"#444444" },
-  Forest: { bg:"#050f0a", s1:"#0a1f14", s2:"#112a1c", s3:"#1a3828", accent:"#00e896", accent2:"#00b4d8", t1:"#d0ffe8", t2:"#5a9070", t3:"#2a5038" },
-  White:  { bg:"#ffffff", s1:"#f5f5f7", s2:"#ebebef", s3:"#dddde3", accent:"#0066ff", accent2:"#7c3aed", t1:"#1a1a2e", t2:"#5a5a72", t3:"#9a9ab0" },
-  Bright: { bg:"#f8f9fc", s1:"#eef0f6", s2:"#e2e5ee", s3:"#d5d8e3", accent:"#e8364f", accent2:"#ff8c00", t1:"#1c1c28", t2:"#555568", t3:"#8888a0" },
-};
-const THEME_NAMES = Object.keys(THEMES);
-const PROFILE_COLORS = ["#00d4ff","#ff6b35","#00e896","#ff2d55","#a78bfa","#fbbf24"];
-
-// ══════════════════════════════════════════════════════════════════
-// i18n — Multi-language support
-// ══════════════════════════════════════════════════════════════════
+// ── i18n ──
 const RTL_LANGS = ["ar","ur"];
 const LANG_META = {en:"English",es:"Español",fr:"Français",ar:"العربية",pt:"Português",hi:"हिन्दी",ur:"اردو"};
 const LANGS = {
@@ -578,7 +366,7 @@ const LANGS = {
     "pip": "PiP",
     "play": "Reproduzir",
     "go": "Ir",
-    "playPause": "Reproduzir/Pausar",
+    "playPause": "Reproduzir/Pausa",
     "fullscreen": "Tela Cheia",
     "mute": "Mudo",
     "channels": "Canais",
@@ -664,7 +452,7 @@ const LANGS = {
     "mute": "म्यूट",
     "channels": "चैनल",
     "volume": "ध्वनि",
-    "portalURL": "पोर्टل URL",
+    "portalURL": "पोर्टल URL",
     "macAddress": "MAC पता",
     "serverURL": "सर्वर URL",
     "username": "उपयोगकर्ता",
@@ -794,6 +582,217 @@ const LANGS = {
   }
 };
 function _t(lang, key, ...args) { const s = LANGS[lang]?.[key] ?? LANGS.en[key] ?? key; return args.length ? s.replace(/\{(\d+)\}/g, (_, i) => args[i] ?? "") : s; }
+
+// Guest ID for analytics tracking
+const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
+setEncKeySource(GUEST_ID);
+// Auth: relies solely on httpOnly cookies (no localStorage token fallback to prevent XSS theft)
+function authHeaders(extra = {}) { return { ...extra, "X-Guest-Id": GUEST_ID }; }
+function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
+function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
+
+// VAST functions are now in vast.js
+
+// ── Adsterra Social Bar ──
+const ADSTERRA_COOLDOWN_MS = 3 * 60 * 1000;
+const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
+
+function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
+  useEffect(() => {
+    if (!ENABLE_ADSTERRA || !onAllowedPage || !isAdEligible) return;
+
+    // ✅ Check cooldown BEFORE doing anything
+    const closedAt = localStorage.getItem(ADSTERRA_STORAGE_KEY);
+    if (closedAt && (Date.now() - parseInt(closedAt)) < ADSTERRA_COOLDOWN_MS) return;
+
+    const script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src = ADSTERRA_URL;
+    script.async = true;
+    document.head.appendChild(script);
+
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.removedNodes) {
+          if (node.nodeType === 1) {
+            const isAdBar =
+              node.id?.startsWith("at_") ||
+              node.className?.includes("adsterra") ||
+              node.className?.includes("social-bar");
+
+            if (isAdBar) {
+              localStorage.setItem(ADSTERRA_STORAGE_KEY, Date.now().toString());
+              observer.disconnect();
+              // ✅ No setTicket — don't re-trigger the effect at all
+            }
+          }
+        }
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
+    };
+  }, [onAllowedPage, isAdEligible]); // ✅ Only re-evaluate if the page eligibility changes
+
+  return null;
+}
+
+// ── HilltopAds In-App Push ──
+function HilltopPushAd({ onAllowedPage, isAdEligible }) {
+  useEffect(() => {
+    if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
+
+    const script = document.createElement("script");
+    script.innerHTML = `
+      (function(ntjo){
+        var d = document,
+            s = d.createElement('script'),
+            l = d.scripts[d.scripts.length - 1];
+        s.settings = ntjo || {};
+        s.src = "//quarrelsomebitter.com/bZXCVus.dCGClN0XYMWvcM/neqmn9LudZDULlCkUPiT/c/w-Mlj_AQ0vNFDvE-tZNKzVA/yTMVDeQP0/NIQD";
+        s.async = true;
+        s.referrerPolicy = 'no-referrer-when-downgrade';
+        l.parentNode.insertBefore(s, l);
+      })({})
+    `;
+    document.head.appendChild(script);
+
+    return () => {
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
+    };
+  }, [onAllowedPage, isAdEligible]);
+
+  return null;
+}
+
+// ── Reset Password Modal ──
+function ResetPasswordModal({ token, onClose }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+
+  async function submit(e) {
+    e?.preventDefault();
+    if (!password) return setErr("Password is required");
+    if (password !== confirm) return setErr("Passwords do not match");
+    setErr(""); setLoading(true);
+    try {
+      const res = await fetch(`${API}/api/auth/reset-password`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      setDone(true);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="modal-ov">
+      <div className="modal" style={{maxWidth:380}}>
+        <div className="modal-title" style={{textAlign:"center",marginBottom:"1.5rem"}}>Reset Password</div>
+        {done ? (
+          <div style={{textAlign:"center"}}>
+            <div style={{background:"rgba(0,212,255,0.1)",color:"var(--accent)",padding:".8rem",borderRadius:8,fontSize:".85rem",marginBottom:"1.5rem",border:"1px solid var(--accent-22)"}}>
+              Password successfully reset! You can now log in with your new password.
+            </div>
+            <button className="btn-primary" onClick={onClose} style={{width:"100%"}}>Go to Login</button>
+          </div>
+        ) : (
+          <form onSubmit={submit}>
+            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
+            <div className="fg">
+              <label className="fl">New Password</label>
+              <input className="fi" type="password" placeholder="New Password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
+            </div>
+            <div className="fg">
+              <label className="fl">Confirm New Password</label>
+              <input className="fi" type="password" placeholder="Confirm Password" value={confirm} onChange={e => setConfirm(e.target.value)} />
+            </div>
+            <div className="modal-btns" style={{marginTop:"1.5rem"}}>
+              <button type="button" className="btn-cancel" onClick={onClose} disabled={loading} style={{flex:1}}>Cancel</button>
+              <button type="submit" className="btn-confirm" disabled={loading} style={{flex:1}}>{loading ? "..." : "Reset"}</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+
+// Server sync — fire-and-forget with debounce (uses auth token if logged in)
+const _syncTimers = {};
+function syncToServer(type, connId, data) {
+  const key = `${type}:${connId}`;
+  clearTimeout(_syncTimers[key]);
+  _syncTimers[key] = setTimeout(() => {
+    authFetch(`${API}/api/sync/${type}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connId, data }),
+    }).catch(() => {});
+  }, 2000);
+}
+
+async function restoreFromServer(type, connId) {
+  try {
+    const res = await authFetch(`${API}/api/sync/${type}?connId=${encodeURIComponent(connId)}`);
+    if (!res.ok) return null;
+    const { data } = await res.json();
+    return data;
+  } catch { return null; }
+}
+
+// Sync connections list to server (encrypted)
+async function syncConnectionsToServer(conns) {
+  const encrypted = await encryptConnections(conns);
+  syncToServer("connections", "_all", encrypted);
+}
+
+// Restore connections from server (decrypt)
+async function restoreConnectionsFromServer() {
+  const data = await restoreFromServer("connections", "_all");
+  return decryptConnections(data);
+}
+
+// Migrate guest data to authenticated user
+async function migrateGuestData() {
+  try {
+    await authFetch(`${API}/api/sync/migrate-guest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestId: GUEST_ID }),
+    });
+  } catch (e) { console.warn("Guest data migration failed:", e.message); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// THEMES (OTT Navigator style multi-theme)
+// ══════════════════════════════════════════════════════════════════
+const THEMES = {
+  Dark:   { bg:"#07070f", s1:"#0f0f1c", s2:"#16162a", s3:"#1d1d35", accent:"#00d4ff", accent2:"#7c3aed", t1:"#dde0f5", t2:"#8080aa", t3:"#44445a" },
+  Navy:   { bg:"#030b1a", s1:"#061228", s2:"#0d1f3c", s3:"#152850", accent:"#4da6ff", accent2:"#6c63ff", t1:"#d0e8ff", t2:"#6090b8", t3:"#304560" },
+  AMOLED: { bg:"#000000", s1:"#0d0d0d", s2:"#181818", s3:"#222222", accent:"#ff6b35", accent2:"#ff2d55", t1:"#f0f0f0", t2:"#888888", t3:"#444444" },
+  Forest: { bg:"#050f0a", s1:"#0a1f14", s2:"#112a1c", s3:"#1a3828", accent:"#00e896", accent2:"#00b4d8", t1:"#d0ffe8", t2:"#5a9070", t3:"#2a5038" },
+  White:  { bg:"#ffffff", s1:"#f5f5f7", s2:"#ebebef", s3:"#dddde3", accent:"#0066ff", accent2:"#7c3aed", t1:"#1a1a2e", t2:"#5a5a72", t3:"#9a9ab0" },
+  Bright: { bg:"#f8f9fc", s1:"#eef0f6", s2:"#e2e5ee", s3:"#d5d8e3", accent:"#e8364f", accent2:"#ff8c00", t1:"#1c1c28", t2:"#555568", t3:"#8888a0" },
+};
+const THEME_NAMES = Object.keys(THEMES);
+const PROFILE_COLORS = ["#00d4ff","#ff6b35","#00e896","#ff2d55","#a78bfa","#fbbf24"];
+
 
 // ══════════════════════════════════════════════════════════════════
 // STORAGE + GUEST SESSION
@@ -4155,7 +4154,7 @@ export default function App() {
         ) : section==="epg" ? (
           <EPGView channels={channels} epgData={epgData} epgURL={epgURL} setEpgURL={setEpgURL}
             epgSources={epgSources} activeEpgSource={activeEpgSource} setActiveEpgSource={setActiveEpgSource}
-            epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} onPlayCatchup={playCatchup} t={t} />
+            epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} onPlayCatchup={playCatchup} showCatchup={conn?.type === "stalker"} t={t} />
         ) : section==="search" ? (
           <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} />
         ) : section==="favs" ? (
@@ -4743,7 +4742,7 @@ const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggle
 
 
 
-const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, activeEpgSource, setActiveEpgSource, epgLoading, loadEPG, onPlay, onPlayCatchup, t }) {
+const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, activeEpgSource, setActiveEpgSource, epgLoading, loadEPG, onPlay, onPlayCatchup, showCatchup, t }) {
   const PX_PER_MIN = 3;
   const CH_COL_W = 160;
   const MAX_CHANNELS = 200;
@@ -4833,7 +4832,8 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
             ref={outerRef}
             channels={filteredChannels}
             epgData={epgData}
-            onPlay={onPlay}            onPlayCatchup={onPlayCatchup} 
+            onPlay={onPlay}            onPlayCatchup={onPlayCatchup}
+            showCatchup={showCatchup}
           />
 
           {/* Navigation bar */}

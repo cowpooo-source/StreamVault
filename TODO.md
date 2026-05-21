@@ -7,13 +7,13 @@
 - [ ] **FEATURE: Preserve EPG sources across connection switches**
   Currently, switching connections calls `setEpgSources([])`, throwing away all loaded XMLTV/Stalker EPG sources. EPG data is provider-agnostic — an XMLTV file from one portal works for another. Preserve `epgSources` on connection switch; only clear `epgData` (the merged map). See `docs/advanced-epg-plan.md` Task 1.
 
-- [ ] **PERF: Move `LANGS` translation object outside App component**
+- [x] **PERF: Move `LANGS` translation object outside App component**
   `LANGS` is a ~570-line object defined inline in App.jsx's render body. It is recreated on every render (every keystroke, every state change). Move it to module scope — it never needs to be reactive. Use a `useCallback`-wrapped `t()` function that reads from the module-level constant with `lang` as the only dependency.
 
 - [ ] **BUG: Language switch during playback resets HLS track state**
   When `lang` changes in App.jsx, the `t` prop passed to `Player.jsx` changes. Since Player is mounted via `createPortal` and receives `t` as a prop, any re-render of components that pass `t` down can cause HLS re-initialization or track state loss. Memoize `t` at the App level so only leaf components that use it re-render on language change, or pass `t` as a stable reference.
 
-- [ ] **BUG: Catch-up TV button shown for Xtream connections that don't support it**
+- [x] **BUG: Catch-up TV button shown for Xtream connections that don't support it**
   The `↩️` button appears whenever `current.type === "live"` and `epgData` exists, regardless of connection type. The `&start=N` timeshift parameter only works for Stalker portals. For Xtream connections, the button silently fails. Fix: either guard the button with `connType === "stalker"`, or implement a backend endpoint that rewrites the stream URL with proper Xtream timeshift parameters.
 
 - [x] **PERF: Grid Virtualization — implemented with `@tanstack/react-virtual`**
