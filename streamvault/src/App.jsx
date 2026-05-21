@@ -2444,10 +2444,9 @@ export default function App() {
     }
   }, [epgSources, activeEpgSource]);
 
-  // Clear EPG sources whenever connection changes (safety net for all code paths)
+  // Clear live state whenever connection changes (but preserve loaded EPG sources for the session)
   useEffect(() => {
     epgLoadToken.current++; // Invalidate any in-flight EPG loads
-    setEpgSources([]);
     setActiveEpgSource("all");
   }, [activeConnId]);
 
@@ -3370,7 +3369,7 @@ export default function App() {
     epgLoadToken.current++; // Invalidate any in-flight EPG loads
     // Clear current content
     setChannels([]); setVod([]); setSeries([]);
-    setEpgSources([]); setActiveEpgSource("all");
+    setActiveEpgSource("all");
     setStalkerVodCats([]); setStalkerSeriesCats([]);
 
     fetchingCatRef.current.clear(); setPrefetchProgress(null);
