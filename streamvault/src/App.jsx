@@ -2422,18 +2422,46 @@ export default function App() {
 
   const epgData = useMemo(() => {
     if (!epgSources.length) return null;
+    let dataToProcess = null;
+
     if (activeEpgSource !== "all") {
-      return epgSources.find(s => s.id === activeEpgSource)?.data || null;
-    }
-    // Merge all sources to prevent overlapping in the UI
-    const merged = {};
-    for (const source of epgSources) {
-      if (!source.data) continue;
-      for (const [chId, progs] of Object.entries(source.data)) {
-        if (!merged[chId]) merged[chId] = progs;
+      dataToProcess = epgSources.find(s => s.id === activeEpgSource)?.data || null;
+    } else {
+      // Merge all sources
+      const merged = {};
+      for (const source of epgSources) {
+        if (!source.data) continue;
+        for (const [chId, progs] of Object.entries(source.data)) {
+          if (!merged[chId]) merged[chId] = [];
+          merged[chId].push(...progs);
+        }
       }
+      dataToProcess = merged;
     }
-    return Object.keys(merged).length ? merged : null;
+
+    if (!dataToProcess) return null;
+
+    // Deduplicate and sort programs to prevent CSS grid overlapping
+    const deduplicated = {};
+    for (const [chId, progs] of Object.entries(dataToProcess)) {
+      if (!progs || !progs.length) continue;
+      
+      // Sort by start time
+      const sorted = [...progs].sort((a, b) => a.start - b.start);
+      const clean = [];
+      let lastStop = 0;
+
+      for (const p of sorted) {
+        // Only add if it doesn't heavily overlap (allow 2 minute tolerance for sloppy XMLs)
+        if (p.start >= (lastStop - 120000)) {
+          clean.push(p);
+          lastStop = Math.max(lastStop, p.stop);
+        }
+      }
+      if (clean.length) deduplicated[chId] = clean;
+    }
+
+    return Object.keys(deduplicated).length ? deduplicated : null;
   }, [epgSources, activeEpgSource]);
 
   // Reset activeEpgSource if the selected source is no longer available
