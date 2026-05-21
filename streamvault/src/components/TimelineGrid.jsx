@@ -1,9 +1,38 @@
-import { useState, useEffect, useMemo, memo, forwardRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, memo, forwardRef } from "react";
 import { imgSrc } from "../utils.js";
 import { epgLookup, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H, msToPx, fmtT } from "../epg.js";
 
+// Helper: format start and stop times once
+function fmtProgTimes(start, stop) {
+  return { startLabel: fmtT(start), stopLabel: fmtT(stop) };
+}
+
+// Single delegated click handler — avoids per-block arrow function allocation
+// Uses data attributes set on each program block
+function buildProgClickHandler(progs, channels, onPlay, onPlayCatchup) {
+  return (e) => {
+    const block = e.target.closest("[data-prog-idx]");
+    if (!block) return;
+    const chIdx = parseInt(block.dataset.chIdx, 10);
+    const progIdx = parseInt(block.dataset.progIdx, 10);
+    const isPast = block.dataset.isPast === "1";
+    const ch = channels[chIdx];
+    const p = progs[chIdx]?.[progIdx];
+    if (!ch || !p) return;
+    if (isPast && onPlayCatchup) {
+      onPlayCatchup(ch, p);
+    } else {
+      onPlay(ch);
+    }
+  };
+}
+
 const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup, hasMore, onLoadMore, loadText }, outerRef) {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const nowMsRef = useRef(nowMs);
+  nowMsRef.current = nowMs;
+
+  // Update nowMs every 60s — grid only re-renders when channels/epgData/window changes
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 60000);
     return () => clearInterval(timer);
@@ -28,7 +57,45 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
   }, [windowStart, windowEnd]);
 
   const nowLinePx = msToPx(nowMs, windowStart);
-  
+
+  // Pre-compute channel→programs lookup map once
+  const chProgMap = useMemo(() => {
+    const map = new Map();
+    channels.forEach((ch, i) => {
+      const epgCh = epgLookup(epgData, ch);
+      if (!epgCh) { map.set(i, []); return; }
+      // Filter to visible window
+      const visible = epgCh.filter(p => p.start < windowEnd && p.stop > windowStart);
+      // Attach formatted times once per program
+      const withTimes = visible.map(p => {
+        const { startLabel, stopLabel } = fmtProgTimes(p.start, p.stop);
+        const isNow = p.start <= nowMs && p.stop > nowMs;
+        const isPast = p.stop <= nowMs;
+        return { ...p, startLabel, stopLabel, isNow, isPast };
+      });
+      map.set(i, withTimes);
+    });
+    return map;
+  }, [channels, epgData, windowStart, windowEnd, nowMs]);
+
+  // Single delegated click handler — allocated once per render, not per block
+  const handleProgClick = useCallback((e) => {
+    const block = e.target.closest("[data-prog-idx]");
+    if (!block) return;
+    const chIdx = parseInt(block.dataset.chIdx, 10);
+    const progIdx = parseInt(block.dataset.progIdx, 10);
+    const isPast = block.dataset.isPast === "1";
+    const ch = channels[chIdx];
+    const chProgs = chProgMap.get(chIdx);
+    const p = chProgs?.[progIdx];
+    if (!ch || !p) return;
+    if (isPast && onPlayCatchup) {
+      onPlayCatchup(ch, p);
+    } else {
+      onPlay(ch);
+    }
+  }, [channels, chProgMap, onPlay, onPlayCatchup]);
+
   const rowCount = channels.length + (hasMore ? 1 : 0);
 
   return (
@@ -49,8 +116,8 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
           {/* Sticky channel column */}
           <div className="epg-ch-col">
             {channels.map((ch,i) => (
-              <div key={ch.id||i} className="epg-ch-cell" onClick={()=>onPlay(ch)} title={ch.name}>
-                {ch.logo && <img className="epg-ch-logo" loading="lazy" src={imgSrc(ch.logo)} alt="" onError={e=>{e.target.style.display="none";}} />}
+              <div key={ch.id||i} className="epg-ch-cell" onClick={() => onPlay(ch)} title={ch.name}>
+                {ch.logo && <img className="epg-ch-logo" loading="lazy" src={imgSrc(ch.logo)} alt="" onError={e => { e.target.style.display = "none"; }} />}
                 <span className="epg-ch-name">{ch.name}</span>
               </div>
             ))}
@@ -61,30 +128,50 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
             )}
           </div>
 
-          {/* Programs area (absolutely positioned blocks) */}
-          <div className="epg-prog-area" style={{width:TOTAL_PX,position:"relative"}}>
-            {channels.map((ch,rowIdx) => {
-              const epgCh = epgLookup(epgData, ch);
-              const progs = epgCh ? epgCh.filter(p => p.start < windowEnd && p.stop > windowStart) : [];
+          {/* Programs area — single delegated click handler for all blocks */}
+          <div
+            className="epg-prog-area"
+            style={{width:TOTAL_PX,position:"relative"}}
+            onClick={handleProgClick}
+          >
+            {channels.map((ch, rowIdx) => {
+              const progs = chProgMap.get(rowIdx) || [];
               return (
                 <div key={ch.id||rowIdx} className="epg-prog-row">
-                  {progs.map((p,pi) => {
+                  {progs.map((p, pi) => {
                     const clampStart = Math.max(p.start, windowStart);
                     const clampEnd = Math.min(p.stop, windowEnd);
                     const leftPx = msToPx(clampStart, windowStart);
                     const widthPx = ((clampEnd - clampStart) / 60000) * PX_PER_MIN;
                     if (widthPx < 2) return null;
-                    const isNow = p.start <= nowMs && p.stop > nowMs;
-                    const isPast = p.stop <= nowMs;
-                    const cls = `epg-prog-block${isNow?" now":""}${isPast?" past":""}`;
+                    const cls = `epg-prog-block${p.isNow ? " now" : ""}${p.isPast ? " past" : ""}`;
                     return (
-                      <div key={pi} className={cls}
-                        style={{left:leftPx,width:widthPx}}
-                        onClick={()=> isPast && onPlayCatchup ? onPlayCatchup(ch, p) : onPlay(ch)}
-                        title={`${p.title}\n${fmtT(p.start)} \u2013 ${fmtT(p.stop)}${isPast ? "\nClick to play catchup" : ""}`}>
-                        {widthPx > 50 && <div className="epg-prog-t">{isPast && <span className="epg-catchup-icon">↩️</span>}{p.title}</div>}
-                        {widthPx > 90 && <div className="epg-prog-s">{fmtT(p.start)} \u2013 {fmtT(p.stop)}</div>}
-                        </div>
+                      <div
+                        key={pi}
+                        className={cls}
+                        style={{left: leftPx, width: widthPx}}
+                        data-prog-idx={pi}
+                        data-ch-idx={rowIdx}
+                        data-is-past={p.isPast ? "1" : "0"}
+                        title={`${p.title}\n${p.startLabel} – ${p.stopLabel}${p.isPast ? "\nClick to play catchup" : ""}`}
+                      >
+                        {widthPx > 50 && (
+                          <div className="epg-prog-t">
+                            {p.isPast && <span className="epg-catchup-icon">↩️</span>}
+                            {p.title}
+                          </div>
+                        )}
+                        {widthPx > 90 && (
+                          <div className="epg-prog-s">
+                            {p.startLabel} – {p.stopLabel}
+                            {p.isNow && (
+                              <span style={{marginLeft:"6px",padding:"1px 4px",background:"var(--accent-18)",color:"var(--accent)",borderRadius:4,fontSize:".6rem"}}>
+                                {Math.max(0, Math.ceil((p.stop - nowMsRef.current)/60000))}m left
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

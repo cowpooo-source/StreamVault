@@ -2427,9 +2427,16 @@ export default function App() {
     if (activeEpgSource !== "all") {
       dataToProcess = epgSources.find(s => s.id === activeEpgSource)?.data || null;
     } else {
-      // Merge all sources
+      // Merge only sources from the active connection.
+      // Stalker sources are connection-specific (channel numeric ids can collide across portals).
+      // XMLTV/standalone sources have text channel ids and are kept session-wide.
+      const toMerge = epgSources.filter(s =>
+        s.connectionId === activeConnId || s.kind !== "stalker"
+      );
+      if (!toMerge.length) return null;
+
       const merged = {};
-      for (const source of epgSources) {
+      for (const source of toMerge) {
         if (!source.data) continue;
         for (const [chId, progs] of Object.entries(source.data)) {
           if (!merged[chId]) merged[chId] = [];
@@ -2441,28 +2448,36 @@ export default function App() {
 
     if (!dataToProcess) return null;
 
-    // Deduplicate and sort programs to prevent CSS grid overlapping
+    // Deduplicate: sort by start time, then skip programs with the same
+    // normalized title within 60 seconds of the previous — these are
+    // duplicate entries from different sources or provider refresh cycles.
     const deduplicated = {};
     for (const [chId, progs] of Object.entries(dataToProcess)) {
       if (!progs || !progs.length) continue;
-      
-      // Sort by start time
-      const sorted = [...progs].sort((a, b) => a.start - b.start);
-      const clean = [];
-      let lastStop = 0;
 
+      const sorted = [...progs].sort((a, b) => {
+        if (a.start === b.start) return b.stop - a.stop;
+        return a.start - b.start;
+      });
+
+      const clean = [];
       for (const p of sorted) {
-        // Only add if it doesn't heavily overlap (allow 2 minute tolerance for sloppy XMLs)
-        if (p.start >= (lastStop - 120000)) {
-          clean.push(p);
-          lastStop = Math.max(lastStop, p.stop);
+        const last = clean[clean.length - 1];
+        if (
+          last &&
+          Math.abs(last.start - p.start) < 60000 &&
+          (last.title || "").trim().toLowerCase() === (p.title || "").trim().toLowerCase()
+        ) {
+          // Same title within 60s — skip as duplicate
+          continue;
         }
+        clean.push({ ...p }); // clone to avoid mutation
       }
       if (clean.length) deduplicated[chId] = clean;
     }
 
     return Object.keys(deduplicated).length ? deduplicated : null;
-  }, [epgSources, activeEpgSource]);
+  }, [epgSources, activeEpgSource, activeConnId]);
 
   // Reset activeEpgSource if the selected source is no longer available
   useEffect(() => {
@@ -3066,7 +3081,7 @@ export default function App() {
       if (token !== epgLoadToken.current) return; // Stale load, ignore
       const data = parseXMLTV(text);
       const id = url;
-      const newSource = { id, label: label || new URL(url).hostname, data };
+      const newSource = { id, label: label || new URL(url).hostname, kind: "xmltv", sourceKey: id, connectionId: activeConnId, data };
       setEpgSources(prev => {
         if (token !== epgLoadToken.current) return prev; // Stale, don't update
         const idx = prev.findIndex(s => s.id === id);
@@ -3108,7 +3123,7 @@ export default function App() {
       if (data.programs) {
         const id = `stalker:${conn.server}:${conn.mac}`;
         const label = `Stalker · ${conn.mac.slice(-5)}`;
-        const newSource = { id, label, data: data.programs };
+        const newSource = { id, label, kind: "stalker", sourceKey: id, connectionId: activeConnId, data: data.programs };
         setEpgSources(prev => {
           if (token !== epgLoadToken.current) return prev; // Stale, don't update
           const idx = prev.findIndex(s => s.id === id);
@@ -4759,9 +4774,9 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 
   const filteredChannels = useMemo(() => {
     let chs = channels;
-    if (search) { const q = search.toLowerCase(); chs = chs.filter(ch => ch.name?.toLowerCase().includes(q)); }
+    if (deferredSearch) { const q = deferredSearch.toLowerCase(); chs = chs.filter(ch => ch.name?.toLowerCase().includes(q)); }
     return chs.slice(0, MAX_CHANNELS);
-  }, [channels, search]);
+  }, [channels, deferredSearch]);
 
   const handleNow = useCallback(() => {
     setTimeout(() => {

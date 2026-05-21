@@ -15,6 +15,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const [osd, setOsd]         = useState(true);
   const [showQCH, setShowQCH] = useState(false);
   const qchTimer = useRef(null);
+  
+  // ── Reactive Time State for OSD ──
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    if (!osd) return;
+    setNowMs(Date.now()); // Update immediately when OSD opens
+    const interval = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(interval);
+  }, [osd]);
+
   const [chIdx, setChIdx]     = useState(() => {
     if (!channelList) return -1;
     return channelList.findIndex(c => c.id === item.id || c.url === item.url);
@@ -718,7 +728,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
               <div>
                 {current.num && <div className="osd-num">CH {current.num}</div>}
                 <div className="osd-name">{current.name}</div>
-                {epgNow && <div className="osd-epg">▶ {epgNow.title}</div>}
+                {epgNow && (
+                  <div className="osd-epg">
+                    ▶ {epgNow.title}
+                    {epgNow.stop && (
+                      <span style={{opacity:0.7, marginLeft:"8px", fontSize:".85em", background:"rgba(255,255,255,0.1)", padding:"2px 6px", borderRadius:"4px"}}>
+                        {Math.max(0, Math.ceil((epgNow.stop - Date.now())/60000))}m left
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
