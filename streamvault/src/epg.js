@@ -27,17 +27,14 @@ export function getEPGNow(programs, epgId) {
 
 export function epgLookup(epgData, ch) {
   if (!epgData) return null;
-  // Try normalized epgId (xmltv_id), then raw, then channel numeric id
   const norm = ch.epgId?.toLowerCase().trim();
   return (norm && epgData[norm]) || (ch.epgId && epgData[ch.epgId]) || (ch.id && epgData[ch.id]) || null;
 }
 
 export function parseEPGDate(s) {
   if (!s) return 0;
-  // Try ISO format first
   const d = new Date(s);
   if (d.getTime()) return d.getTime();
-  // Try "YYYYMMDDHHmmss" format
   if (/^\d{14}$/.test(s)) {
     return new Date(
       s.slice(0,4), s.slice(4,6)-1, s.slice(6,8),
@@ -45,4 +42,46 @@ export function parseEPGDate(s) {
     ).getTime();
   }
   return 0;
+}
+
+// Merge multiple EPG sources and deduplicate overlapping programs for each channel.
+// Sorts by start time then longest duration, then skips programs with the same
+// normalized title within 60 seconds — these are duplicate entries from different
+// sources or provider refresh cycles.
+export function mergeEpgSources(sources) {
+  const merged = {};
+  for (const source of sources) {
+    if (!source?.data) continue;
+    for (const [chId, progs] of Object.entries(source.data)) {
+      if (!merged[chId]) merged[chId] = [];
+      merged[chId].push(...progs);
+    }
+  }
+
+  const result = {};
+  for (const [chId, progs] of Object.entries(merged)) {
+    if (!progs || !progs.length) continue;
+
+    const sorted = [...progs].sort((a, b) => {
+      if (a.start === b.start) return b.stop - a.stop;
+      return a.start - b.start;
+    });
+
+    const clean = [];
+    for (const p of sorted) {
+      const last = clean[clean.length - 1];
+      if (
+        last &&
+        Math.abs(last.start - p.start) < 60000 &&
+        (last.title || "").trim().toLowerCase() === (p.title || "").trim().toLowerCase()
+      ) {
+        continue; // same title within 60s — skip as duplicate
+      }
+      clean.push({ ...p }); // clone to avoid mutation
+    }
+
+    if (clean.length) result[chId] = clean;
+  }
+
+  return result;
 }

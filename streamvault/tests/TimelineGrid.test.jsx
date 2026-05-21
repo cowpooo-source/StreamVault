@@ -3,7 +3,6 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
 
-// Mock imgSrc from utils
 vi.mock("../src/utils.js", async () => {
   const actual = await vi.importActual("../src/utils.js");
   return {
@@ -12,12 +11,11 @@ vi.mock("../src/utils.js", async () => {
   };
 });
 
-// Mock epgLookup from epg
 vi.mock("../src/epg.js", async () => {
   const actual = await vi.importActual("../src/epg.js");
   return {
     ...actual,
-    };
+  };
 });
 
 let TimelineGrid;
@@ -67,17 +65,22 @@ describe("TimelineGrid", () => {
   });
 
   it("should call onPlayCatchup when past program is clicked", () => {
+    vi.useFakeTimers();
     const onPlayCatchup = vi.fn();
+    const onPlay = vi.fn();
     const pastProgram = { start: Date.now() - 3600000, stop: Date.now() - 1800000, title: "Past Program" };
     const epgData = { epg1: [pastProgram] };
-    render(<TimelineGrid channels={[sampleChannels[0]]} epgData={epgData} onPlay={vi.fn()} onPlayCatchup={onPlayCatchup} />);
-    const progBlock = document.querySelector(".epg-prog-block");
-    if (progBlock) {
-      fireEvent.click(progBlock);
-      expect(onPlayCatchup).toHaveBeenCalledWith(sampleChannels[0], pastProgram);
-    }
+    const { container } = render(
+      <TimelineGrid channels={[sampleChannels[0]]} epgData={epgData} onPlay={onPlay} onPlayCatchup={onPlayCatchup} />
+    );
+    const progBlock = container.querySelector(".epg-prog-block");
+    expect(progBlock).toBeInTheDocument();
+    // Click the block — delegated through epg-prog-area
+    fireEvent.click(progBlock);
+    expect(onPlayCatchup).toHaveBeenCalledOnce();
+    const [ch, p] = onPlayCatchup.mock.calls[0];
+    expect(ch).toEqual(sampleChannels[0]);
+    expect(p.title).toBe("Past Program");
+    vi.useRealTimers();
   });
 });
-
-
-

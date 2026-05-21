@@ -1,11 +1,23 @@
-- [ ] **BUG: EPG programs overlapping on top of each other**
-  Investigate the `TimelineGrid` rendering logic to identify why program blocks are overlapping. Check for duplicate timestamps, time zone mismatches, or CSS grid alignment issues.
+- [ ] **BUG: VirtualGrid — `header` prop silently dropped and `scrollRef` prop unused**
+  The `header` prop (recommendations row) passed from App.jsx is never rendered in VirtualGrid.jsx — it goes to nothing. Additionally, `scrollRef` is received as a prop but never used; the component uses a local `scrollRef` instead. Fix: render `{header}` in the JSX and remove the dead prop.
 
-- [ ] **REFACTOR: Component Extraction from App.jsx**
-  Extract large sub-components (`SettingsView`, `DiscoverView`, `Setup`, `StalkerPlayer`, etc.) into standalone files in `src/components/` to improve maintainability and hot-reloading speed.
+- [ ] **BUG: EPG programs overlapping on top of each other (All sources merge)**
+  When multiple EPG sources are loaded and "All" is selected, programs for the same channel and time window appear as duplicate overlapping blocks. The merge logic blindly accepts all programs without deduplication. See `docs/advanced-epg-plan.md` for the full fix plan covering Task 2 (dedup logic) and Task 3 (deferred search).
 
-- [x] **PERF: Implement Grid Virtualization**
-  Use `react-window` or a similar technique for VOD and Series grids to ensure only visible items are rendered, preventing browser crashes with 100k+ item libraries.
+- [ ] **FEATURE: Preserve EPG sources across connection switches**
+  Currently, switching connections calls `setEpgSources([])`, throwing away all loaded XMLTV/Stalker EPG sources. EPG data is provider-agnostic — an XMLTV file from one portal works for another. Preserve `epgSources` on connection switch; only clear `epgData` (the merged map). See `docs/advanced-epg-plan.md` Task 1.
+
+- [ ] **PERF: Move `LANGS` translation object outside App component**
+  `LANGS` is a ~570-line object defined inline in App.jsx's render body. It is recreated on every render (every keystroke, every state change). Move it to module scope — it never needs to be reactive. Use a `useCallback`-wrapped `t()` function that reads from the module-level constant with `lang` as the only dependency.
+
+- [ ] **BUG: Language switch during playback resets HLS track state**
+  When `lang` changes in App.jsx, the `t` prop passed to `Player.jsx` changes. Since Player is mounted via `createPortal` and receives `t` as a prop, any re-render of components that pass `t` down can cause HLS re-initialization or track state loss. Memoize `t` at the App level so only leaf components that use it re-render on language change, or pass `t` as a stable reference.
+
+- [ ] **BUG: Catch-up TV button shown for Xtream connections that don't support it**
+  The `↩️` button appears whenever `current.type === "live"` and `epgData` exists, regardless of connection type. The `&start=N` timeshift parameter only works for Stalker portals. For Xtream connections, the button silently fails. Fix: either guard the button with `connType === "stalker"`, or implement a backend endpoint that rewrites the stream URL with proper Xtream timeshift parameters.
+
+- [x] **PERF: Grid Virtualization — implemented with `@tanstack/react-virtual`**
+  VOD/Series grids now use `useVirtualizer` to render only visible rows. Note: VirtualGrid has active bugs — see "VirtualGrid header prop and scrollRef unused" above.
 
 - [ ] **TECH DEBT: Fix Exhaustive Hook Dependencies**
   Surgically resolve all `react-hooks/exhaustive-deps` warnings in `App.jsx` and `Player.jsx` to prevent stale closure bugs.
@@ -16,6 +28,9 @@
   - Add "Source" badges to search results to identify which portal a result belongs to.
   - Implement automatic connection switching when a result from a non-active portal is selected for playback.
   - (Optional) Use a Web Worker for filtering to prevent UI lag with large datasets.
+
+- [ ] **SECURITY: Sandbox third-party ad scripts (Adsterra, HilltopAds)**
+  `AdsterraSocialBar` and `HilltopPushAd` inject unsanitized third-party JavaScript from external domains on every allowed page. Consider: (1) load in an iframe with `sandbox="allow-scripts"` only, (2) add a timeout/abort so a slow ad network response doesn't block player controls from appearing, (3) move ad injection entirely outside the React component tree so a failed load can't break the UI.
 
 - [x] **BUG: Playback heartbeat continues after media stops**
   The heartbeat ping initiated in `Player.jsx` is not stopping even after the media has stopped playing or the player is closed. Investigate the cleanup logic and ensure all timers/intervals are cleared.
@@ -39,14 +54,11 @@
 - [x] **Analytics Enhancement 4: User Engagement**
   - Geo-Location breakdown (Countries).
   - Device type distribution (Mobile vs Desktop vs Smart TV).
-- [ ] **Architectural Debt: Split `stalker-proxy/src/index.js`**
-  - Extract Stalker proxy logic into `src/routes/stalker.js`.
-  - Extract general API (VAST, TMDB) into `src/routes/api.js`.
-  - Create `src/app.js` for Express configuration and middleware.
-  - Implement unit/integration tests for new modules to reach 80% backend coverage.
-- [ ] **Feature: Media Playback Duration Heartbeat**
-  - Implement a 60-second heartbeat ping in the frontend `Player.jsx` while media is actively playing.
-  - Create a new backend endpoint (e.g., `/api/track/duration`) to securely receive and validate these pings against the user's JWT/Guest ID.
-  - Add a new `watch_duration` table to the SQLite database to store accumulated watch time per user, per day/hour.
-  - Integrate these new duration metrics into the Analytics Dashboard.
+- [ ] **REFACTOR: Component Extraction from App.jsx** *(partially done — AuthScreen, Player, TimelineGrid, VirtualGrid extracted; SettingsView, DiscoverView, Setup, StalkerPlayer remain)*
+  Extract large sub-components (`SettingsView`, `DiscoverView`, `Setup`, `StalkerPlayer`, etc.) into standalone files in `src/components/` to improve maintainability and hot-reloading speed. AuthScreen, Player, TimelineGrid, and VirtualGrid have already been extracted.
 
+- [ ] **Architectural Debt: Split `stalker-proxy/src/index.js` — PARTIALLY DONE**
+  The following are complete: `src/routes/stalker.js`, `src/routes/api.js`, `src/routes/auth.js`, `src/app.js` for Express configuration. Remaining: implement unit/integration tests for new modules to reach 80% backend coverage.
+
+- [x] **Feature: Media Playback Duration Heartbeat**
+  60-second heartbeat ping implemented in `Player.jsx`. Backend endpoint `/api/playback/heartbeat` receives pings with session_id, position, and duration. `watch_duration` tracking via `playback_sessions` table. Analytics dashboard integrates duration metrics.

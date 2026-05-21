@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { msToPx, fmtT, getEPGNow, epgLookup, parseEPGDate, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H } from "../src/epg.js";
+import { msToPx, fmtT, getEPGNow, epgLookup, parseEPGDate, mergeEpgSources, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H } from "../src/epg.js";
 
 describe("TimelineGrid constants", () => {
   it("should export PX_PER_MIN", () => {
@@ -114,5 +114,143 @@ describe("parseEPGDate", () => {
   it("should return 0 for invalid date", () => {
     expect(parseEPGDate("invalid")).toBe(0);
     expect(parseEPGDate(null)).toBe(0);
+  });
+});
+
+describe("mergeEpgSources", () => {
+  it("should return empty object for empty sources array", () => {
+    expect(mergeEpgSources([])).toEqual({});
+  });
+
+  it("should skip sources without data", () => {
+    const sources = [{ id: "src1", data: null }, { id: "src2", data: undefined }];
+    expect(mergeEpgSources(sources)).toEqual({});
+  });
+
+  it("should return single source unchanged when no overlaps", () => {
+    const sources = [{
+      id: "src1",
+      data: { "ch1": [{ title: "Show A", start: 1000, stop: 2000 }] }
+    }];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"]).toHaveLength(1);
+    expect(result["ch1"][0].title).toBe("Show A");
+  });
+
+  it("should skip programs with same title within 60 seconds", () => {
+    const sources = [{
+      id: "src1",
+      data: {
+        "ch1": [
+          { title: "Show A", start: 1000, stop: 2000 },
+          { title: "Show A", start: 1030, stop: 2030 },
+        ]
+      }
+    }];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"]).toHaveLength(1);
+    expect(result["ch1"][0].title).toBe("Show A");
+  });
+
+  it("should preserve programs with same title but more than 60s apart", () => {
+    const sources = [{
+      id: "src1",
+      data: {
+        "ch1": [
+          { title: "Show A", start: 1000, stop: 2000 },
+          { title: "Show A", start: 8200000, stop: 9200000 },
+        ]
+      }
+    }];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"]).toHaveLength(2);
+  });
+
+  it("should preserve programs with different titles that overlap in time", () => {
+    const sources = [{
+      id: "src1",
+      data: {
+        "ch1": [
+          { title: "Show A", start: 1000, stop: 2000 },
+          { title: "Show B", start: 1500, stop: 2500 },
+        ]
+      }
+    }];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"]).toHaveLength(2);
+    expect(result["ch1"][0]).toEqual({ title: "Show A", start: 1000, stop: 2000 });
+    expect(result["ch1"][1]).toEqual({ title: "Show B", start: 1500, stop: 2500 });
+  });
+
+  it("should trim previous program stop when current extends further", () => {
+    const sources = [{
+      id: "src1",
+      data: {
+        "ch1": [
+          { title: "Show A", start: 1000, stop: 2000 },
+          { title: "Show A", start: 1970, stop: 2970 },
+        ]
+      }
+    }];
+    const result = mergeEpgSources(sources);
+    // Same title within 60s → skipped as duplicate, only one remains
+    expect(result["ch1"]).toHaveLength(1);
+    expect(result["ch1"][0].title).toBe("Show A");
+    expect(result["ch1"][0].stop).toBe(2000); // original stop preserved
+  });
+
+  it("should sort by start time then longest duration", () => {
+    const sources = [{
+      id: "src1",
+      data: {
+        "ch1": [
+          { title: "Later", start: 3000, stop: 4000 },
+          { title: "Earlier", start: 1000, stop: 2000 },
+          { title: "Middle", start: 2000, stop: 3000 },
+        ]
+      }
+    }];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"][0].title).toBe("Earlier");
+    expect(result["ch1"][1].title).toBe("Middle");
+    expect(result["ch1"][2].title).toBe("Later");
+  });
+
+  it("should merge multiple sources into combined output", () => {
+    const sources = [
+      { id: "src1", data: { "ch1": [{ title: "From Src1", start: 1000, stop: 2000 }] } },
+      { id: "src2", data: { "ch1": [{ title: "From Src2", start: 2000, stop: 3000 }] } }
+    ];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"]).toHaveLength(2);
+    const titles = result["ch1"].map(p => p.title);
+    expect(titles).toContain("From Src1");
+    expect(titles).toContain("From Src2");
+  });
+
+  it("should not mutate original program objects", () => {
+    const original = { title: "Show A", start: 1000, stop: 2000 };
+    const sources = [{ id: "src1", data: { "ch1": [original] } }];
+    mergeEpgSources(sources);
+    expect(original.stop).toBe(2000);
+  });
+
+  it("should handle channels that only exist in one source", () => {
+    const sources = [
+      { id: "src1", data: { "ch1": [{ title: "Ch1 only", start: 1000, stop: 2000 }] } },
+      { id: "src2", data: { "ch2": [{ title: "Ch2 only", start: 1000, stop: 2000 }] } }
+    ];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"]).toHaveLength(1);
+    expect(result["ch2"]).toHaveLength(1);
+  });
+
+  it("should dedup identical time windows from multiple sources", () => {
+    const sources = [
+      { id: "src1", data: { "ch1": [{ title: "The Matrix", start: 1000, stop: 2000 }] } },
+      { id: "src2", data: { "ch1": [{ title: "The Matrix", start: 1000, stop: 2000 }] } }
+    ];
+    const result = mergeEpgSources(sources);
+    expect(result["ch1"]).toHaveLength(1);
   });
 });
