@@ -17,12 +17,11 @@ export function fmtT(ms) {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function getEPGNow(programs, epgId) {
+export function getEPGNow(programs, epgId, nowMs = Date.now()) {
   if (!programs || !epgId) return null;
   const key = epgId.toLowerCase().trim();
   const list = programs[key] || programs[epgId] || [];
-  const now = Date.now();
-  return list.find(p => p.start <= now && p.stop > now) || null;
+  return list.find(p => p.start <= nowMs && p.stop > nowMs) || null;
 }
 
 export function epgLookup(epgData, ch) {

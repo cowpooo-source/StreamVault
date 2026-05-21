@@ -4750,6 +4750,7 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 
   const [urlInput, setUrlInput] = useState(epgURL || "");
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const outerRef = useRef(null);
 
   // Auto-scroll to "now" on mount

@@ -678,7 +678,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     } catch (e) { console.warn("Picture-in-Picture request failed:", e.message); }
   }
 
-  const epgNow = epgData ? getEPGNow(epgData, current.epgId) : null;
+  const epgNow = epgData ? getEPGNow(epgData, current.epgId, nowMs) : null;
   const qchChannels = channelList && chIdx >= 0
     ? channelList.slice(Math.max(0, chIdx-2), Math.min(channelList.length, chIdx+3))
     : [];
@@ -732,8 +732,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                   <div className="osd-epg">
                     ▶ {epgNow.title}
                     {epgNow.stop && (
-                      <span style={{opacity:0.7, marginLeft:"8px", fontSize:".85em", background:"rgba(255,255,255,0.1)", padding:"2px 6px", borderRadius:"4px"}}>
-                        {Math.max(0, Math.ceil((epgNow.stop - Date.now())/60000))}m left
+                      <span className="osd-epg-left">
+                        {Math.max(0, Math.ceil((epgNow.stop - nowMs)/60000))}m left
                       </span>
                     )}
                   </div>

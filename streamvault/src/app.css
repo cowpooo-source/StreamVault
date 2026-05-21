@@ -282,10 +282,14 @@ html{height:100%}
 .epg-prog-block.past:hover{opacity:.85;background:var(--s2);border-color:var(--accent);border-style:dashed}
 .epg-prog-t{font-size:.68rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
 .epg-prog-s{font-size:.58rem;color:var(--t3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.epg-catchup-icon{font-size:.55rem;margin-left:.25rem;opacity:.7;flex-shrink:0}
+.epg-catchup-icon{font-size:.65rem;margin-right:.3rem;color:var(--accent);opacity:.9;flex-shrink:0}
 .epg-now-line{position:absolute;top:0;bottom:0;width:2px;background:#ff3355;z-index:10;pointer-events:none}
 .epg-now-line::before{content:"";position:absolute;top:-4px;left:-4px;width:10px;height:10px;
   background:#ff3355;border-radius:50%}
+.epg-prog-left{margin-left:6px;padding:1px 5px;background:var(--accent-10);color:var(--accent);
+  border:1px solid var(--accent-20);border-radius:4px;font-size:.58rem;font-weight:600;display:inline-flex;align-items:center}
+.osd-epg-left{opacity:0.9;margin-left:8px;font-size:.8em;background:var(--accent-15);
+  color:var(--accent);border:1px solid var(--accent-30);padding:2px 6px;border-radius:4px;font-weight:600;display:inline-block}
 .epg-nav{display:flex;align-items:center;justify-content:center;gap:.6rem;padding:.5rem 1rem;
   border-top:1px solid var(--b1);background:var(--bg);flex-shrink:0}
 .epg-nav button{font-size:.72rem;padding:.35rem .8rem;border-radius:6px;border:1px solid var(--b1);

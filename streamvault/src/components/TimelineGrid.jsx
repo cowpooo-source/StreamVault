@@ -165,7 +165,7 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
                           <div className="epg-prog-s">
                             {p.startLabel} – {p.stopLabel}
                             {p.isNow && (
-                              <span style={{marginLeft:"6px",padding:"1px 4px",background:"var(--accent-18)",color:"var(--accent)",borderRadius:4,fontSize:".6rem"}}>
+                              <span className="epg-prog-left">
                                 {Math.max(0, Math.ceil((p.stop - nowMsRef.current)/60000))}m left
                               </span>
                             )}
