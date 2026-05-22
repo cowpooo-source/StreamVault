@@ -377,14 +377,155 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.token).toBe('tok');
   });
 
-  it('GET /stalker/profile, /stalker/account, and /stalker passthrough respond', async () => {
+  // --- Additional integration smoke tests ---
+
+  it('POST /stalker/validate returns 400 when portal is missing', async () => {
+    const miniApp = express();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), trackRequest: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/validate').send({ mac: '00:11:22:33:44:55' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /stalker/validate returns 400 when mac is missing', async () => {
+    const miniApp = express();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), trackRequest: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /stalker/validate returns 502 when upstream fails', async () => {
+    const miniApp = express();
+    const getSession = vi.fn().mockRejectedValue(new Error('Upstream portal unreachable'));
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), trackRequest: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    expect(res.status).toBe(200); // validate always returns 200 with result object
+    expect(res.body.valid).toBe(false);
+    expect(res.body.error).toBe('Upstream portal unreachable');
+  });
+
+  it('POST /stalker/validate marks account as expired when daysLeft < 0', async () => {
     const miniApp = express();
     const portalFetchRetry = vi.fn()
-      .mockResolvedValueOnce({ js: { profile: true } })
-      .mockResolvedValueOnce({ js: { account: true } })
-      .mockResolvedValueOnce({ js: { ok: true } });
+      .mockResolvedValueOnce({ js: { serial_number: 'SN1' } })
+      .mockResolvedValueOnce({ js: { status: 0, expire_billing_date: '2020-01-01', tariff: 'Gold', id: 'abc' } });
     const getSession = vi.fn().mockResolvedValue({ token: 'tok', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
-    const trackRequest = vi.fn();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), trackRequest: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(false);
+    expect(res.body.status).toBe('expired');
+    expect(res.body.daysLeft).toBeLessThan(0);
+  });
+
+  it('POST /stalker/validate marks account as suspended when status is 2', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: { serial_number: 'SN1' } })
+      .mockResolvedValueOnce({ js: { status: 2 } });
+    const getSession = vi.fn().mockResolvedValue({ token: 'tok', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), trackRequest: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('suspended');
+  });
+
+  it('POST /stalker/validate marks account as blocked when empty info returned', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: { serial_number: 'SN1' } })
+      .mockResolvedValueOnce({ js: {} });
+    const getSession = vi.fn().mockResolvedValue({ token: 'tok', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), trackRequest: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('blocked');
+    expect(res.body.error).toContain('empty info');
+  });
+
+  it('GET /stalker/play normalizes localhost in resolved stream URL', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: { cmd: 'http://localhost:8080/stream.m3u8' }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
     const deps = {
       cache: {
         get: vi.fn(),
@@ -393,7 +534,109 @@ describe('Integration Tests - Routes', () => {
         trackCacheMiss: vi.fn(),
         trackWatch: vi.fn(),
         trackPortalHealth: vi.fn(),
-        trackRequest,
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({ contentType: 'application/vnd.apple.mpegurl' }),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/play?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC&content_type=series&episode=7&resolve=1');
+    expect(res.status).toBe(200);
+    // localhost:8080 rewritten to portal host
+    expect(res.body.url).toBe('http://portal.example.com/stream.m3u8');
+  });
+
+  it('GET /stalker/play normalizes 127.0.0.1 in resolved stream URL', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: { cmd: 'ffmpeg http://127.0.0.1:9090/video.m3u8' }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({ contentType: 'application/vnd.apple.mpegurl' }),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/play?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC&content_type=series&episode=7&resolve=1');
+    expect(res.status).toBe(200);
+    // 127.0.0.1:9090 rewritten to portal host
+    expect(res.body.url).toBe('http://portal.example.com/video.m3u8');
+  });
+
+  it('GET /stalker/play returns 403 when stream URL is not allowed', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: { cmd: 'http://malicious.com/stream.m3u8' }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(false),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/play?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC&resolve=1');
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /stalker/series/categories returns categories on happy path', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: [
+        { id: 1, title: 'Action', count: 10, videos_count: 10 },
+        { id: 2, title: 'Drama', count: 5 },
+      ]
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
         cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
       },
       auth: mockAuth,
@@ -408,16 +651,1005 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const profileRes = await request(miniApp).get('/stalker/profile?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
-    const accountRes = await request(miniApp).get('/stalker/account?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
-    const rootRes = await request(miniApp).get('/stalker/?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&action=get_info');
+    const res = await request(miniApp).get('/stalker/series/categories?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(200);
+    expect(res.body.categories).toHaveLength(2);
+    expect(res.body.categories[0]).toMatchObject({ id: '1', title: 'Action', count: 10 });
+    expect(res.body.categories[1]).toMatchObject({ id: '2', title: 'Drama', count: 5 });
+    expect(deps.cache.set).toHaveBeenCalled();
+  });
 
-    expect(profileRes.status).toBe(200);
-    expect(profileRes.body.profile).toBe(true);
-    expect(accountRes.status).toBe(200);
-    expect(accountRes.body.account).toBe(true);
-    expect(rootRes.status).toBe(200);
-    expect(rootRes.body.js.ok).toBe(true);
-    expect(trackRequest).toHaveBeenCalled();
+  it('GET /stalker/series/categories returns 502 on upstream failure', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockRejectedValue(new Error('Portal timeout'));
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/categories?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('Portal timeout');
+  });
+
+  it('GET /stalker/series/seasons returns seasons on happy path', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: {
+        data: [
+          {
+            id: 's1',
+            name: 'Season 1',
+            cmd: '/episodes/s1.m3u8',
+            screenshot_uri: 'http://cdn/logo.png',
+            series: [
+              { id: 'e1', name: 'Episode 1', cmd: 'ABC1' },
+              { id: 'e2', name: 'Episode 2', cmd: 'ABC2' },
+            ]
+          },
+          {
+            id: 's2',
+            name: 'Season 2',
+            series: [{ id: 'e3', name: 'Episode 3', cmd: 'ABC3' }]
+          }
+        ]
+      }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/seasons?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&seriesId=123');
+    expect(res.status).toBe(200);
+    expect(res.body.seasons).toHaveLength(2);
+    expect(res.body.seasons[0]).toMatchObject({ id: 's1', name: 'Season 1' });
+    expect(res.body.seasons[0].episodes).toHaveLength(2);
+    expect(res.body.seasons[1].episodes).toHaveLength(1);
+    expect(deps.cache.set).toHaveBeenCalled();
+    expect(deps.cache.trackCacheMiss).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/series/seasons returns cached data when available', async () => {
+    const miniApp = express();
+    const cachedData = { seasons: [{ id: 's1', name: 'Cached Season' }] };
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(cachedData),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/seasons?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&seriesId=123');
+    expect(res.status).toBe(200);
+    expect(res.body.seasons).toHaveLength(1);
+    expect(res.body.seasons[0].name).toBe('Cached Season');
+    expect(deps.cache.trackCacheHit).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/series/seasons returns 502 on upstream failure', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockRejectedValue(new Error('Portal error'));
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/seasons?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&seriesId=123');
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('Portal error');
+  });
+
+  it('GET /stalker/series/seasons returns 400 when seriesId is missing', async () => {
+    const miniApp = express();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/seasons?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stalker/series/:seriesId/seasons returns seasons via param route', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: {
+        data: [
+          { id: 's1', name: 'Season 1', series: [{ id: 'e1', name: 'Ep 1', cmd: 'CMD' }] }
+        ]
+      }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/456/seasons?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(200);
+    expect(res.body.seasons).toHaveLength(1);
+    expect(res.body.seasons[0].name).toBe('Season 1');
+  });
+
+  it('GET /stalker/series/episode/stream returns episode URL on happy path', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: { cmd: 'http://cdn.example.com/ep1.m3u8' }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/episode/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC&episode=5');
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe('http://cdn.example.com/ep1.m3u8');
+    expect(portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      series: '5',
+      cmd: 'ABC',
+    }));
+  });
+
+  it('GET /stalker/series/episode/stream strips ffmpeg prefix from URL', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: { cmd: 'ffmpeg http://cdn.example.com/ep1.m3u8' }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/episode/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC&episode=5');
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe('http://cdn.example.com/ep1.m3u8');
+  });
+
+  it('GET /stalker/series/episode/stream returns 400 when params missing', async () => {
+    const miniApp = express();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/episode/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stalker/series/episode/stream returns 502 when no URL returned', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({ js: {} });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series/episode/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC&episode=5');
+    expect(res.status).toBe(502);
+  });
+
+  it('GET /stalker/vod/categories returns vod categories', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: [
+        { id: 1, title: 'Movies', count: 20 },
+        { id: 2, title: 'Documentaries', count: 5 },
+      ]
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/vod/categories?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(200);
+    expect(res.body.categories).toHaveLength(2);
+    expect(res.body.categories[0]).toMatchObject({ id: '1', title: 'Movies', count: 20 });
+  });
+
+  it('GET /stalker/vod returns mapped items', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: {
+        data: [
+          { id: '1', name: 'Film A', year: 2023, rating_imdb: '8.5', cmd: 'ffmpeg http://a.com/a.m3u8', screenshot_uri: 'http://a.com/cover.jpg' },
+          { id: '2', name: 'Film B', year: 2022, cover: 'http://b.com/c.jpg' },
+        ],
+        total_pages: 1,
+      }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/vod?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cat=1');
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(2);
+    expect(res.body.items[0]).toMatchObject({ id: '1', name: 'Film A', year: 2023, rating: '8.5', type: 'vod' });
+    expect(res.body.items[0].url).toBe('ffmpeg http://a.com/a.m3u8');
+    expect(res.body.items[1].logo).toBe('http://b.com/c.jpg');
+  });
+
+  it('GET /stalker/vod handles multi-page fetching', async () => {
+    const miniApp = express();
+    let callCount = 0;
+    const portalFetchRetry = vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({ js: { data: [{ id: '1', name: 'Film 1' }], total_pages: 3 } });
+      }
+      return Promise.resolve({ js: { data: [{ id: String(callCount), name: `Film ${callCount}` }] } });
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/vod?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cat=1');
+    expect(res.status).toBe(200);
+    expect(res.body.items.length).toBeGreaterThan(2);
+    expect(portalFetchRetry).toHaveBeenCalledTimes(3);
+  });
+
+  it('GET /stalker/epg returns EPG programs', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: {
+        data: {
+          'ch1': [
+            { name: 'Show A', start_timestamp: 1716403200, stop_timestamp: 1716406800 },
+            { name: 'Show B', start_timestamp: 1716406800, stop_timestamp: 1716410400 },
+          ]
+        }
+      }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/epg?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(200);
+    expect(res.body.programs).toBeDefined();
+    expect(res.body.programs['ch1']).toBeDefined();
+    expect(res.body.programs['ch1'][0]).toMatchObject({ title: 'Show A' });
+    expect(res.body.programs['ch1'][0].start).toBe(1716403200000);
+  });
+
+  it('GET /stalker/epg returns 502 on upstream failure', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockRejectedValue(new Error('EPG server down'));
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/epg?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('EPG server down');
+  });
+
+  it('GET /stalker/channels returns channel list with genre grouping', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: [{ id: '1', title: 'Movies' }, { id: '2', title: 'Sports' }] })
+      .mockResolvedValueOnce({
+        js: {
+          data: [
+            { id: 'ch1', name: 'HBO', number: 1, logo: 'http://cdn/hbo.png', tv_genre_id: '1', cmd: 'http://stream.com/hbo', xmltv_id: 'hbo1' },
+            { id: 'ch2', name: 'ESPN', number: 2, icon: 'http://cdn/espn.png', tv_genre_id: '2', cmd: 'http://stream.com/espn' },
+            { id: 'ch3', name: 'Local', number: 3, tv_genre_id: '99' },
+          ]
+        }
+      });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/channels?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(200);
+    expect(res.body.channels).toHaveLength(3);
+    expect(res.body.channels[0]).toMatchObject({ id: 'ch1', name: 'HBO', num: 1, group: 'Movies', type: 'live' });
+    expect(res.body.channels[1]).toMatchObject({ id: 'ch2', name: 'ESPN', num: 2, group: 'Sports' });
+    expect(res.body.channels[2]).toMatchObject({ id: 'ch3', name: 'Local', num: 3, group: 'Other' });
+    expect(deps.cache.set).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/channels returns cached data without hitting portal', async () => {
+    const miniApp = express();
+    const cachedData = { channels: [{ id: 'cached', name: 'Cached Channel' }], total: 1, refreshed_at: Date.now() };
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(cachedData),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/channels?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(200);
+    expect(res.body.channels[0].name).toBe('Cached Channel');
+    expect(deps.portalFetchRetry).not.toHaveBeenCalled();
+  });
+
+  it('GET /stalker/channels bypasses cache with refresh=1', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: [] })
+      .mockResolvedValueOnce({ js: { data: [{ id: 'ch1', name: 'Fresh', number: 1, tv_genre_id: '1', cmd: 'http://x.com' }] } });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue({ channels: [{ id: 'old', name: 'Old' }], total: 1, refreshed_at: Date.now() }),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/channels?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&refresh=1');
+    expect(res.status).toBe(200);
+    expect(res.body.channels[0].name).toBe('Fresh');
+    expect(portalFetchRetry).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/channels returns 502 on upstream failure', async () => {
+    const miniApp = express();
+    const getSession = vi.fn().mockRejectedValue(new Error('Portal unreachable'));
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/channels?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(502);
+  });
+
+  it('GET /stalker/api passes through arbitrary API params', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({ js: { custom: 'response' } });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/api?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&action=custom_action&param1=value1');
+    expect(res.status).toBe(200);
+    expect(res.body.js.custom).toBe('response');
+    expect(portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      action: 'custom_action',
+      param1: 'value1',
+    }));
+  });
+
+  it('GET /stalker/api returns 502 when upstream fails', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockRejectedValue(new Error('API timeout'));
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/api?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&action=test');
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('API timeout');
+  });
+
+  it('GET /stalker/series returns series items with all metadata', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: {
+        data: [
+          {
+            id: 's1',
+            name: 'Show A',
+            screenshot_uri: 'http://cdn/showa.jpg',
+            year: 2023,
+            rating_imdb: '9.0',
+            description: 'A drama',
+            genre_str: 'Drama',
+            director: 'Director A',
+            actors: 'Actor A',
+            duration: 3600,
+            age: '16+',
+            country: 'USA',
+          }
+        ],
+        total_pages: 1,
+      }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn().mockReturnValue(null),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cat=5');
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0]).toMatchObject({
+      id: 's1', name: 'Show A', year: 2023, rating: '9.0', type: 'series',
+      plot: 'A drama', genre: 'Drama', director: 'Director A', actors: 'Actor A',
+      duration: 3600, age: '16+', country: 'USA',
+    });
+    expect(res.body.total).toBe(1);
+    expect(deps.cache.set).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/series returns 400 without cat param', async () => {
+    const miniApp = express();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/series?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /stalker/handshake returns token on success', async () => {
+    const miniApp = express();
+    const getSession = vi.fn().mockResolvedValue({ token: 'handshake-token', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/handshake').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55', serial: 'SN123' });
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBe('handshake-token');
+  });
+
+  it('POST /stalker/handshake returns 400 without portal or mac', async () => {
+    const miniApp = express();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/handshake').send({ portal: 'http://portal.example.com/c/' });
+    expect(res.status).toBe(400);
+
+    const res2 = await request(miniApp).post('/stalker/handshake').send({ mac: '00:11:22:33:44:55' });
+    expect(res2.status).toBe(400);
+  });
+
+  it('POST /stalker/handshake returns 502 when getSession throws', async () => {
+    const miniApp = express();
+    const getSession = vi.fn().mockRejectedValue(new Error('Session creation failed'));
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).post('/stalker/handshake').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('Session creation failed');
+  });
+
+  it('GET /stalker/stream returns normalized URL including localhost rewrite', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: { cmd: 'ffmpeg http://localhost:8080/live.m3u8' }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC');
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe('http://portal.example.com/live.m3u8');
+  });
+
+  it('GET /stalker/stream returns 502 when no URL returned', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({ js: {} });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC');
+    expect(res.status).toBe(502);
+  });
+
+  it('GET /stalker/stream returns 400 when cmd is missing', async () => {
+    const miniApp = express();
+    const deps = {
+      cache: { get: vi.fn(), set: vi.fn(), trackCacheHit: vi.fn(), trackCacheMiss: vi.fn(), trackWatch: vi.fn(), trackPortalHealth: vi.fn(), cacheKey: vi.fn() },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /stalker/play returns 502 when upstream server returns non-ok', async () => {
+    const miniApp = express();
+    const portalFetchRetry = vi.fn().mockResolvedValue({
+      js: { cmd: 'http://stream.example.com/video.mp4' }
+    });
+    const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: new Map([['content-type', 'video/mp4']]),
+      body: null,
+    });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: mockFetch,
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      getSession,
+      portalFetchRetry,
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await request(miniApp).get('/stalker/play?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain('503');
   });
 });
