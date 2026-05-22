@@ -4315,7 +4315,7 @@ export default function App() {
         ) : section==="discover" ? (
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="settings" ? (
-          <SettingsView connections={connections} favs={favs} history={history}
+          <SettingsView connections={connections}
             authUser={authUser} activeConnId={activeConnId}
             onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} />
 
