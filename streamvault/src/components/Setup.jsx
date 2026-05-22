@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { API, parseM3U, trackAnalytics } from '../utils.js';
 import { proxyFetch, makeXtreamAPI, track, GUEST_ID } from '../app-runtime.js';
+import { XtreamForm } from './setup/XtreamForm.jsx';
+import { StalkerForm } from './setup/StalkerForm.jsx';
+import { M3UForm } from './setup/M3UForm.jsx';
+import { ImportForm } from './setup/ImportForm.jsx';
+import { ConnectionManagerList } from './setup/ConnectionManagerList.jsx';
+import { ConnectionList } from './setup/ConnectionList.jsx';
+import { detectFromText } from './setup/setup-utils.js';
 
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
@@ -9,13 +16,12 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [rawText, setRawText] = useState("");
   const [detected, setDetected] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [err, setErr]       = useState("");
-  const [expiredPrompt, setExpiredPrompt] = useState(null); // { conn, validation }
+  const [expiredPrompt, setExpiredPrompt] = useState(null);
   const [skipValidation, setSkipValidation] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(() => localStorage.getItem("sv-disclaimer-accepted") === "1");
@@ -75,7 +81,6 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     setDiagLoading(p => ({ ...p, [c.id]: false }));
   }
 
-  // Validate saved connection before reconnecting
   async function validateAndReconnect(conn) {
     if (conn.type !== "stalker") { onReconnect(conn.id); return; }
     setLoading(true); setErr("");
@@ -97,7 +102,6 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
       if (v.status === "expired" || v.status === "blocked" || v.status === "suspended" || v.status === "unregistered") {
         setExpiredPrompt({ conn, validation: v });
         trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.status).slice(0,50) });
-        // Still allow reconnection despite status issues
         onReconnect(conn.id);
         return;
       }
@@ -106,13 +110,12 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     } catch (e) {
       console.warn("Validation failed, reconnecting anyway:", e.message);
       trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(e.message || "unknown").slice(0,50) });
-      onReconnect(conn.id); // Proceed with reconnection even if validation fails
+      onReconnect(conn.id);
     }
     finally { setLoading(false); }
   }
 
   useEffect(() => {
-    // Pre-fill from last active connection (or most recent saved connection)
     try {
       const conns = localStorage.getItem("sv-connections");
       if (conns) {
@@ -231,159 +234,18 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     finally { setLoading(false); }
   }
 
-  function normalizeUnicode(t) {
-    return t
-      // Mathematical Monospace A-Z (U+1D670-U+1D689) and a-z (U+1D68A-U+1D6A3)
-      .replace(/[\u{1D670}-\u{1D689}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D670 + 0x41))
-      .replace(/[\u{1D68A}-\u{1D6A3}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D68A + 0x61))
-      // Mathematical Bold A-Z (U+1D400-U+1D419) and a-z (U+1D41A-U+1D433)
-      .replace(/[\u{1D400}-\u{1D419}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D400 + 0x41))
-      .replace(/[\u{1D41A}-\u{1D433}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D41A + 0x61))
-      // Mathematical Bold Italic A-Z (U+1D468-U+1D481) and a-z (U+1D482-U+1D49B)
-      .replace(/[\u{1D468}-\u{1D481}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D468 + 0x41))
-      .replace(/[\u{1D482}-\u{1D49B}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D482 + 0x61))
-      // Mathematical Sans-Serif A-Z (U+1D5A0-U+1D5B9) and a-z (U+1D5BA-U+1D5D3)
-      .replace(/[\u{1D5A0}-\u{1D5B9}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D5A0 + 0x41))
-      .replace(/[\u{1D5BA}-\u{1D5D3}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D5BA + 0x61))
-      // Mathematical Sans-Serif Bold A-Z (U+1D5D4-U+1D5ED) and a-z (U+1D5EE-U+1D607)
-      .replace(/[\u{1D5D4}-\u{1D5ED}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D5D4 + 0x41))
-      .replace(/[\u{1D5EE}-\u{1D607}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D5EE + 0x61))
-      // Mathematical Italic A-Z (U+1D434-U+1D44D) and a-z (U+1D44E-U+1D467)
-      .replace(/[\u{1D434}-\u{1D44D}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D434 + 0x41))
-      .replace(/[\u{1D44E}-\u{1D467}]/gu, c => String.fromCharCode(c.codePointAt(0) - 0x1D44E + 0x61))
-      // Normalize arrow separators to colon
-      .replace(/[➩➜➔→►⇒⟹]/g, ':')
-      // Strip box-drawing characters
-      .replace(/[╠╣║╗╔╚╝╬╩╦├┤│┐┘└┌┬┴┼─═]/g, '')
-      // Strip enclosed alphanumerics (regional/circled letters used as decorators)
-      .replace(/[\u{1F150}-\u{1F169}\u{1F170}-\u{1F18F}\u{1F190}-\u{1F1AC}]/gu, '')
-      // Strip keycap digit sequences (e.g., 1️⃣) and decorators like ❖
-      .replace(/[\d]️?⃣/gu, '')
-      .replace(/[❖]/g, '');
-  }
+  const handleRawTextChange = (text) => {
+    setRawText(text);
+    const d = detectFromText(text);
+    setDetected(d);
+    setSelected(new Set());
+  };
 
-  function detectFromText(text) {
-    // Normalize Unicode-decorated text to plain ASCII before parsing
-    text = normalizeUnicode(text);
-    const results = [];
-
-    // Detect Stalker portals + MACs + serial + deviceId + deviceId2 by proximity in text
-    const portalPattern = /https?:\/\/[^\s"'<>]+\/(?:stalker_portal\/)?c\/?/gi;
-    const macPattern = /([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/g;
-
-    // Split text into blocks (by double newline or portal URL) and pair within each block
-    const lines = text.split("\n");
-    let blocks = [], cur = [];
-    const portalTestRe = /https?:\/\/[^\s"'<>]+\/(?:stalker_portal\/)?c\/?/i;
-    for (const line of lines) {
-      if (portalTestRe.test(line) && cur.length > 0) { blocks.push(cur.join("\n")); cur = []; }
-      cur.push(line);
-    }
-    if (cur.length) blocks.push(cur.join("\n"));
-    if (blocks.length <= 1) blocks = [text]; // fallback: treat as single block
-
-    const usedMacs = new Set();
-    for (const block of blocks) {
-      const bp = block.match(portalPattern) || [];
-      portalPattern.lastIndex = 0;
-      const bm = block.match(macPattern) || [];
-      macPattern.lastIndex = 0;
-
-      // Extract serial: look for "serial", "seriel", "sn", "s/n" labels followed by value
-      const serialMatch = block.match(/(?:seri[ae]l(?:\s*(?:number|num|#))?|s\/n|sn)\s*(?:=>|[:=\s])\s*([A-Za-z0-9_-]+)/i);
-      const serial = serialMatch ? serialMatch[1] : "";
-
-      // Extract deviceId2: look for "device id 2", "deviceid2", "device_id_2" labels (check this BEFORE deviceId)
-      const deviceId2Match = block.match(/(?:device[\s_.-]*id[\s_.-]*2|deviceid2|device_id_2)\s*(?:=>|[:=\s])\s*([A-Za-z0-9_-]+)/i);
-      let deviceId2 = deviceId2Match ? deviceId2Match[1] : "";
-
-      // Extract deviceId: look for "device id" labels, grab the longest hex/alnum token (skip short decorator remnants like "12")
-      const deviceIdLine = block.match(/(?:device[\s_.-]*id|deviceid|device_id)(?![\s_.-]*2)\s*(?:=>|[:=\s])\s*(.+)/i);
-      let deviceId = "";
-      if (deviceIdLine) {
-        const tokens = deviceIdLine[1].trim().split(/\s+/);
-        deviceId = tokens.reduce((best, t) => t.replace(/[^A-Za-z0-9]/g,"").length > best.length ? t.replace(/[^A-Za-z0-9]/g,"") : best, "");
-      }
-
-      // If only one device ID is found, use it for both (common in decorated text where one value is shared)
-      if (deviceId && !deviceId2) deviceId2 = deviceId;
-
-      if (bp.length && bm.length) {
-        const portal = bp[0].replace(/\/+$/,"");
-        const mac = bm[0];
-        if (!usedMacs.has(mac)) {
-          usedMacs.add(mac);
-          results.push({ type:"stalker", server:portal, mac, serial, deviceId, deviceId2, label:`Stalker · ${mac.slice(-5)}` });
-        }
-      } else if (bm.length) {
-        bm.forEach(mac => { if (!usedMacs.has(mac)) { usedMacs.add(mac); results.push({ type:"stalker", server:"", mac, serial, deviceId, deviceId2, label:`MAC · ${mac}` }); } });
-      }
-    }
-
-    // Detect Xtream: http://host:port with username/password patterns
-    const xtreamPattern = /https?:\/\/[^\s"'<>:]+:\d+\/get\.php\?username=([^&]+)&password=([^&\s]+)/gi;
-    let xm;
-    while ((xm = xtreamPattern.exec(text)) !== null) {
-      const url = new URL(xm[0]);
-      results.push({ type:"xtream", server:`${url.protocol}//${url.host}`, user:xm[1], pass:xm[2], label:`Xtream · ${xm[1]}` });
-    }
-
-    // Also detect Xtream from player_api.php URLs
-    const xtreamApi = /https?:\/\/[^\s"'<>:]+:\d+\/player_api\.php\?username=([^&]+)&password=([^&\s]+)/gi;
-    while ((xm = xtreamApi.exec(text)) !== null) {
-      const url = new URL(xm[0]);
-      if (!results.find(r => r.type==="xtream" && r.server===`${url.protocol}//${url.host}` && r.user===xm[1])) {
-        results.push({ type:"xtream", server:`${url.protocol}//${url.host}`, user:xm[1], pass:xm[2], label:`Xtream · ${xm[1]}` });
-      }
-    }
-
-    // Also detect bare Xtream format: host:port/username/password
-    const bareXtream = /https?:\/\/([^\s"'<>:]+:\d+)\/live\/([^/\s]+)\/([^/\s]+)/gi;
-    while ((xm = bareXtream.exec(text)) !== null) {
-      const server = `http://${xm[1]}`;
-      if (!results.find(r => r.type==="xtream" && r.user===xm[2])) {
-        results.push({ type:"xtream", server, user:xm[2], pass:xm[3], label:`Xtream · ${xm[2]}` });
-      }
-    }
-
-    // Detect Xtream from labeled key-value format (Host/Username/Password)
-    const hostMatch = text.match(/(?:host|server|url|portal)\s*(?:=>|[:=])\s*(https?:\/\/[^\s,;]+)/gi);
-    const userMatch = text.match(/(?:username|user|login)\s*(?:=>|[:=])\s*([^\s,;]+)/gi);
-    const passMatch = text.match(/(?:password|pass)\s*(?:=>|[:=])\s*([^\s,;]+)/gi);
-    if (hostMatch && userMatch && passMatch) {
-      // Pair them by order (first host with first user/pass, etc.)
-      const hosts = hostMatch.map(m => m.replace(/^[^:=]*[=:]\s*/i, "").trim());
-      const users = userMatch.map(m => m.replace(/^[^:=]*[=:]\s*/i, "").trim());
-      const passes = passMatch.map(m => m.replace(/^[^:=]*[=:]\s*/i, "").trim());
-      const count = Math.min(hosts.length, users.length, passes.length);
-      for (let i = 0; i < count; i++) {
-        const server = hosts[i].replace(/\/+$/, "");
-        if (!results.find(r => r.type === "xtream" && r.server === server && r.user === users[i])) {
-          results.push({ type: "xtream", server, user: users[i], pass: passes[i], label: `Xtream · ${users[i]}` });
-        }
-      }
-    }
-
-    // Detect M3U URLs
-    const m3uPattern = /https?:\/\/[^\s"'<>]+\.m3u8?(?:\?[^\s"'<>]*)?/gi;
-    const m3us = text.match(m3uPattern) || [];
-    m3us.forEach(url => {
-      if (!results.find(r => r.type==="m3u" && r.url===url)) {
-        results.push({ type:"m3u", url, label:`M3U · ${url.split("/").pop()?.slice(0,20)}` });
-      }
-    });
-
-    // Also detect M3U from get.php type URLs (these are often Xtream m3u output)
-    const m3uGet = /https?:\/\/[^\s"'<>]+\/get\.php\?[^\s"'<>]*/gi;
-    const m3uGets = text.match(m3uGet) || [];
-    m3uGets.forEach(url => {
-      if (!results.find(r => r.url===url)) {
-        results.push({ type:"m3u", url, label:`M3U · get.php` });
-      }
-    });
-
-    return results;
-  }
+  const handleFillSingle = (d) => {
+    if (d.type === "stalker") { setType("stalker"); set("server", d.server || ""); set("mac", d.mac || ""); if (d.serial) { set("serial", d.serial); } if (d.deviceId) { set("deviceId", d.deviceId); } if (d.deviceId2) { set("deviceId2", d.deviceId2); } else if (d.deviceId) { set("deviceId2", d.deviceId); } }
+    else if (d.type === "xtream") { setType("xtream"); set("server", d.server || ""); set("user", d.user || ""); set("pass", d.pass || ""); }
+    else if (d.type === "m3u") { setType("m3u"); set("url", d.url || ""); }
+  };
 
   const TYPES = [["import",t("import")],["xtream",t("xtreamCodes")],["m3u",t("m3uPlaylist")],["stalker",t("stalkerPortal")],["hls",t("directHLS")]];
 
@@ -393,7 +255,6 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         <div className="logo">Portal Heaven</div>
         <div className="tagline">{t("tagline")}</div>
 
-        {/* Logged-in user info */}
         {(authUser || isGuest) && (
           <div style={{display:"flex",alignItems:"center",gap:".6rem",padding:".55rem .75rem",marginBottom:"1rem",
             background:"var(--s2)",border:"1px solid var(--b1)",borderRadius:"10px"}}>
@@ -422,7 +283,6 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
           </div>
         )}
 
-        {/* SSO Linking */}
         {authUser && (
           <div style={{ display: "flex", gap: ".5rem", marginBottom: "1.2rem" }}>
             <button type="button" onClick={() => window.location.href = `${API}/api/auth/google`}
@@ -442,60 +302,20 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
           </div>
         )}
 
-        {/* Saved connections — quick reconnect */}
         {connections.length > 0 && (
-          <div style={{marginBottom:"1.2rem"}}>
-            <div className="fl" style={{marginBottom:".5rem"}}>{t("savedConns")}</div>
-            <div className="saved-conns">
-              {connections.map(c => (
-                <div key={c.id} className="saved-conn" style={{borderLeft:`3px solid ${c.color}`, flexDirection:"column", alignItems:"stretch"}}
-                  onClick={() => validateAndReconnect(c)}
-                  onMouseEnter={e => e.currentTarget.style.borderColor="var(--accent)"}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor="var(--b2)"; e.currentTarget.style.borderLeftColor=c.color; }}>
-                  <div style={{display:"flex", alignItems:"center", gap:".6rem"}}>
-                    <span style={{fontSize:"1.1rem"}}>{CONN_ICONS[c.type] || "📡"}</span>
-                    <div style={{flex:1,overflow:"hidden"}}>
-                      <div style={{fontSize:".82rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
-                      <div style={{fontSize:".62rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
-                    </div>
-                    <button style={{background:"none",border:"1px solid var(--b2)",borderRadius:4,cursor:"pointer",fontSize:".65rem",color:"var(--t2)",padding:".15rem .4rem"}}
-                      title="Diagnose connection"
-                      onClick={e => { e.stopPropagation(); diagnose(c); }}>
-                      {diagLoading[c.id] ? "..." : "🩺"}
-                    </button>
-                    <span style={{fontSize:".7rem",color:"var(--accent)",fontWeight:600}}>{loading ? "..." : t("connectArrow")}</span>
-                    <button onClick={e => { e.stopPropagation(); onEdit(c); }}
-                      style={{background:"none",border:"none",color:"var(--t2)",cursor:"pointer",fontSize:".85rem",padding:"2px 6px",
-                        borderRadius:"4px",lineHeight:1,flexShrink:0}}
-                      title="Edit connection">✎</button>
-                    <button onClick={e => { e.stopPropagation(); if(confirm(`Delete "${c.label}"?`)) onRemoveConn?.(c.id); }}
-                      style={{background:"none",border:"none",color:"var(--t3)",cursor:"pointer",fontSize:".85rem",padding:"2px 6px",
-                        borderRadius:"4px",lineHeight:1,flexShrink:0}}
-                      onMouseEnter={e => e.currentTarget.style.color="#e74c3c"}
-                      onMouseLeave={e => e.currentTarget.style.color="var(--t3)"}
-                      title="Delete connection">✕</button>
-                  </div>
-                  {diagResults[c.id] && (
-                    <div style={{marginTop:".4rem",padding:".35rem .5rem",background:"var(--s1)",borderRadius:6,fontSize:".65rem",lineHeight:1.6,fontFamily:"monospace"}}>
-                      <span style={{color: diagResults[c.id].reachable ? "#4caf50" : "#f44336",fontWeight:700}}>
-                        {diagResults[c.id].reachable ? "● Reachable" : "● Unreachable"}
-                      </span>
-                      {diagResults[c.id].latency != null && <span style={{color:"var(--t2)",marginLeft:".5rem"}}>{diagResults[c.id].latency}ms</span>}
-                      {Object.entries(diagResults[c.id].details || {}).map(([k, v]) => (
-                        <div key={k} style={{color:"var(--t3)"}}>{k}: <span style={{color:"var(--t2)"}}>{String(v)}</span></div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div style={{borderBottom:"1px solid var(--b2)",margin:"1rem 0 .2rem",position:"relative"}}>
-              <span style={{position:"absolute",left:"50%",transform:"translate(-50%,-50%)",background:"var(--s1)",
-                padding:"0 .6rem",fontSize:".65rem",color:"var(--t3)",textTransform:"uppercase",letterSpacing:".08em",fontWeight:600}}>
-                {t("orAddNew")}
-              </span>
-            </div>
-          </div>
+          <ConnectionManagerList
+            connections={connections}
+            activeConnId={null}
+            diagResults={diagResults}
+            diagLoading={diagLoading}
+            onReconnect={(id) => {
+              const conn = connections.find(c => c.id === id);
+              if (conn) validateAndReconnect(conn);
+            }}
+            onEdit={onEdit}
+            onRemoveConn={onRemoveConn}
+            onDiagnose={diagnose}
+          />
         )}
 
         {err && <div className="err">⚠ {err}</div>}
@@ -506,137 +326,57 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
             </button>
           ))}
         </div>
-        {type==="xtream" && (<>
-          <div className="fg"><label className="fl">{t("serverURL")}</label>
-            <input className="fi" placeholder="http://server.com:8080" value={f.server} onChange={e=>set("server",e.target.value)} /></div>
-          <div className="fg"><label className="fl">{t("username")}</label>
-            <input className="fi" placeholder="username" value={f.user} onChange={e=>set("user",e.target.value)} /></div>
-          <div className="fg"><label className="fl">{t("password")}</label>
-            <input className="fi" type="password" placeholder="password" value={f.pass} onChange={e=>set("pass",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} /></div>
-        </>)}
-        {type==="m3u" && (
-          <div className="fg"><label className="fl">{t("playlistURL")}</label>
-            <input className="fi" placeholder="http://example.com/playlist.m3u" value={f.url} onChange={e=>set("url",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} />
-            <div className="fhint">Supports .m3u and .m3u8 playlist files</div></div>
+        {type==="xtream" && (
+          <XtreamForm form={f} setForm={set} loading={loading} err={err} onSubmit={handleConnectClick} />
         )}
-        {type==="stalker" && (<>
-          <div className="fg"><label className="fl">{t("portalURL")}</label>
-            <input className="fi" placeholder="http://server/stalker_portal/c/" value={f.server} onChange={e=>set("server",e.target.value)} /></div>
-          <div className="fg"><label className="fl">{t("macAddress")}</label>
-            <input className="fi" placeholder="00:1A:79:XX:XX:XX" value={f.mac} onChange={e=>set("mac",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} />
-            <div className="fhint">The MAC address registered with your IPTV provider</div></div>
-          <label style={{display:"flex",alignItems:"center",gap:".4rem",marginTop:".5rem",cursor:"pointer",fontSize:".72rem",color:"var(--t2)"}}>
-            <input type="checkbox" checked={skipValidation} onChange={e => setSkipValidation(e.target.checked)}
-              style={{accentColor:"var(--accent)",cursor:"pointer"}} />
-            Skip validation (connect without checking account status)
-          </label>
-          <div style={{marginTop:".5rem"}}>
-            <button type="button" style={{background:"none",border:"none",color:"var(--accent)",fontSize:".72rem",cursor:"pointer",padding:0,fontFamily:"'DM Sans',sans-serif"}}
-              onClick={() => setShowAdvanced(!showAdvanced)}>
-              {showAdvanced ? `▾ ${t("hideAdvanced")}` : `▸ ${t("advancedOpts")}`}
-            </button>
-          </div>
-          {showAdvanced && (<>
-            <div className="fg"><label className="fl">{t("serialNumber")}</label>
-              <input className="fi" placeholder="Optional — leave blank for auto" value={f.serial} onChange={e=>set("serial",e.target.value)} />
-              <div className="fhint">Device serial number (if required by provider)</div></div>
-            <div className="fg"><label className="fl">{t("deviceId")}</label>
-              <input className="fi" placeholder="Optional — used for both ID1 and ID2 if ID2 is blank" value={f.deviceId} onChange={e=>set("deviceId",e.target.value)} />
-              <div className="fhint">Primary device identifier</div></div>
-            <div className="fg"><label className="fl">{t("deviceId2")}</label>
-              <input className="fi" placeholder="Optional — defaults to Device ID above" value={f.deviceId2} onChange={e=>set("deviceId2",e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleConnectClick()} />
-              <div className="fhint">Secondary device identifier (some providers use same value for both)</div></div>
-          </>)}
-        </>)}
+        {type==="m3u" && (
+          <M3UForm
+            form={f}
+            setForm={set}
+            rawText={rawText}
+            setRawText={handleRawTextChange}
+            loading={loading}
+            err={err}
+            detected={detected}
+            selected={selected}
+            setSelected={setSelected}
+            onSubmit={handleConnectClick}
+            onFileImport={handleFileImport}
+          />
+        )}
+        {type==="stalker" && (
+          <StalkerForm
+            form={f}
+            setForm={set}
+            loading={loading}
+            err={err}
+            skipValidation={skipValidation}
+            setSkipValidation={setSkipValidation}
+            onSubmit={handleConnectClick}
+            onValidate={null}
+          />
+        )}
         {type==="hls" && (
           <div style={{padding:"1rem 0",color:"var(--t2)",fontSize:".86rem",lineHeight:1.7}}>
             {t("hlsPlayNote")}
           </div>
         )}
         {type==="import" && (
-          <div>
-            <div className="fg">
-              <label className="fl">{t("pasteRaw")}</label>
-              <textarea className="fi" style={{minHeight:"120px",resize:"vertical",fontFamily:"monospace",fontSize:".75rem"}}
-                placeholder={"Paste any text containing:\n• Stalker portal URLs + MAC addresses\n• Xtream Codes URLs with username/password\n• M3U/M3U8 playlist URLs\n\nAuto-detects all connection types."}
-                value={rawText}
-                onChange={e => { setRawText(e.target.value); const d = detectFromText(e.target.value); setDetected(d); setSelected(new Set()); }}
-              />
-            </div>
-
-            <div style={{margin:"1rem 0", display:"flex", alignItems:"center", gap:".8rem"}}>
-              <div style={{height:"1px", flex:1, background:"var(--b2)"}}></div>
-              <div style={{fontSize:".65rem", color:"var(--t3)", textTransform:"uppercase", fontWeight:600}}>OR</div>
-              <div style={{height:"1px", flex:1, background:"var(--b2)"}}></div>
-            </div>
-
-            <div className="fg">
-              <label className="fl">Import from Backup File</label>
-              <div style={{display:"flex", gap:".5rem", marginTop:".4rem"}}>
-                <input type="file" accept=".json" onChange={handleFileImport}
-                  style={{fontSize:".8rem", color:"var(--t2)", flex:1}} />
-              </div>
-              <div className="fhint">Select a .json file exported from Portal Heaven Settings.</div>
-            </div>
-
-            {detected.length > 0 && (
-              <div style={{display:"flex",flexDirection:"column",gap:".4rem",marginBottom:"1rem"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <div className="fl">{t("detected")} ({detected.length})</div>
-                  {detected.length > 1 && (
-                    <label style={{fontSize:".65rem",color:"var(--t3)",cursor:"pointer",display:"flex",alignItems:"center",gap:".3rem"}}>
-                      <input type="checkbox" checked={selected.size === detected.length}
-                        onChange={e => setSelected(e.target.checked ? new Set(detected.map((_,i) => i)) : new Set())} />
-                      Select all
-                    </label>
-                  )}
-                </div>
-                {detected.map((d, i) => (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:".5rem",padding:".45rem .65rem",
-                    background: selected.has(i) ? "var(--accent-14)" : "var(--s2)",
-                    border: `1px solid ${selected.has(i) ? "var(--accent)" : "var(--b2)"}`,
-                    borderRadius:"8px",cursor:"pointer",transition:"all .2s"}}
-                    onClick={() => {
-                      if (detected.length > 1) {
-                        setSelected(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
-                      } else {
-                        if (d.type==="stalker") { setType("stalker"); set("server",d.server); set("mac",d.mac); if(d.serial){set("serial",d.serial);setShowAdvanced(true);} if(d.deviceId){set("deviceId",d.deviceId);setShowAdvanced(true);} if(d.deviceId2){set("deviceId2",d.deviceId2);setShowAdvanced(true);} else if(d.deviceId){set("deviceId2",d.deviceId);} }
-                        else if (d.type==="xtream") { setType("xtream"); set("server",d.server); set("user",d.user); set("pass",d.pass); }
-                        else if (d.type==="m3u") { setType("m3u"); set("url",d.url); }
-                      }
-                    }}
-                    onMouseEnter={e => { if (!selected.has(i)) e.currentTarget.style.borderColor="var(--accent)"; }}
-                    onMouseLeave={e => { if (!selected.has(i)) e.currentTarget.style.borderColor="var(--b2)"; }}>
-                    {detected.length > 1 && (
-                      <input type="checkbox" checked={selected.has(i)} readOnly
-                        style={{accentColor:"var(--accent)",cursor:"pointer"}} />
-                    )}
-                    <span style={{fontSize:".7rem",fontWeight:700,color:"var(--accent)",textTransform:"uppercase",minWidth:"50px"}}>{d.type}</span>
-                    <span style={{fontSize:".78rem",color:"var(--t1)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.label}</span>
-                    {detected.length === 1 && <span style={{fontSize:".65rem",color:"var(--t3)"}}>{t("clickToFill")}</span>}
-                  </div>
-                ))}
-                {selected.size > 0 && (
-                  <button className="btn-primary" style={{marginTop:".4rem"}}
-                    onClick={() => {
-                      const items = [...selected].sort((a,b)=>a-b).map(i => detected[i]);
-                      if (onImportMultiple) onImportMultiple(items);
-                    }}>
-                    Import {selected.size} connection{selected.size > 1 ? "s" : ""}
-                  </button>
-                )}
-              </div>
-            )}
-            {rawText && detected.length === 0 && (
-              <div style={{fontSize:".78rem",color:"var(--t3)",padding:".5rem 0"}}>{t("noConnsDetected")}</div>
-            )}
-          </div>
+          <ImportForm
+            rawText={rawText}
+            setRawText={handleRawTextChange}
+            detected={detected}
+            selected={selected}
+            setSelected={setSelected}
+            onFileImport={handleFileImport}
+            onImportMultiple={onImportMultiple}
+            onFillSingle={handleFillSingle}
+          />
         )}
         <button className="btn-primary" onClick={handleConnectClick} disabled={loading || type==="import"} style={type==="import"?{display:"none"}:{}}>
           {loading ? t("connecting") : t("connectArrow")}
         </button>
 
-        {/* Expired/blocked connection prompt */}
         {expiredPrompt && createPortal(
           <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.6)",
             display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
