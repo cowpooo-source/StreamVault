@@ -8,6 +8,7 @@ import TimelineGrid from "./components/TimelineGrid.jsx";
 import VirtualGrid from "./components/VirtualGrid.jsx";
 import AuthScreen from './components/AuthScreen.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
+import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 
 // ── i18n ──
 const RTL_LANGS = ["ar","ur"];
@@ -826,13 +827,7 @@ const LANGS = {
 };
 function _t(lang, key, ...args) { const s = LANGS[lang]?.[key] ?? LANGS.en[key] ?? key; return args.length ? s.replace(/\{(\d+)\}/g, (_, i) => args[i] ?? "") : s; }
 
-// Guest ID for analytics tracking
-const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
 setEncKeySource(GUEST_ID);
-// Auth: relies solely on httpOnly cookies (no localStorage token fallback to prevent XSS theft)
-function authHeaders(extra = {}) { return { ...extra, "X-Guest-Id": GUEST_ID }; }
-function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
-function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
 
 // VAST functions are now in vast.js
 
@@ -1037,24 +1032,6 @@ const THEME_NAMES = Object.keys(THEMES);
 const PROFILE_COLORS = ["#00d4ff","#ff6b35","#00e896","#ff2d55","#a78bfa","#fbbf24"];
 
 
-// ══════════════════════════════════════════════════════════════════
-// STORAGE + GUEST SESSION
-// ══════════════════════════════════════════════════════════════════
-const db = {
-  async get(key, fallback = null) {
-    try {
-      if (window.storage) { const r = await window.storage.get(key); return r ? JSON.parse(r.value) : fallback; }
-      const v = localStorage.getItem(key); return v !== null ? JSON.parse(v) : fallback;
-    } catch { return fallback; }
-  },
-  async set(key, value) {
-    try {
-      if (window.storage) { await window.storage.set(key, JSON.stringify(value)); }
-      else localStorage.setItem(key, JSON.stringify(value));
-    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
-  },
-};
-
 // IndexedDB cache for large stalker data (avoids localStorage 5MB limit)
 const idbCache = (() => {
   let dbP;
@@ -1157,57 +1134,6 @@ function parseEPGDate(s) {
 }
 
 // getEPGNow and epgLookup are now imported from epg.js
-
-// fmtTime is now imported from utils.js
-
-function proxyFetch(url) {
-  return fetch(`${API}/proxy?url=${encodeURIComponent(url)}`);
-}
-
-async function safeJsonFetch(res) {
-  const text = await res.text();
-  if (!res.ok) {
-    // Try to parse error message if it's JSON
-    try {
-      const errData = JSON.parse(text);
-      if (errData.error) throw new Error(errData.error);
-    } catch (e) {
-      if (e.message.startsWith("Server returned")) throw e; // Already a good error
-    }
-    throw new Error(`Server error (HTTP ${res.status})`);
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    if (text.trim().startsWith("<")) {
-      throw new Error("Server returned HTML/XML instead of JSON. Check if your URL and credentials are correct.");
-    }
-    throw new Error("Invalid response from server (Not JSON)");
-  }
-}
-
-function makeXtreamAPI(server, user, pass) {
-  const base = `${server}/player_api.php?username=${user}&password=${pass}`;
-  
-  const fetchJson = async (url) => {
-    const res = await proxyFetch(url);
-    return safeJsonFetch(res);
-  };
-
-  return {
-    auth: () => fetchJson(base),
-    getLiveCategories: () => fetchJson(`${base}&action=get_live_categories`),
-    getLive: () => fetchJson(`${base}&action=get_live_streams`),
-    getVODCategories: () => fetchJson(`${base}&action=get_vod_categories`),
-    getVOD: () => fetchJson(`${base}&action=get_vod_streams`),
-    getSeriesCategories: () => fetchJson(`${base}&action=get_series_categories`),
-    getSeries: () => fetchJson(`${base}&action=get_series`),
-    getSeriesInfo: (id) => fetchJson(`${base}&action=get_series_info&series_id=${id}`),
-    liveURL: id => `${server}/live/${user}/${pass}/${id}.ts`,
-    vodURL: (id, ext="mp4") => `${server}/movie/${user}/${pass}/${id}.${ext}`,
-    seriesStreamURL: (id, ext="mp4") => `${server}/series/${user}/${pass}/${id}.${ext}`,
-  };
-}
 
 // uid is now imported from utils.js
 
@@ -4498,7 +4424,7 @@ export default function App() {
                         loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
                       />
                     </div>
-                    {hasMore && (
+                    {hasMore && section !== "live" && (
                       <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem 0",width:"100%",flexShrink:0}}>
                         <button className="c-btn" onClick={()=>setPage(p=>p+1)}>{t("loadMore")} ({paginatedItems.length}/{curItems.length})</button>
                       </div>
