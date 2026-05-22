@@ -9,16 +9,16 @@ export default defineConfig({
     setupFiles: ["./tests/setup.js"],
     include: ["tests/**/*.test.{js,jsx}"],
     css: true,
-    coverage: {
-      provider: "v8",
-      reportsDirectory: "./coverage",
-      exclude: ["e2e/**", "dist/**", "**/*.test.js", "**/*.test.jsx", "tests/setup.js"],
-      thresholds: {
-        lines: 50,
-        functions: 40,
-        branches: 40,
-        statements: 48,
-      },
+  },
+  coverage: {
+    provider: "v8",
+    reportsDirectory: "./coverage",
+    exclude: ["e2e/**", "dist/**", "**/*.test.js", "**/*.test.jsx", "tests/setup.js"],
+    thresholds: {
+      lines: 80,
+      functions: 80,
+      branches: 70,
+      statements: 80,
     },
   },
 });

@@ -10,8 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "e2e": "playwright"
+    "test:coverage": "vitest run --coverage --configLoader native --pool threads",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.14",
