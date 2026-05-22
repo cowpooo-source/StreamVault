@@ -1824,7 +1824,7 @@ export default function App() {
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
   const [autoLoadMore, setAutoLoadMore] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("sv-autoLoadMore") || "false"); } catch { return false; }
+    try { return JSON.parse(localStorage.getItem("sv-autoLoadMore") || "true"); } catch { return true; }
   });
   const [globalQ, setGlobalQ] = useState("");
   const deferredGlobalQ = useDeferredValue(globalQ);
