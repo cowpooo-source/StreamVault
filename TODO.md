@@ -1,8 +1,8 @@
-- [ ] **BUG: VirtualGrid — `header` prop silently dropped and `scrollRef` prop unused**
-  The `header` prop (recommendations row) passed from App.jsx is never rendered in VirtualGrid.jsx — it goes to nothing. Additionally, `scrollRef` is received as a prop but never used; the component uses a local `scrollRef` instead. Fix: render `{header}` in the JSX and remove the dead prop.
+- [x] **BUG: VirtualGrid — `header` prop silently dropped and `scrollRef` prop unused**
+  The `header` prop (recommendations row) passed from App.jsx was never rendered in VirtualGrid.jsx. Additionally, `scrollRef` was received as a prop but never used — the component used a local `scrollRef` instead. Fixed: VirtualGrid now renders `{header}` and uses the local `scrollRef` correctly.
 
-- [ ] **BUG: EPG programs overlapping on top of each other (All sources merge)**
-  When multiple EPG sources are loaded and "All" is selected, programs for the same channel and time window appear as duplicate overlapping blocks. The merge logic blindly accepts all programs without deduplication. See `docs/advanced-epg-plan.md` for the full fix plan covering Task 2 (dedup logic) and Task 3 (deferred search).
+- [x] **BUG: EPG programs overlapping on top of each other (All sources merge)**
+  When multiple EPG sources are loaded and "All" is selected, programs for the same channel and time window appear as duplicate overlapping blocks. Fixed with 60-second title-based deduplication in `mergeEpgSources()`. Connection-scoped EPG sources now include `connectionId` tags to prevent cross-contamination.
 
 - [ ] **FEATURE: Preserve EPG sources across connection switches**
   Currently, switching connections calls `setEpgSources([])`, throwing away all loaded XMLTV/Stalker EPG sources. EPG data is provider-agnostic — an XMLTV file from one portal works for another. Preserve `epgSources` on connection switch; only clear `epgData` (the merged map). See `docs/advanced-epg-plan.md` Task 1.
@@ -17,10 +17,30 @@
   The `↩️` button appears whenever `current.type === "live"` and `epgData` exists, regardless of connection type. The `&start=N` timeshift parameter only works for Stalker portals. For Xtream connections, the button silently fails. Fix: either guard the button with `connType === "stalker"`, or implement a backend endpoint that rewrites the stream URL with proper Xtream timeshift parameters.
 
 - [x] **PERF: Grid Virtualization — implemented with `@tanstack/react-virtual`**
-  VOD/Series grids now use `useVirtualizer` to render only visible rows. Note: VirtualGrid has active bugs — see "VirtualGrid header prop and scrollRef unused" above.
+
+- [ ] **BUG: App.jsx:3061 — stale closure in connection/effects useEffect (P1)**
+  `useEffect` at line 3061 is missing many function dependencies (`fetchLive`, `fetchStalkerChannels`, `fetchVOD`, `loadEPG`, `loadStalkerCats`, `loadStalkerEPG`, `autoConnected`, `epgURL`, `lastSynced`). This means the effect won't re-run when connection state changes if those functions are recreated, leading to fetches using stale logic or missing updates. Fix: wrap the dependent functions in `useCallback` with proper deps, then add them to the effect dependency array.
+
+- [ ] **BUG: Player.jsx:594 — stale closure in player init useEffect (P1)**
+  `useEffect` at line 594 (player initialization) is missing `current.*` fields (`connId`, `epgId`, `group`, `id`, `name`, `title`, `type`) plus `initPlayer`, `destroyPlayers`, `isAdEligible`, `showOSD`. This can cause the player to not re-init or re-destroy when the channel changes, leading to incorrect playback state. Fix: wrap dependent values/funcs in `useCallback`/`useMemo` or restructure the effect to use a single `item.id` dep for channel-change detection.
+
+- [ ] **BUG: App.jsx:3346 — stale closure in EPG load useEffect (P2)**
+  `useEffect` missing `conn?.type` and `loadStalkerEPG`. If the connection type changes, this effect won't re-trigger Stalker EPG loading.
+
+- [ ] **BUG: App.jsx:2656 — `isCatHidden` causes stale closure in useEffect (P2)**
+  The `isCatHidden` function is in the dependency array of a useEffect (at line 2656), causing the effect to re-run on every render. Wrap `isCatHidden` in `useCallback` or move it outside the component.
+
+- [ ] **BUG: App.jsx:5346 — stale closure in multi-import useEffect (P2)**
+  `useEffect` missing `loadAll`. Affects the bulk connection import flow.
+
+- [ ] **BUG: Player.jsx:649 — stale closure in prev/next channel useEffect (P2)**
+  `useEffect` missing `nextChannel`, `prevChannel`, `onClose`, `showOSD`. Can cause arrow-key channel navigation to miss re-renders.
+
+- [ ] **BUG: App.jsx:2 — unused `useVirtualizer` import in App.jsx**
+  `useVirtualizer` is imported but never used in App.jsx. Remove the import.
 
 - [ ] **TECH DEBT: Fix Exhaustive Hook Dependencies**
-  Surgically resolve all `react-hooks/exhaustive-deps` warnings in `App.jsx` and `Player.jsx` to prevent stale closure bugs.
+  Surgically resolve all `react-hooks/exhaustive-deps` warnings in `App.jsx` and `Player.jsx` to prevent stale closure bugs. 8 total warnings found via eslint. See individual tasks above for priority ordering.
 
 - [ ] **FEATURE: Multi-Portal Global Search**
   Search across all saved user connections simultaneously instead of just the active one.
