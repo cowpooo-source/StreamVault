@@ -6,5 +6,16 @@ export default defineConfig({
     exclude: ["test/**"],
     testTimeout: 15000,
     setupFiles: ["tests/setup.js"],
+    coverage: {
+      provider: "v8",
+      reportsDirectory: "./coverage",
+      exclude: ["tests/setup.js"],
+      thresholds: {
+        lines: 45,
+        functions: 45,
+        branches: 40,
+        statements: 45,
+      },
+    },
   },
 });

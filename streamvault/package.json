@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "e2e": "playwright"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",

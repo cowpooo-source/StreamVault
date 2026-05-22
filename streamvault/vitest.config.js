@@ -8,5 +8,16 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setup.js"],
     css: true,
+    coverage: {
+      provider: "v8",
+      reportsDirectory: "./coverage",
+      exclude: ["e2e/**", "dist/**", "**/*.test.js", "**/*.test.jsx", "tests/setup.js"],
+      thresholds: {
+        lines: 50,
+        functions: 50,
+        branches: 45,
+        statements: 50,
+      },
+    },
   },
 });
