@@ -3003,17 +3003,18 @@ export default function App() {
   const getItems = useCallback((sec) => sec==="live"?channels : sec==="vod"?vod : series, [channels, vod, series]);
 
   const curCatsAll = useMemo(() => {
+    if (section === "favorites") return ["All"];
     if (conn?.type === "stalker" && (section === "vod" || section === "series")) {
       const apiCats = section === "vod" ? stalkerVodCats : stalkerSeriesCats;
       if (apiCats.length) return apiCats.map(c => c.title);
     }
-    const items = getItems(section);
+    const items = getItems(section) || [];
     return ["All", ...new Set(items.map(i=>i.group).filter(Boolean))];
   }, [conn, section, stalkerVodCats, stalkerSeriesCats, getItems]);
 
   const curItemsAll = useMemo(() => {
-    if (!cat) return [];
-    const items = getItems(section);
+    if (!cat || section === "favorites") return [];
+    const items = getItems(section) || [];
     return items.filter(item => {
       let catMatch = false;
       if (cat === "All") {
