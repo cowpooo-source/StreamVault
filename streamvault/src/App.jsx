@@ -1158,11 +1158,10 @@ function transformStalkerItem(item) {
 // PLAYER COMPONENT (TiviMate-level keyboard + OSD + PiP + quick-ch)
 // ══════════════════════════════════════════════════════════════════
 
+import Setup from "./components/Setup.jsx";
+
 // ══════════════════════════════════════════════════════════════════
-// SETUP
-// ══════════════════════════════════════════════════════════════════
-function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, t: st }) {
-  const t = st || ((k) => k);
+// CONNECTION MANAGER MODAL
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
   const [showAdvanced, setShowAdvanced] = useState(false);
