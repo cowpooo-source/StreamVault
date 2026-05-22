@@ -13,6 +13,7 @@ import DiscoverView from './components/DiscoverView.jsx';
 import Setup from './components/Setup.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
+import { useStreamVault } from "./useStreamVault.js";
 
 // ── i18n ──
 const RTL_LANGS = ["ar","ur"];
@@ -1842,18 +1843,23 @@ export default function App() {
   const t = useCallback((key, ...args) => _t(lang, key, ...args), [lang]);
   const isRTL = RTL_LANGS.includes(lang);
 
-  // ── connections (replaces profiles)
-  const [connections, setConnections] = useState([]);
-  const [activeConnId, setActiveConnId] = useState(null);
+  // ── Phase A state — extracted to streamvault-store via useStreamVault hook
+  const { state: sv, actions: svActions } = useStreamVault({
+    db, syncToServer, syncConnectionsToServer, authUser, isGuest,
+  });
+  const connections = sv.connections;
+  const activeConnId = sv.activeConnId;
+  const favs = sv.favorites;
+  const history = sv.history;
+
+  const setConnections = svActions.setConnections;
+  const setActiveConnId = svActions.setActiveConnId;
+  const setFavs = svActions.setFavorites;
+  const setHistory = svActions.setHistory;
+
   const [showConnManager, setShowConnManager] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [editingConn, setEditingConn] = useState(null);
-
-  // ── favorites {live:{}, vod:{}, series:{}}
-  const [favs, setFavs] = useState({live:{}, vod:{}, series:{}});
-
-  // ── history [{id,name,url,type,logo,group,position,timestamp}]
-  const [history, setHistory] = useState([]);
 
   // ── hidden cats per section
   const [hiddenCats, setHiddenCats] = useState({live:[], vod:[], series:[]});
@@ -2079,47 +2085,21 @@ export default function App() {
       // Migrate old profile/lastConn data to new connection system
       await migrateToConnections();
 
-      const [th, conns, acId, hc, eq] = await Promise.all([
+      const [th, hc, eq] = await Promise.all([
         db.get("sv-theme","Dark"),
-        db.get("sv-connections",[]),
-        db.get("sv-activeConn",null),
         db.get("sv-hiddenCats",{live:[],vod:[],series:[]}),
         db.get("sv-epgURL",""),
       ]);
       if (THEME_NAMES.includes(th)) setThemeName(th);
-      setConnections(conns);
-      setActiveConnId(acId);
       setHiddenCats(hc);
       if (eq) setEpgURL(eq);
 
-      // Load per-connection favs + history
-      if (acId) {
-        const [fv, hi] = await Promise.all([
-          db.get(`sv-favs-${acId}`, {live:{},vod:{},series:{}}),
-          db.get(`sv-history-${acId}`, []),
-        ]);
-        setFavs(fv);
-        setHistory(hi);
-
-        // Restore from server if local is empty
-        const favsEmpty = !fv || (Object.keys(fv.live||{}).length === 0 && Object.keys(fv.vod||{}).length === 0 && Object.keys(fv.series||{}).length === 0);
-        const histEmpty = !hi || hi.length === 0;
-        if (favsEmpty || histEmpty) {
-          const [serverFavs, serverHist] = await Promise.all([
-            favsEmpty ? restoreFromServer("favorites", acId) : null,
-            histEmpty ? restoreFromServer("history", acId) : null,
-          ]);
-          if (serverFavs && favsEmpty) { setFavs(serverFavs); db.set(`sv-favs-${acId}`, serverFavs); }
-          if (serverHist && histEmpty) { setHistory(serverHist); db.set(`sv-history-${acId}`, serverHist); }
-        }
-      }
-
       // Auto-connect: if we have an active connection, set conn (load cache if available)
-      if (acId) {
+      if (activeConnId && connections.length) {
         try {
-          const connObj = conns.find(c => c.id === acId);
+          const connObj = connections.find(c => c.id === activeConnId);
           if (connObj) {
-            const cached = await loadFromCache(acId, connObj);
+            const cached = await loadFromCache(activeConnId, connObj);
             if (!cached) {
               // No cache, but active connection exists — set conn so app screen loads
               setConn(connObj.config);
@@ -2128,7 +2108,33 @@ export default function App() {
         } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     })();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally run once; useStreamVault loads connections/favs/history on mount
+
+  // ── restore from server when local favs/history are empty (fires after useStreamVault loads from db)
+  useEffect(() => {
+    if (!activeConnId) return;
+    let cancelled = false;
+    (async () => {
+      // Check if local favs/history are empty — if so, restore from server
+      const favsEmpty = !sv.favorites
+        || (Object.keys(sv.favorites.live||{}).length === 0
+          && Object.keys(sv.favorites.vod||{}).length === 0
+          && Object.keys(sv.favorites.series||{}).length === 0);
+      const histEmpty = !sv.history || sv.history.length === 0;
+
+      if (favsEmpty || histEmpty) {
+        const [serverFavs, serverHist] = await Promise.all([
+          favsEmpty ? restoreFromServer("favorites", activeConnId) : null,
+          histEmpty ? restoreFromServer("history", activeConnId) : null,
+        ]);
+        if (cancelled) return;
+        if (serverFavs && favsEmpty) svActions.setFavorites(serverFavs);
+        if (serverHist && histEmpty) svActions.setHistory(serverHist);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeConnId, sv.favorites, sv.history]);
 
   // ── load cached content from IDB for a connection
   async function loadFromCache(id, connObj) {
