@@ -18,6 +18,9 @@
 
 - [x] **PERF: Grid Virtualization — implemented with `@tanstack/react-virtual`**
 
+- [ ] **BUG: M3U import — channel data not auto-refreshed on connect, no refresh for Movies/Series (P1)**
+  When an M3U connection is added, the channel list loads once but does not auto-refresh on subsequent visits. The Movies and Series sections for M3U connections show no content and have no refresh button — unlike Xtream connections which have a manual refresh trigger. For M3U, the parsed channels are saved to IDB on connect but content is not re-fetched on revisit. Fix: either call `loadM3UContent()` on M3U connection load, or add a Refresh button to the Movies/Series headers for M3U type connections. See `App.jsx` around line 2241 (M3U branch).
+
 - [ ] **BUG: App.jsx:3061 — stale closure in connection/effects useEffect (P1)**
   `useEffect` at line 3061 is missing many function dependencies (`fetchLive`, `fetchStalkerChannels`, `fetchVOD`, `loadEPG`, `loadStalkerCats`, `loadStalkerEPG`, `autoConnected`, `epgURL`, `lastSynced`). This means the effect won't re-run when connection state changes if those functions are recreated, leading to fetches using stale logic or missing updates. Fix: wrap the dependent functions in `useCallback` with proper deps, then add them to the effect dependency array.
 
