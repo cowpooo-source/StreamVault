@@ -6,7 +6,6 @@ import { detectFromText } from "./setup-utils.js";
  * @param {{ rawText: string, setRawText: function, detected: array, selected: Set, setSelected: function, onFileImport: function, onImportMultiple: function, onFillSingle: function }} props
  */
 export function ImportForm({ rawText, setRawText, detected, selected, setSelected, onFileImport, onImportMultiple, onFillSingle }) {
-  const set = (k, v) => setRawText(k, v);
 
   const handleTextChange = (e) => {
     const text = e.target.value;
