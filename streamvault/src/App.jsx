@@ -2239,7 +2239,7 @@ export default function App() {
       return;
     }
     if (conn.type === "m3u") {
-      setChannels(conn.channels);
+      setChannels(conn.channels ?? []);
       // Save M3U channels to IDB for persistence
       const cId = connId(conn);
       if (cId && conn.channels?.length) {
