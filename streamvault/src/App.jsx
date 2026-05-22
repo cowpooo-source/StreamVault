@@ -2133,7 +2133,7 @@ export default function App() {
   // ── load cached content from IDB for a connection
   async function loadFromCache(id, connObj) {
     const cachedChannels = await idbCache.get(`content:${id}:live`);
-    if (cachedChannels && cachedChannels.length) {
+    if (Array.isArray(cachedChannels) && cachedChannels.length) {
       setAutoConnected(true);
       setConn(connObj.config);
       setChannels(cachedChannels);
@@ -2141,15 +2141,15 @@ export default function App() {
         idbCache.get(`content:${id}:vod`),
         idbCache.get(`content:${id}:series`),
       ]);
-      if (cachedVod) setVod(cachedVod);
-      if (cachedSeries) setSeries(cachedSeries);
+      if (Array.isArray(cachedVod)) setVod(cachedVod);
+      if (Array.isArray(cachedSeries)) setSeries(cachedSeries);
       if (connObj.type === "stalker") {
         const [vc, sc] = await Promise.all([
           idbCache.get(`cats:${id}:vod`),
           idbCache.get(`cats:${id}:series`),
         ]);
-        if (vc) setStalkerVodCats(vc);
-        if (sc) setStalkerSeriesCats(sc);
+        if (Array.isArray(vc)) setStalkerVodCats(vc);
+        if (Array.isArray(sc)) setStalkerSeriesCats(sc);
       }
       const syncTs = await idbCache.get(`sync:${id}`);
       if (syncTs) setLastSynced(syncTs);
