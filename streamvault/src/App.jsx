@@ -2216,13 +2216,6 @@ export default function App() {
     localStorage.setItem("sv-autoLoadMore", JSON.stringify(autoLoadMore));
   }, [autoLoadMore]);
 
-  // ── load favs + history when active connection changes
-  useEffect(() => {
-    if (!activeConnId) return;
-    db.get(`sv-favs-${activeConnId}`, {live:{},vod:{},series:{}}).then(setFavs);
-    db.get(`sv-history-${activeConnId}`, []).then(setHistory);
-  }, [activeConnId]);
-
   // ── persist section to localStorage
   useEffect(() => {
     localStorage.setItem("sv-lastSection", JSON.stringify(section));
