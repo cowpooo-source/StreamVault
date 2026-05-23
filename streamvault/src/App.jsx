@@ -2084,6 +2084,8 @@ export default function App() {
       if (eq) setEpgURL(eq);
 
       // Auto-connect: if we have an active connection, set conn (load cache if available)
+      // Re-runs whenever activeConnId or connections change (both start as empty falsy values,
+      // so this effect re-fires after useStreamVault populates them from IDB on mount)
       if (activeConnId && connections.length) {
         try {
           const connObj = connections.find(c => c.id === activeConnId);
@@ -2097,8 +2099,7 @@ export default function App() {
         } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally run once; useStreamVault loads connections/favs/history on mount
+  }, [activeConnId, connections]); // re-run when hook populates these from IDB
 
   // ── restore from server when local favs/history are empty (fires after useStreamVault loads from db)
   useEffect(() => {
