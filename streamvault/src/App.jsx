@@ -1716,7 +1716,6 @@ export default function App() {
         const serverConns = await restoreConnectionsFromServer();
         if (serverConns?.length) {
           setConnections(serverConns);
-          db.set("sv-connections", serverConns);
         }
       })
       .catch(() => { })
@@ -1743,16 +1742,12 @@ export default function App() {
     const serverConns = await restoreConnectionsFromServer();
     if (serverConns?.length) {
       setConnections(serverConns);
-      db.set("sv-connections", serverConns);
     } else if (guestConns.length > 0) {
       // No server data, but we had guest connections — import them to the new account!
       setConnections(guestConns);
-      db.set("sv-connections", guestConns);
-      syncConnectionsToServer(guestConns);
     } else {
       // No server data — start fresh for this user
       setConnections([]);
-      db.set("sv-connections", []);
     }
   }
   function handleGuest() {
@@ -1771,7 +1766,6 @@ export default function App() {
     setConnections([]);
     setActiveConnId(null);
     setConn(null);
-    db.set("sv-connections", []);
     db.set("sv-activeConn", null);
     setEncKeySource(GUEST_ID);
     setAuthUser(null); setIsGuest(false);
@@ -1843,18 +1837,21 @@ export default function App() {
   const t = useCallback((key, ...args) => _t(lang, key, ...args), [lang]);
   const isRTL = RTL_LANGS.includes(lang);
 
-  // ── Phase A state — extracted to streamvault-store via useStreamVault hook
   const { state: sv, actions: svActions } = useStreamVault({
-    db, syncToServer, syncConnectionsToServer, authUser, isGuest,
+    db, syncToServer, syncConnectionsToServer: async (conns) => {
+      const encrypted = await encryptConnections(conns);
+      syncToServer("connections", "_all", encrypted);
+    },
+    authUser, isGuest
   });
-  const connections = sv.connections;
-  const activeConnId = sv.activeConnId;
-  const favs = sv.favorites;
-  const history = sv.history;
 
+  const connections = sv.connections;
   const setConnections = svActions.setConnections;
+  const activeConnId = sv.activeConnId;
   const setActiveConnId = svActions.setActiveConnId;
+  const favs = sv.favorites;
   const setFavs = svActions.setFavorites;
+  const history = sv.history;
   const setHistory = svActions.setHistory;
 
   const [showConnManager, setShowConnManager] = useState(false);
@@ -1886,9 +1883,6 @@ export default function App() {
     if (activeEpgSource !== "all") {
       dataToProcess = epgSources.find(s => s.id === activeEpgSource)?.data || null;
     } else {
-      // Merge only sources from the active connection.
-      // Stalker sources are connection-specific (channel numeric ids can collide across portals).
-      // XMLTV/standalone sources have text channel ids and are kept session-wide.
       const toMerge = epgSources.filter(s =>
         s.connectionId === activeConnId || s.kind !== "stalker"
       );
@@ -1907,9 +1901,6 @@ export default function App() {
 
     if (!dataToProcess) return null;
 
-    // Deduplicate: sort by start time, then skip programs with the same
-    // normalized title within 60 seconds of the previous — these are
-    // duplicate entries from different sources or provider refresh cycles.
     const deduplicated = {};
     for (const [chId, progs] of Object.entries(dataToProcess)) {
       if (!progs || !progs.length) continue;
@@ -1927,10 +1918,9 @@ export default function App() {
           Math.abs(last.start - p.start) < 60000 &&
           (last.title || "").trim().toLowerCase() === (p.title || "").trim().toLowerCase()
         ) {
-          // Same title within 60s — skip as duplicate
           continue;
         }
-        clean.push({ ...p }); // clone to avoid mutation
+        clean.push({ ...p });
       }
       if (clean.length) deduplicated[chId] = clean;
     }
@@ -1948,7 +1938,7 @@ export default function App() {
 
   // Clear live state whenever connection changes (but preserve loaded EPG sources for the session)
   useEffect(() => {
-    epgLoadToken.current++; // Invalidate any in-flight EPG loads
+    epgLoadToken.current++;
     setActiveEpgSource("all");
   }, [activeConnId]);
 
@@ -1956,7 +1946,7 @@ export default function App() {
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
   const [stalkerSeriesCats, setStalkerSeriesCats] = useState([]); // [{id,title,count}]
   const [catLoading,        setCatLoading]        = useState(false);
-  const fetchingCatRef = useRef(new Set());  // tracks in-progress category fetches
+  const fetchingCatRef = useRef(new Set());
   const [prefetchProgress, setPrefetchProgress] = useState(null); // {done,total} or null
 
   // ── last synced timestamps
@@ -1975,8 +1965,8 @@ export default function App() {
   const sendFeedback = useCallback(async () => {
     if (!fbMsg.trim() || fbSending) return;
     setFbSending(true);
-    
-    trackAnalytics("user_feedback", { 
+
+    trackAnalytics("user_feedback", {
       has_text: "true",
       feedback_type: "general",
       source_screen: section
@@ -2004,8 +1994,8 @@ export default function App() {
   // ── Debounced Search for Analytics
   const debouncedSearch = useMemo(() => debounce((term, type) => {
     const queryLength = term.trim().length;
-    if (queryLength > 0) trackAnalytics("search", { 
-      query_length: queryLength, 
+    if (queryLength > 0) trackAnalytics("search", {
+      query_length: queryLength,
       source_screen: type
     });
   }, 1000), []);
@@ -2024,7 +2014,7 @@ export default function App() {
   // ── TMDB enrichment for detail modal
   useEffect(() => {
     if (!expandedItem || !tmdbKey) { setTmdbData(null); setShowTrailer(false); return; }
-    
+
     function tmdbUrl(path, params = "") {
       if (tmdbKey === "server") return `${API}/api/tmdb/${path}?${params}`;
       return `https://api.themoviedb.org/3/${path}?api_key=${tmdbKey}&${params}`;
@@ -2179,8 +2169,8 @@ export default function App() {
         : lastConn.type === "m3u" ? `M3U · ${(lastConn.url||"").split("/").pop()?.slice(0,20)||"playlist"}`
         : "Direct HLS";
       const connObj = { id: cId, type: lastConn.type, label, color, config: lastConn };
-      db.set("sv-connections", [connObj]);
-      db.set("sv-activeConn", cId);
+      setConnections([connObj]);
+      setActiveConnId(cId);
       // Migrate favorites: try active profile first, then default
       const ap = localStorage.getItem("sv-activeProfile");
       const activeProfileId = ap ? JSON.parse(ap) : "default";
@@ -2850,9 +2840,6 @@ export default function App() {
     const newConns = [...connections, connObj];
     setConnections(newConns);
     setActiveConnId(cId);
-    db.set("sv-connections", newConns);
-    db.set("sv-activeConn", cId);
-    if (authUser || isGuest) syncConnectionsToServer(newConns);
     return null;
   }
 
@@ -2872,7 +2859,6 @@ export default function App() {
     // Set conn to new config FIRST so useEffect [activeConnId] sees correct conn
     setConn(target.config);
     setActiveConnId(id);
-    db.set("sv-activeConn", id);
     (async () => {
       const loaded = await loadFromCache(id, target);
       if (!loaded) setConn(target.config); // fallback if not cached
@@ -2882,8 +2868,6 @@ export default function App() {
   function removeConnection(id) {
     const newConns = connections.filter(c => c.id !== id);
     setConnections(newConns);
-    db.set("sv-connections", newConns);
-    if (authUser || isGuest) syncConnectionsToServer(newConns);
     // Clean up localStorage
     localStorage.removeItem(`sv-favs-${id}`);
     localStorage.removeItem(`sv-history-${id}`);
@@ -2939,16 +2923,10 @@ export default function App() {
       c.id === updatedConn.id ? updatedConn : c
     );
     setConnections(newConns);
-    db.set("sv-connections", newConns);
 
     // If this is the active connection, update the current conn
     if (activeConnId === updatedConn.id) {
       setConn(updatedConn.config);
-    }
-
-    // Sync to server if logged in
-    if (authUser) {
-      syncConnectionsToServer(newConns);
     }
 
     // Only reload if we have a valid connection config
@@ -3178,8 +3156,6 @@ export default function App() {
       if (newConns.length) {
         const merged = [...existing, ...newConns];
         setConnections(merged);
-        db.set("sv-connections", merged);
-        if (authUser || isGuest) syncConnectionsToServer(merged);
         parts.push(`${data.connections.length} connections`);
       }
     }
@@ -3259,12 +3235,10 @@ export default function App() {
     }
     // Single state update with all connections
     setConnections(newConns);
-    db.set("sv-connections", newConns);
-    if (authUser || isGuest) syncConnectionsToServer(newConns);
     // Connect to the first imported one
     const firstCfg = configs[0];
     const firstId = connId(firstCfg);
-    if (firstId) { setActiveConnId(firstId); db.set("sv-activeConn", firstId); }
+    if (firstId) setActiveConnId(firstId);
     setConn(firstCfg);
   }
 

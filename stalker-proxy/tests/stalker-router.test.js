@@ -554,4 +554,28 @@ describe('createStalkerRouter - unit', () => {
     const res = await request(app).get('/stalker/stream?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC');
     expect(res.status).toBe(502);
   });
+
+  // --- EPG ---
+
+  it('GET /stalker/epg returns parsed EPG data', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: { '123': [{ name: 'Program', start_timestamp: 1672567200, stop_timestamp: 1672570800 }] } } })
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/epg?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&ch_id=123');
+    expect(res.status).toBe(200);
+    expect(res.body.programs['123'][0].title).toBe('Program');
+  });
+
+  it('GET /stalker/epg returns 200 with empty array on upstream failure', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockRejectedValue(new Error('epg err')),
+      safeError: vi.fn((e) => e.message)
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/epg?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&ch_id=123');
+    expect(res.status).toBe(502);
+  });
 });
