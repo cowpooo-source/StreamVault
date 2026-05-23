@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import legacy from '@vitejs/plugin-legacy'
 import { readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 import { fileURLToPath } from 'url';
@@ -25,7 +26,14 @@ function swVersionPlugin() {
 }
 
 export default defineConfig({
-  plugins: [react(), swVersionPlugin()],
+  plugins: [
+    react(),
+    swVersionPlugin(),
+    legacy({
+      targets: ['chrome >= 68', 'safari >= 13', 'ios >= 13', 'samsung >= 10'],
+      additionalLegacyPolyfills: ['regenerator-runtime/runtime']
+    })
+  ],
 
   server: {
     proxy: {
