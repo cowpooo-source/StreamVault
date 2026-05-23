@@ -154,6 +154,65 @@ describe("streamvaultStore", () => {
       expect(initial.favorites).toBe(originalFavs);
       expect(initial.favorites.live).toEqual({});
     });
+
+    // ── Type guard tests ───────────────────────────────────────────────────────
+
+    it("SET_CONNECTIONS ignores non-array payload", () => {
+      const initial = createInitialStoreState();
+      expect(streamvaultReducer(initial, { type: "SET_CONNECTIONS", payload: null })).toEqual(initial);
+      expect(streamvaultReducer(initial, { type: "SET_CONNECTIONS", payload: "not-an-array" })).toEqual(initial);
+      expect(streamvaultReducer(initial, { type: "SET_CONNECTIONS", payload: { id: "c1" } })).toEqual(initial);
+    });
+
+    it("SET_FAVORITES ignores non-object payload", () => {
+      const initial = createInitialStoreState();
+      expect(streamvaultReducer(initial, { type: "SET_FAVORITES", payload: null })).toEqual(initial);
+      expect(streamvaultReducer(initial, { type: "SET_FAVORITES", payload: "not-an-object" })).toEqual(initial);
+    });
+
+    it("SET_FAVORITES ignores array payload (arrays are not valid favorites objects)", () => {
+      // Arrays pass typeof === 'object' check but are not valid favorites shape
+      const initial = createInitialStoreState();
+      const next = streamvaultReducer(initial, { type: "SET_FAVORITES", payload: [1, 2, 3] });
+      expect(next.favorites).toEqual({ live: {}, vod: {}, series: {} });
+    });
+
+    it("SET_FAVORITES accepts valid object payload", () => {
+      const initial = createInitialStoreState();
+      const favs = { live: { ch1: { id: "ch1" } }, vod: {}, series: {} };
+      const next = streamvaultReducer(initial, { type: "SET_FAVORITES", payload: favs });
+      expect(next.favorites.live.ch1.id).toBe("ch1");
+    });
+
+    it("SET_HISTORY ignores non-array payload", () => {
+      const initial = createInitialStoreState();
+      expect(streamvaultReducer(initial, { type: "SET_HISTORY", payload: null })).toEqual(initial);
+      expect(streamvaultReducer(initial, { type: "SET_HISTORY", payload: "not-an-array" })).toEqual(initial);
+      expect(streamvaultReducer(initial, { type: "SET_HISTORY", payload: { length: 5 } })).toEqual(initial);
+    });
+
+    it("ADD_CONNECTION returns state unchanged when state.connections is not an array", () => {
+      const initial = createInitialStoreState();
+      // Manually corrupt state to simulate a prior type-guarded action
+      const badState = { ...initial, connections: null };
+      const conn = { id: "c1", type: "xtream", label: "C1", color: "#ff0000", config: {} };
+      expect(streamvaultReducer(badState, { type: "ADD_CONNECTION", payload: conn })).toEqual(badState);
+    });
+
+    it("REMOVE_CONNECTION returns empty array when state.connections is not an array", () => {
+      const initial = createInitialStoreState();
+      const badState = { ...initial, connections: "not-an-array" };
+      const next = streamvaultReducer(badState, { type: "REMOVE_CONNECTION", payload: "c1" });
+      expect(next.connections).toEqual([]);
+    });
+
+    it("UPDATE_CONNECTION returns empty array when state.connections is not an array", () => {
+      const initial = createInitialStoreState();
+      const badState = { ...initial, connections: { map: "nope" } };
+      const updated = { id: "c1", label: "New" };
+      const next = streamvaultReducer(badState, { type: "UPDATE_CONNECTION", payload: updated });
+      expect(next.connections).toEqual([]);
+    });
   });
 
   describe("selectActiveConnection", () => {

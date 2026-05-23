@@ -19,7 +19,7 @@ export function streamvaultReducer(state, action) {
       return { ...state, activeConnId: action.payload };
 
     case "SET_FAVORITES":
-      return { ...state, favorites: (action.payload && typeof action.payload === "object") ? action.payload : { live: {}, vod: {}, series: {} } };
+      return { ...state, favorites: (action.payload && typeof action.payload === "object" && !Array.isArray(action.payload)) ? action.payload : { live: {}, vod: {}, series: {} } };
 
     case "SET_HISTORY":
       return { ...state, history: Array.isArray(action.payload) ? action.payload : [] };

@@ -254,4 +254,67 @@ describe("useStreamVault", () => {
 
     expect(mockDb.set).toHaveBeenCalledWith("sv-history-c1", hist);
   });
+
+  // ── Stale closure tests ─────────────────────────────────────────────────────
+
+  it("addConnection uses latest state (not stale closure) on rapid successive calls", async () => {
+    const { result } = renderHook(() => useStreamVault(opts()));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    // Simulate rapid successive calls — each should see the result of the previous
+    await act(async () => {
+      result.current.actions.addConnection({ id: "c1", type: "xtream", label: "C1", color: "#ff0000", config: {} });
+    });
+    await act(async () => {
+      result.current.actions.addConnection({ id: "c2", type: "xtream", label: "C2", color: "#00ff00", config: {} });
+    });
+
+    // Both connections should be persisted, not just the last one
+    const connsCalls = mockDb.set.mock.calls.filter(([k]) => k === "sv-connections");
+    expect(connsCalls).toHaveLength(2);
+    expect(connsCalls[0][1]).toHaveLength(1); // first call has c1
+    expect(connsCalls[1][1]).toHaveLength(2); // second call has c1 AND c2
+    expect(result.current.state.connections).toHaveLength(2);
+  });
+
+  it("removeConnection uses latest state on rapid successive calls", async () => {
+    mockDb.get.mockResolvedValue([
+      { id: "c1", type: "xtream", label: "C1", color: "#ff0000", config: {} },
+      { id: "c2", type: "xtream", label: "C2", color: "#00ff00", config: {} },
+    ]);
+
+    const { result } = renderHook(() => useStreamVault(opts()));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    await act(async () => { result.current.actions.removeConnection("c1"); });
+    await act(async () => { result.current.actions.removeConnection("c2"); });
+
+    const connsCalls = mockDb.set.mock.calls.filter(([k]) => k === "sv-connections");
+    expect(connsCalls[0][1]).toHaveLength(1); // after removing c1, c2 remains
+    expect(connsCalls[1][1]).toHaveLength(0); // after removing c2, none remain
+    expect(result.current.state.connections).toHaveLength(0);
+  });
+
+  it("updateConnection uses latest state on rapid successive calls", async () => {
+    mockDb.get.mockResolvedValue([
+      { id: "c1", type: "xtream", label: "C1", color: "#ff0000", config: {} },
+      { id: "c2", type: "xtream", label: "C2", color: "#00ff00", config: {} },
+    ]);
+
+    const { result } = renderHook(() => useStreamVault(opts()));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    await act(async () => {
+      result.current.actions.updateConnection({ id: "c1", type: "xtream", label: "C1 Updated", color: "#ff0000", config: {} });
+    });
+    await act(async () => {
+      result.current.actions.updateConnection({ id: "c2", type: "xtream", label: "C2 Updated", color: "#00ff00", config: {} });
+    });
+
+    const connsCalls = mockDb.set.mock.calls.filter(([k]) => k === "sv-connections");
+    expect(connsCalls[0][1][0].label).toBe("C1 Updated"); // first update persisted
+    expect(connsCalls[1][1][1].label).toBe("C2 Updated"); // second update persisted
+    expect(result.current.state.connections[0].label).toBe("C1 Updated");
+    expect(result.current.state.connections[1].label).toBe("C2 Updated");
+  });
 });
