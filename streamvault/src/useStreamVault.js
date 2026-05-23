@@ -1,5 +1,5 @@
 // useStreamVault — React hook that wires streamvault-store.js to persistence and side effects
-import { useReducer, useEffect, useCallback, useMemo } from "react";
+import { useReducer, useEffect, useCallback, useMemo, useRef } from "react";
 import { createInitialStoreState, streamvaultReducer, selectActiveConnection, selectFavItems } from "./streamvault-store.js";
 
 // Debounce helper for server sync
@@ -14,6 +14,23 @@ function debouncedSync(type, connId, data, syncFn, delay = 2000) {
 
 export function useStreamVault({ db, syncToServer, syncConnectionsToServer, authUser, isGuest }) {
   const [state, dispatch] = useReducer(streamvaultReducer, null, createInitialStoreState);
+
+  // Refs to avoid stale closures when computing derived values for persistence
+  const connectionsRef = useRef([]);
+  const favoritesRef = useRef({ live: {}, vod: {}, series: {} });
+  const historyRef = useRef([]);
+
+  useEffect(() => {
+    connectionsRef.current = state.connections;
+  }, [state.connections]);
+
+  useEffect(() => {
+    favoritesRef.current = state.favorites;
+  }, [state.favorites]);
+
+  useEffect(() => {
+    historyRef.current = state.history;
+  }, [state.history]);
 
   // Load connections + activeConnId on mount
   useEffect(() => {
@@ -72,56 +89,55 @@ export function useStreamVault({ db, syncToServer, syncConnectionsToServer, auth
   }, [state.activeConnId]);
 
   const addConnection = useCallback((conn) => {
+    const updatedConns = [...connectionsRef.current, conn];
     dispatch({ type: "ADD_CONNECTION", payload: conn });
-    // Persist after dispatch so we read the updated state
-    const updatedConns = [...state.connections, conn];
     db.set("sv-connections", updatedConns);
     db.set("sv-activeConn", conn.id);
     if (authUser || isGuest) syncConnectionsToServer(updatedConns);
-  }, [state.connections, authUser, isGuest]);
+  }, [authUser, isGuest]);
 
   const removeConnection = useCallback((id) => {
+    const updatedConns = connectionsRef.current.filter(c => c.id !== id);
     dispatch({ type: "REMOVE_CONNECTION", payload: id });
-    const updatedConns = state.connections.filter(c => c.id !== id);
     db.set("sv-connections", updatedConns);
     if (authUser || isGuest) syncConnectionsToServer(updatedConns);
-  }, [state.connections, authUser, isGuest]);
+  }, [authUser, isGuest]);
 
   const updateConnection = useCallback((conn) => {
+    const updatedConns = connectionsRef.current.map(c => c.id === conn.id ? conn : c);
     dispatch({ type: "UPDATE_CONNECTION", payload: conn });
-    const updatedConns = state.connections.map(c => c.id === conn.id ? conn : c);
     db.set("sv-connections", updatedConns);
     if (authUser || isGuest) syncConnectionsToServer(updatedConns);
-  }, [state.connections, authUser, isGuest]);
+  }, [authUser, isGuest]);
 
   const toggleFavorite = useCallback((item) => {
-    dispatch({ type: "TOGGLE_FAVORITE", payload: item });
-    // Compute new favs for persistence — use current state.favorites safely
     const type = item.type || "live";
     const key = item.id || item.url;
-    const favs = state.favorites || { live: {}, vod: {}, series: {} };
+    const favs = favoritesRef.current || { live: {}, vod: {}, series: {} };
     const prevTypeFavs = favs[type] || {};
     const newFavs = prevTypeFavs[key]
       ? { ...favs, [type]: Object.fromEntries(Object.entries(prevTypeFavs).filter(([k]) => k !== key)) }
       : { ...favs, [type]: { ...prevTypeFavs, [key]: { id: item.id, name: item.name, url: item.url, logo: item.logo, group: item.group, type } } };
 
+    dispatch({ type: "TOGGLE_FAVORITE", payload: item });
     if (state.activeConnId) {
       db.set(`sv-favs-${state.activeConnId}`, newFavs);
       if (authUser || isGuest) debouncedSync("favorites", state.activeConnId, newFavs, syncToServer);
     }
-  }, [state.favorites, state.activeConnId, authUser, isGuest]);
+  }, [state.activeConnId, authUser, isGuest]);
 
   const addHistory = useCallback((item) => {
-    dispatch({ type: "ADD_TO_HISTORY", payload: item });
     const entry = { ...item, timestamp: Date.now(), position: 0 };
-    const hist = state.history || [];
+    const hist = historyRef.current || [];
     const withoutDup = hist.filter(h => (h.id || h.url) !== (item.id || item.url));
     const newHist = [entry, ...withoutDup].slice(0, 60);
+
+    dispatch({ type: "ADD_TO_HISTORY", payload: item });
     if (state.activeConnId) {
       db.set(`sv-history-${state.activeConnId}`, newHist);
       if (authUser || isGuest) debouncedSync("history", state.activeConnId, newHist, syncToServer);
     }
-  }, [state.history, state.activeConnId, authUser, isGuest]);
+  }, [state.activeConnId, authUser, isGuest]);
 
   const actions = useMemo(() => ({
     setConnections,

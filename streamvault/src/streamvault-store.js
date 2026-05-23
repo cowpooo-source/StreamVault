@@ -13,30 +13,31 @@ export function createInitialStoreState() {
 export function streamvaultReducer(state, action) {
   switch (action.type) {
     case "SET_CONNECTIONS":
-      return { ...state, connections: action.payload };
+      return { ...state, connections: Array.isArray(action.payload) ? action.payload : [] };
 
     case "SET_ACTIVE_CONN_ID":
       return { ...state, activeConnId: action.payload };
 
     case "SET_FAVORITES":
-      return { ...state, favorites: action.payload };
+      return { ...state, favorites: (action.payload && typeof action.payload === "object") ? action.payload : { live: {}, vod: {}, series: {} } };
 
     case "SET_HISTORY":
-      return { ...state, history: action.payload };
+      return { ...state, history: Array.isArray(action.payload) ? action.payload : [] };
 
     case "ADD_CONNECTION": {
       const conn = action.payload;
+      if (!Array.isArray(state.connections)) return state;
       if (state.connections.some(c => c.id === conn.id)) return state;
       return { ...state, connections: [...state.connections, conn] };
     }
 
     case "REMOVE_CONNECTION":
-      return { ...state, connections: state.connections.filter(c => c.id !== action.payload) };
+      return { ...state, connections: Array.isArray(state.connections) ? state.connections.filter(c => c.id !== action.payload) : [] };
 
     case "UPDATE_CONNECTION":
       return {
         ...state,
-        connections: state.connections.map(c => c.id === action.payload.id ? action.payload : c),
+        connections: Array.isArray(state.connections) ? state.connections.map(c => c.id === action.payload.id ? action.payload : c) : [],
       };
 
     case "TOGGLE_FAVORITE": {

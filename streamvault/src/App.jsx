@@ -1746,7 +1746,6 @@ export default function App() {
       // No server data, but we had guest connections — import them to the new account!
       setConnections(guestConns);
     } else {
-      // No server data — start fresh for this user
       setConnections([]);
     }
   }
