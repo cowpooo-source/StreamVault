@@ -4,6 +4,40 @@ const dns = require("dns");
 const util = require("util");
 const dnsLookup = util.promisify(dns.lookup);
 
+// ── Pure URL utility functions (no closure dependencies) ──────────────────
+function resolveUrl(urlStr, baseStr) {
+  try {
+    if (!urlStr) return baseStr;
+    if (/^https?:\/\//i.test(urlStr)) return urlStr;
+    if (urlStr.startsWith("//")) return (baseStr.startsWith("https") ? "https" : "http") + ":" + urlStr;
+    if (urlStr.startsWith("/")) {
+      const base = new URL(baseStr);
+      return `${base.protocol}//${base.host}${urlStr}`;
+    }
+    return new URL(urlStr, baseStr).toString();
+  } catch { return urlStr; }
+}
+
+const SAFE_SCHEMES = new Set(["data", "blob", "about"]);
+function rewriteMediaUrl(url, token) {
+  if (!url || SAFE_SCHEMES.has(url.split(":")[0])) return url;
+  const encoded = encodeURIComponent(url);
+  return `/stream?url=${encoded}&token=${encodeURIComponent(token)}`;
+}
+
+function rewriteM3u8(content, baseUrl, token) {
+  const lines = content.split(/\r?\n/);
+  return lines.map(l => {
+    const trimmed = l.trim();
+    const resolved = (trimmed.endsWith(".m3u8") || trimmed.endsWith(".ts") || trimmed.endsWith(".mp4") || trimmed.endsWith(".aac"))
+      ? resolveUrl(trimmed, baseUrl)
+      : l;
+    if (!/^https?:\/\//i.test(resolved)) return resolved;
+    return rewriteMediaUrl(resolved, token);
+  }).join("\n");
+}
+
+// ── Proxy helper factory ──────────────────────────────────────────────────
 function createProxyHelpers(deps) {
   const { fetch } = deps;
 
@@ -415,6 +449,50 @@ function createProxyHelpers(deps) {
     portalCooldowns.clear();
   }
 
+  // ── URL resolution ──────────────────────────────────────────────────────────
+  // Resolve a URL against a base (handles absolute, relative, protocol-relative)
+  function resolveUrl(urlStr, baseStr) {
+    try {
+      if (!urlStr) return baseStr;
+      // Absolute URL — return as-is
+      if (/^https?:\/\//i.test(urlStr)) return urlStr;
+      // Protocol-relative //host/path
+      if (urlStr.startsWith("//")) return (baseStr.startsWith("https") ? "https" : "http") + ":" + urlStr;
+      // Absolute path /path — replace base path
+      if (urlStr.startsWith("/")) {
+        const base = new URL(baseStr);
+        return `${base.protocol}//${base.host}${urlStr}`;
+      }
+      // Relative path — resolve against base
+      return new URL(urlStr, baseStr).toString();
+    } catch { return urlStr; }
+  }
+
+  // ── Media URL rewriting ────────────────────────────────────────────────────
+  const SAFE_SCHEMES = new Set(["data:", "blob:", "about:"]);
+  function rewriteMediaUrl(url, token) {
+    if (!url || SAFE_SCHEMES.has(url.split(":")[0])) return url;
+    const encoded = encodeURIComponent(url);
+    return `/stream?url=${encoded}&token=${encodeURIComponent(token)}`;
+  }
+
+  function rewriteM3u8(content, baseUrl, token) {
+    const lines = content.split(/\r?\n/);
+    const out = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.endsWith(".m3u8") || trimmed.endsWith(".ts") || trimmed.endsWith(".mp4") || trimmed.endsWith(".aac")) {
+        out.push(resolveUrl(trimmed, baseUrl));
+      } else {
+        out.push(line);
+      }
+    }
+    return out.map(l => {
+      if (!/^https?:\/\//i.test(l)) return l;
+      return rewriteMediaUrl(l, token);
+    }).join("\n");
+  }
+
   return {
     transferTimeout,
     agentFor,
@@ -427,8 +505,14 @@ function createProxyHelpers(deps) {
     safeError,
     getSession,
     portalFetchRetry,
-    resetProxyHelperStateForTests
+    resetProxyHelperStateForTests,
+    resolveUrl,
+    rewriteMediaUrl,
+    rewriteM3u8,
   };
 }
 
 module.exports = { createProxyHelpers };
+module.exports.resolveUrl     = resolveUrl;
+module.exports.rewriteMediaUrl = rewriteMediaUrl;
+module.exports.rewriteM3u8   = rewriteM3u8;
