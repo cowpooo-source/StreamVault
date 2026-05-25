@@ -20,6 +20,7 @@ const RTL_LANGS = ["ar","ur"];
 const LANG_META = {en:"English",es:"Español",fr:"Français",de:"Deutsch",it:"Italiano",zh:"中文",ar:"العربية",pt:"Português",hi:"हिन्दी",ur:"اردو"};
 const LANGS = {
   "en": {
+    "tagline": "Your personal IPTV client",
     "discover": "Discover",
     "live": "Live TV",
     "movies": "Movies",
@@ -3235,11 +3236,14 @@ export default function App() {
     }
     // Single state update with all connections
     setConnections(newConns);
-    // Connect to the first imported one
-    const firstCfg = configs[0];
-    const firstId = connId(firstCfg);
-    if (firstId) setActiveConnId(firstId);
-    setConn(firstCfg);
+    // Only connect if at least one connection was imported
+    if (added > 0) {
+      const firstAdded = newConns[newConns.length - added]; // first of the newly added
+      if (firstAdded) {
+        setActiveConnId(firstAdded.id);
+        setConn(firstAdded.config);
+      }
+    }
   }
 
   // Auth gate: show login/register before anything else
