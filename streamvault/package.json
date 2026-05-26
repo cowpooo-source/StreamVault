@@ -15,9 +15,11 @@
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
+    "fast-text-encoding": "^1.0.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "regenerator-runtime": "^0.14.1"
+    "regenerator-runtime": "^0.14.1",
+    "resize-observer-polyfill": "^1.5.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

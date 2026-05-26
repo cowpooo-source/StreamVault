@@ -160,14 +160,22 @@ describe("AuthScreen", () => {
       ok: true,
       json: () => Promise.resolve({ user: { id: "1", username: "test" } }),
     });
-    
-    // Mock turnstile.getResponse
-    window.turnstile.getResponse = vi.fn(() => "test-token");
+
+
+    // Override render to actually add the token to the form (simulating real Turnstile behavior)
+    window.turnstile.render = vi.fn((container) => {
+      container.innerHTML = '';
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'cf-turnstile-response';
+      input.value = 'test-token';
+      container.appendChild(input);
+    });
 
     render(<AuthScreen {...defaultProps} />);
     fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "test" } });
     fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pass" } });
-    
+
     const loginButtons = screen.getAllByText("Login");
     fireEvent.click(loginButtons[loginButtons.length - 1]);
 
@@ -175,7 +183,37 @@ describe("AuthScreen", () => {
       expect(mockFetch).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
-          body: expect.stringContaining('"cf_turnstile_response":')
+          body: expect.stringContaining('"cf_turnstile_response":"test-token"')
+        })
+      );
+    });
+  });
+
+  it("should not send cf_turnstile_response when CAPTCHA is not rendered (legacy/no-js)", async () => {
+    // siteKey is set but window.turnstile is absent — simulates legacy browser
+    // where the module script is never loaded
+    Object.defineProperty(window, 'turnstile', {
+      value: undefined,
+      writable: true,
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ user: { id: "1", username: "test" } }),
+    });
+
+    render(<AuthScreen {...defaultProps} />);
+    fireEvent.change(screen.getByPlaceholderText("Username"), { target: { value: "test" } });
+    fireEvent.change(screen.getByPlaceholderText("Password"), { target: { value: "pass" } });
+
+    const loginButtons = screen.getAllByText("Login");
+    fireEvent.click(loginButtons[loginButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          body: expect.not.stringContaining("cf_turnstile_response")
         })
       );
     });
