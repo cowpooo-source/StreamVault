@@ -1,15 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="/home/opc/StreamVault"
+REPO_DIR="${STREAMVAULT_REPO_DIR:-}"
 BRANCH="${1:-vps/self-hosted}"
 APP_NAME="stalker-proxy"
-BACKEND_DIR="$REPO_DIR/stalker-proxy"
-FRONTEND_DIR="$REPO_DIR/streamvault"
 
 log() {
   printf '\n==> %s\n' "$1"
 }
+
+if [[ -z "$REPO_DIR" ]]; then
+  for candidate in /opt/streamvault /home/opc/StreamVault; do
+    if [[ -d "$candidate/.git" ]]; then
+      REPO_DIR="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$REPO_DIR" ]]; then
+  echo "Could not find the production checkout." >&2
+  echo "Set STREAMVAULT_REPO_DIR or clone the repo into /opt/streamvault." >&2
+  exit 1
+fi
+
+BACKEND_DIR="$REPO_DIR/stalker-proxy"
+FRONTEND_DIR="$REPO_DIR/streamvault"
 
 log "Deploying branch $BRANCH from $REPO_DIR"
 cd "$REPO_DIR"

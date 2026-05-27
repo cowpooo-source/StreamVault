@@ -90,4 +90,11 @@ describe("encryptConnections/decryptConnections", () => {
     const encrypted = await authUtils.encryptConnections(conns);
     expect(encrypted).toContain(".");
   });
+
+  it("should return empty array when decryptData throws", async () => {
+    authUtils.setEncKeySource("user:123");
+    mockDecrypt.mockRejectedValue(new Error("decrypt failed"));
+    const result = await authUtils.decryptConnections("any-data");
+    expect(result).toEqual([]);
+  });
 });
