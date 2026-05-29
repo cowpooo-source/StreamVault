@@ -23,16 +23,15 @@ export function mapJellyfinProgram(prog) {
 }
 
 export function mergeJellyfinEPG(channels, programs) {
-  const byChannel = {};
+  const channelMap = {};
   for (const ch of channels) {
-    byChannel[ch.Id] = mapJellyfinChannel(ch);
+    channelMap[ch.Id] = { ...mapJellyfinChannel(ch), programs: [] };
   }
   for (const prog of programs) {
-    if (!byChannel[prog.ChannelId]) continue;
-    if (!byChannel[prog.ChannelId].programs) byChannel[prog.ChannelId].programs = [];
-    byChannel[prog.ChannelId].programs.push(mapJellyfinProgram(prog));
+    if (!channelMap[prog.ChannelId]) continue;
+    channelMap[prog.ChannelId].programs.push(mapJellyfinProgram(prog));
   }
-  return Object.values(byChannel);
+  return Object.values(channelMap);
 }
 
 // TimelineGrid constants

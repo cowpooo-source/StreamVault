@@ -5,5 +5,6 @@ import { mergeJellyfinEPG } from "../../epg.js";
  * Thin wrapper around mergeJellyfinEPG.
  */
 export default function JellyfinEPGAdapter({ channels, programs }) {
+  if (!channels || !programs) return [];
   return mergeJellyfinEPG(channels, programs);
 }
