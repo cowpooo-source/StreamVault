@@ -1,6 +1,8 @@
 const CACHE = "sv-v2";
+const APP_SHELL = ['/', '/index.html', '/landing.html', '/dist/assets/app.css'];
 
-self.addEventListener("install", () => {
+self.addEventListener("install", e => {
+  e.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)));
   self.skipWaiting();
 });
 
@@ -17,17 +19,39 @@ self.addEventListener("fetch", e => {
 
   const url = new URL(e.request.url);
 
-  // Never cache API, stream, proxy, or analytics requests
+  // Never cache API calls (network-first, no cache)
+  if (url.pathname.startsWith("/api")) return;
+
+  // Never cache media / stream / proxy / analytics
   if (url.pathname.startsWith("/stalker") ||
       url.pathname.startsWith("/stream") ||
       url.pathname.startsWith("/proxy") ||
-      url.pathname.startsWith("/img") ||
-      url.pathname.startsWith("/api") ||
-      url.pathname.startsWith("/health") ||
-      url.pathname.startsWith("/analytics")) return;
+      url.pathname.startsWith("/analytics") ||
+      url.pathname.startsWith("/health")) return;
 
-  // Only cache same-origin static assets (js, css, images, fonts)
+  // Only cache same-origin static assets
   if (url.origin !== location.origin) return;
+
+  // Network-first for /Videos/ (never cache media)
+  if (url.pathname.startsWith("/Videos/")) {
+    e.respondWith(fetch(e.request).then(res => {
+      if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
+      return res;
+    }).catch(() => caches.match(e.request)));
+    return;
+  }
+
+  // Stale-while-revalidate for /Images/
+  if (url.pathname.startsWith("/Images/")) {
+    e.respondWith(caches.match(e.request).then(cached => {
+      const fetchPromise = fetch(e.request).then(res => {
+        if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
+        return res;
+      });
+      return cached || fetchPromise;
+    }));
+    return;
+  }
 
   // Network-first for HTML, cache-first for assets
   if (e.request.destination === "document" || url.pathname === "/") {
@@ -42,5 +66,5 @@ self.addEventListener("fetch", e => {
       return res;
     })));
   }
-  // Everything else — let the browser handle normally (no respondWith)
+  // Everything else — let the browser handle normally
 });
