@@ -63,6 +63,7 @@ describe("JellyfinAdapter", () => {
       const result = await JellyfinAdapter.getLibrary(
         "https://jellyfin.example.com",
         "test-token",
+        "user-123",
         { type: "Movie,Series", startIndex: 0, limit: 50 }
       );
 
@@ -72,7 +73,7 @@ describe("JellyfinAdapter", () => {
         expect.objectContaining({
           method: "GET",
           headers: {
-            "X-Emby-Authorization": 'MediaBrowser UserId="?",Token="test-token"',
+            "X-Emby-Authorization": 'MediaBrowser UserId="user-123",Token="test-token"',
           },
         })
       );
@@ -86,7 +87,7 @@ describe("JellyfinAdapter", () => {
         })
       );
 
-      await JellyfinAdapter.getLibrary("https://jellyfin.example.com", "test-token");
+      await JellyfinAdapter.getLibrary("https://jellyfin.example.com", "test-token", "user-123");
 
       expect(global.fetch).toHaveBeenCalledWith(
         "https://jellyfin.example.com/Items?IncludeItemTypes=Movie,Series&startIndex=0&limit=50&fields=PrimaryImageAspectRatio,MediaSources",
@@ -107,6 +108,7 @@ describe("JellyfinAdapter", () => {
       const result = await JellyfinAdapter.getStreamUrl(
         "https://jellyfin.example.com",
         "test-token",
+        "user-123",
         "item-123"
       );
 
@@ -116,7 +118,7 @@ describe("JellyfinAdapter", () => {
         expect.objectContaining({
           method: "GET",
           headers: {
-            "X-Emby-Authorization": 'MediaBrowser UserId="?",Token="test-token"',
+            "X-Emby-Authorization": 'MediaBrowser UserId="user-123",Token="test-token"',
           },
         })
       );
@@ -138,7 +140,8 @@ describe("JellyfinAdapter", () => {
 
       const result = await JellyfinAdapter.getLiveTVChannels(
         "https://jellyfin.example.com",
-        "test-token"
+        "test-token",
+        "user-123"
       );
 
       expect(result.channels).toEqual(mockChannels);
@@ -148,7 +151,7 @@ describe("JellyfinAdapter", () => {
         expect.objectContaining({
           method: "GET",
           headers: {
-            "X-Emby-Authorization": 'MediaBrowser UserId="?",Token="test-token"',
+            "X-Emby-Authorization": 'MediaBrowser UserId="user-123",Token="test-token"',
           },
         })
       );
@@ -171,6 +174,7 @@ describe("JellyfinAdapter", () => {
       const result = await JellyfinAdapter.getLiveTVPrograms(
         "https://jellyfin.example.com",
         "test-token",
+        "user-123",
         "ch-1",
         "2026-05-29T00:00:00Z",
         "2026-05-29T12:00:00Z"
@@ -182,7 +186,7 @@ describe("JellyfinAdapter", () => {
         expect.objectContaining({
           method: "GET",
           headers: {
-            "X-Emby-Authorization": 'MediaBrowser UserId="?",Token="test-token"',
+            "X-Emby-Authorization": 'MediaBrowser UserId="user-123",Token="test-token"',
           },
         })
       );

@@ -21,13 +21,14 @@ export const JellyfinAdapter = {
   async getLibrary(
     baseUrl,
     token,
+    userId,
     { type = "Movie,Series", startIndex = 0, limit = 50 } = {}
   ) {
     const url = `${baseUrl}/Items?IncludeItemTypes=${type}&startIndex=${startIndex}&limit=${limit}&fields=PrimaryImageAspectRatio,MediaSources`;
     const response = await fetch(url, {
       method: "GET",
       headers: {
-        "X-Emby-Authorization": `MediaBrowser UserId="?",Token="${token}"`,
+        "X-Emby-Authorization": `MediaBrowser UserId="${userId}",Token="${token}"`,
       },
     });
 
@@ -35,22 +36,22 @@ export const JellyfinAdapter = {
     return { items: data.Items || [], total: data.TotalRecordCount };
   },
 
-  async getStreamUrl(baseUrl, token, itemId) {
+  async getStreamUrl(baseUrl, token, userId, itemId) {
     const response = await fetch(`${baseUrl}/Videos/${itemId}/main.m3u8`, {
       method: "GET",
       headers: {
-        "X-Emby-Authorization": `MediaBrowser UserId="?",Token="${token}"`,
+        "X-Emby-Authorization": `MediaBrowser UserId="${userId}",Token="${token}"`,
       },
     });
 
     return { url: response.url };
   },
 
-  async getLiveTVChannels(baseUrl, token) {
+  async getLiveTVChannels(baseUrl, token, userId) {
     const response = await fetch(`${baseUrl}/LiveTv/Channels`, {
       method: "GET",
       headers: {
-        "X-Emby-Authorization": `MediaBrowser UserId="?",Token="${token}"`,
+        "X-Emby-Authorization": `MediaBrowser UserId="${userId}",Token="${token}"`,
       },
     });
 
@@ -58,12 +59,12 @@ export const JellyfinAdapter = {
     return { channels: data.Items || [] };
   },
 
-  async getLiveTVPrograms(baseUrl, token, channelId, startTime, endTime) {
+  async getLiveTVPrograms(baseUrl, token, userId, channelId, startTime, endTime) {
     const url = `${baseUrl}/LiveTv/Programs?ChannelIds=${channelId}&StartTime=${startTime}&EndTime=${endTime}&fields=MediaSources`;
     const response = await fetch(url, {
       method: "GET",
       headers: {
-        "X-Emby-Authorization": `MediaBrowser UserId="?",Token="${token}"`,
+        "X-Emby-Authorization": `MediaBrowser UserId="${userId}",Token="${token}"`,
       },
     });
 
