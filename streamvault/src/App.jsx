@@ -13,12 +13,14 @@ import DiscoverView from './components/DiscoverView.jsx';
 import Setup from './components/Setup.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
+import { useStreamVault } from "./useStreamVault.js";
 
 // ── i18n ──
 const RTL_LANGS = ["ar","ur"];
 const LANG_META = {en:"English",es:"Español",fr:"Français",de:"Deutsch",it:"Italiano",zh:"中文",ar:"العربية",pt:"Português",hi:"हिन्दी",ur:"اردو"};
 const LANGS = {
   "en": {
+    "tagline": "Your personal IPTV client",
     "discover": "Discover",
     "live": "Live TV",
     "movies": "Movies",
@@ -1715,7 +1717,6 @@ export default function App() {
         const serverConns = await restoreConnectionsFromServer();
         if (serverConns?.length) {
           setConnections(serverConns);
-          db.set("sv-connections", serverConns);
         }
       })
       .catch(() => { })
@@ -1742,16 +1743,11 @@ export default function App() {
     const serverConns = await restoreConnectionsFromServer();
     if (serverConns?.length) {
       setConnections(serverConns);
-      db.set("sv-connections", serverConns);
     } else if (guestConns.length > 0) {
       // No server data, but we had guest connections — import them to the new account!
       setConnections(guestConns);
-      db.set("sv-connections", guestConns);
-      syncConnectionsToServer(guestConns);
     } else {
-      // No server data — start fresh for this user
       setConnections([]);
-      db.set("sv-connections", []);
     }
   }
   function handleGuest() {
@@ -1770,7 +1766,6 @@ export default function App() {
     setConnections([]);
     setActiveConnId(null);
     setConn(null);
-    db.set("sv-connections", []);
     db.set("sv-activeConn", null);
     setEncKeySource(GUEST_ID);
     setAuthUser(null); setIsGuest(false);
@@ -1842,18 +1837,26 @@ export default function App() {
   const t = useCallback((key, ...args) => _t(lang, key, ...args), [lang]);
   const isRTL = RTL_LANGS.includes(lang);
 
-  // ── connections (replaces profiles)
-  const [connections, setConnections] = useState([]);
-  const [activeConnId, setActiveConnId] = useState(null);
+  const { state: sv, actions: svActions } = useStreamVault({
+    db, syncToServer, syncConnectionsToServer: async (conns) => {
+      const encrypted = await encryptConnections(conns);
+      syncToServer("connections", "_all", encrypted);
+    },
+    authUser, isGuest
+  });
+
+  const connections = sv.connections;
+  const setConnections = svActions.setConnections;
+  const activeConnId = sv.activeConnId;
+  const setActiveConnId = svActions.setActiveConnId;
+  const favs = sv.favorites;
+  const setFavs = svActions.setFavorites;
+  const history = sv.history;
+  const setHistory = svActions.setHistory;
+
   const [showConnManager, setShowConnManager] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [editingConn, setEditingConn] = useState(null);
-
-  // ── favorites {live:{}, vod:{}, series:{}}
-  const [favs, setFavs] = useState({live:{}, vod:{}, series:{}});
-
-  // ── history [{id,name,url,type,logo,group,position,timestamp}]
-  const [history, setHistory] = useState([]);
 
   // ── hidden cats per section
   const [hiddenCats, setHiddenCats] = useState({live:[], vod:[], series:[]});
@@ -1880,9 +1883,6 @@ export default function App() {
     if (activeEpgSource !== "all") {
       dataToProcess = epgSources.find(s => s.id === activeEpgSource)?.data || null;
     } else {
-      // Merge only sources from the active connection.
-      // Stalker sources are connection-specific (channel numeric ids can collide across portals).
-      // XMLTV/standalone sources have text channel ids and are kept session-wide.
       const toMerge = epgSources.filter(s =>
         s.connectionId === activeConnId || s.kind !== "stalker"
       );
@@ -1901,9 +1901,6 @@ export default function App() {
 
     if (!dataToProcess) return null;
 
-    // Deduplicate: sort by start time, then skip programs with the same
-    // normalized title within 60 seconds of the previous — these are
-    // duplicate entries from different sources or provider refresh cycles.
     const deduplicated = {};
     for (const [chId, progs] of Object.entries(dataToProcess)) {
       if (!progs || !progs.length) continue;
@@ -1921,10 +1918,9 @@ export default function App() {
           Math.abs(last.start - p.start) < 60000 &&
           (last.title || "").trim().toLowerCase() === (p.title || "").trim().toLowerCase()
         ) {
-          // Same title within 60s — skip as duplicate
           continue;
         }
-        clean.push({ ...p }); // clone to avoid mutation
+        clean.push({ ...p });
       }
       if (clean.length) deduplicated[chId] = clean;
     }
@@ -1942,7 +1938,7 @@ export default function App() {
 
   // Clear live state whenever connection changes (but preserve loaded EPG sources for the session)
   useEffect(() => {
-    epgLoadToken.current++; // Invalidate any in-flight EPG loads
+    epgLoadToken.current++;
     setActiveEpgSource("all");
   }, [activeConnId]);
 
@@ -1950,7 +1946,7 @@ export default function App() {
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
   const [stalkerSeriesCats, setStalkerSeriesCats] = useState([]); // [{id,title,count}]
   const [catLoading,        setCatLoading]        = useState(false);
-  const fetchingCatRef = useRef(new Set());  // tracks in-progress category fetches
+  const fetchingCatRef = useRef(new Set());
   const [prefetchProgress, setPrefetchProgress] = useState(null); // {done,total} or null
 
   // ── last synced timestamps
@@ -1969,8 +1965,8 @@ export default function App() {
   const sendFeedback = useCallback(async () => {
     if (!fbMsg.trim() || fbSending) return;
     setFbSending(true);
-    
-    trackAnalytics("user_feedback", { 
+
+    trackAnalytics("user_feedback", {
       has_text: "true",
       feedback_type: "general",
       source_screen: section
@@ -1998,8 +1994,8 @@ export default function App() {
   // ── Debounced Search for Analytics
   const debouncedSearch = useMemo(() => debounce((term, type) => {
     const queryLength = term.trim().length;
-    if (queryLength > 0) trackAnalytics("search", { 
-      query_length: queryLength, 
+    if (queryLength > 0) trackAnalytics("search", {
+      query_length: queryLength,
       source_screen: type
     });
   }, 1000), []);
@@ -2018,7 +2014,7 @@ export default function App() {
   // ── TMDB enrichment for detail modal
   useEffect(() => {
     if (!expandedItem || !tmdbKey) { setTmdbData(null); setShowTrailer(false); return; }
-    
+
     function tmdbUrl(path, params = "") {
       if (tmdbKey === "server") return `${API}/api/tmdb/${path}?${params}`;
       return `https://api.themoviedb.org/3/${path}?api_key=${tmdbKey}&${params}`;
@@ -2079,47 +2075,23 @@ export default function App() {
       // Migrate old profile/lastConn data to new connection system
       await migrateToConnections();
 
-      const [th, conns, acId, hc, eq] = await Promise.all([
+      const [th, hc, eq] = await Promise.all([
         db.get("sv-theme","Dark"),
-        db.get("sv-connections",[]),
-        db.get("sv-activeConn",null),
         db.get("sv-hiddenCats",{live:[],vod:[],series:[]}),
         db.get("sv-epgURL",""),
       ]);
       if (THEME_NAMES.includes(th)) setThemeName(th);
-      setConnections(conns);
-      setActiveConnId(acId);
       setHiddenCats(hc);
       if (eq) setEpgURL(eq);
 
-      // Load per-connection favs + history
-      if (acId) {
-        const [fv, hi] = await Promise.all([
-          db.get(`sv-favs-${acId}`, {live:{},vod:{},series:{}}),
-          db.get(`sv-history-${acId}`, []),
-        ]);
-        setFavs(fv);
-        setHistory(hi);
-
-        // Restore from server if local is empty
-        const favsEmpty = !fv || (Object.keys(fv.live||{}).length === 0 && Object.keys(fv.vod||{}).length === 0 && Object.keys(fv.series||{}).length === 0);
-        const histEmpty = !hi || hi.length === 0;
-        if (favsEmpty || histEmpty) {
-          const [serverFavs, serverHist] = await Promise.all([
-            favsEmpty ? restoreFromServer("favorites", acId) : null,
-            histEmpty ? restoreFromServer("history", acId) : null,
-          ]);
-          if (serverFavs && favsEmpty) { setFavs(serverFavs); db.set(`sv-favs-${acId}`, serverFavs); }
-          if (serverHist && histEmpty) { setHistory(serverHist); db.set(`sv-history-${acId}`, serverHist); }
-        }
-      }
-
       // Auto-connect: if we have an active connection, set conn (load cache if available)
-      if (acId) {
+      // Re-runs whenever activeConnId or connections change (both start as empty falsy values,
+      // so this effect re-fires after useStreamVault populates them from IDB on mount)
+      if (activeConnId && connections.length) {
         try {
-          const connObj = conns.find(c => c.id === acId);
+          const connObj = connections.find(c => c.id === activeConnId);
           if (connObj) {
-            const cached = await loadFromCache(acId, connObj);
+            const cached = await loadFromCache(activeConnId, connObj);
             if (!cached) {
               // No cache, but active connection exists — set conn so app screen loads
               setConn(connObj.config);
@@ -2128,7 +2100,32 @@ export default function App() {
         } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     })();
-  }, []);
+  }, [activeConnId, connections]); // re-run when hook populates these from IDB
+
+  // ── restore from server when local favs/history are empty (fires after useStreamVault loads from db)
+  useEffect(() => {
+    if (!activeConnId) return;
+    let cancelled = false;
+    (async () => {
+      // Check if local favs/history are empty — if so, restore from server
+      const favsEmpty = !sv.favorites
+        || (Object.keys(sv.favorites.live||{}).length === 0
+          && Object.keys(sv.favorites.vod||{}).length === 0
+          && Object.keys(sv.favorites.series||{}).length === 0);
+      const histEmpty = !sv.history || sv.history.length === 0;
+
+      if (favsEmpty || histEmpty) {
+        const [serverFavs, serverHist] = await Promise.all([
+          favsEmpty ? restoreFromServer("favorites", activeConnId) : null,
+          histEmpty ? restoreFromServer("history", activeConnId) : null,
+        ]);
+        if (cancelled) return;
+        if (serverFavs && favsEmpty) svActions.setFavorites(serverFavs);
+        if (serverHist && histEmpty) svActions.setHistory(serverHist);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeConnId, sv.favorites, sv.history]);
 
   // ── load cached content from IDB for a connection
   async function loadFromCache(id, connObj) {
@@ -2173,8 +2170,8 @@ export default function App() {
         : lastConn.type === "m3u" ? `M3U · ${(lastConn.url||"").split("/").pop()?.slice(0,20)||"playlist"}`
         : "Direct HLS";
       const connObj = { id: cId, type: lastConn.type, label, color, config: lastConn };
-      db.set("sv-connections", [connObj]);
-      db.set("sv-activeConn", cId);
+      setConnections([connObj]);
+      setActiveConnId(cId);
       // Migrate favorites: try active profile first, then default
       const ap = localStorage.getItem("sv-activeProfile");
       const activeProfileId = ap ? JSON.parse(ap) : "default";
@@ -2209,13 +2206,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("sv-autoLoadMore", JSON.stringify(autoLoadMore));
   }, [autoLoadMore]);
-
-  // ── load favs + history when active connection changes
-  useEffect(() => {
-    if (!activeConnId) return;
-    db.get(`sv-favs-${activeConnId}`, {live:{},vod:{},series:{}}).then(setFavs);
-    db.get(`sv-history-${activeConnId}`, []).then(setHistory);
-  }, [activeConnId]);
 
   // ── persist section to localStorage
   useEffect(() => {
@@ -2851,9 +2841,6 @@ export default function App() {
     const newConns = [...connections, connObj];
     setConnections(newConns);
     setActiveConnId(cId);
-    db.set("sv-connections", newConns);
-    db.set("sv-activeConn", cId);
-    if (authUser || isGuest) syncConnectionsToServer(newConns);
     return null;
   }
 
@@ -2873,7 +2860,6 @@ export default function App() {
     // Set conn to new config FIRST so useEffect [activeConnId] sees correct conn
     setConn(target.config);
     setActiveConnId(id);
-    db.set("sv-activeConn", id);
     (async () => {
       const loaded = await loadFromCache(id, target);
       if (!loaded) setConn(target.config); // fallback if not cached
@@ -2883,8 +2869,6 @@ export default function App() {
   function removeConnection(id) {
     const newConns = connections.filter(c => c.id !== id);
     setConnections(newConns);
-    db.set("sv-connections", newConns);
-    if (authUser || isGuest) syncConnectionsToServer(newConns);
     // Clean up localStorage
     localStorage.removeItem(`sv-favs-${id}`);
     localStorage.removeItem(`sv-history-${id}`);
@@ -2940,16 +2924,10 @@ export default function App() {
       c.id === updatedConn.id ? updatedConn : c
     );
     setConnections(newConns);
-    db.set("sv-connections", newConns);
 
     // If this is the active connection, update the current conn
     if (activeConnId === updatedConn.id) {
       setConn(updatedConn.config);
-    }
-
-    // Sync to server if logged in
-    if (authUser) {
-      syncConnectionsToServer(newConns);
     }
 
     // Only reload if we have a valid connection config
@@ -3179,8 +3157,6 @@ export default function App() {
       if (newConns.length) {
         const merged = [...existing, ...newConns];
         setConnections(merged);
-        db.set("sv-connections", merged);
-        if (authUser || isGuest) syncConnectionsToServer(merged);
         parts.push(`${data.connections.length} connections`);
       }
     }
@@ -3260,13 +3236,14 @@ export default function App() {
     }
     // Single state update with all connections
     setConnections(newConns);
-    db.set("sv-connections", newConns);
-    if (authUser || isGuest) syncConnectionsToServer(newConns);
-    // Connect to the first imported one
-    const firstCfg = configs[0];
-    const firstId = connId(firstCfg);
-    if (firstId) { setActiveConnId(firstId); db.set("sv-activeConn", firstId); }
-    setConn(firstCfg);
+    // Only connect if at least one connection was imported
+    if (added > 0) {
+      const firstAdded = newConns[newConns.length - added]; // first of the newly added
+      if (firstAdded) {
+        setActiveConnId(firstAdded.id);
+        setConn(firstAdded.config);
+      }
+    }
   }
 
   // Auth gate: show login/register before anything else

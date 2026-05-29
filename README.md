@@ -107,6 +107,7 @@ Open `http://localhost:5173` — login, register, or continue as guest.
 ```
 
 Sets up Node.js, Nginx, SSL (Let's Encrypt), PM2 — fully automated for RHEL/CentOS/Ubuntu.
+The deploy script looks for the production checkout in `/opt/streamvault` by default and also accepts `STREAMVAULT_REPO_DIR` if your VPS uses a different path.
 
 ### Manual
 
@@ -131,6 +132,7 @@ pm2 save && pm2 startup
 ```
 
 Nginx serves `Portal Heaven/dist/` as static files and proxies API routes to port 3001.
+The frontend build emits modern and legacy bundles together, so older smart TVs only need a fresh `npm run build` and redeploy of `dist/`.
 
 ---
 

@@ -72,7 +72,10 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       }
 
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body = { username, password, "cf_turnstile_response": turnstileResponse };
+      const body = { username, password };
+      // Only send CAPTCHA token when Turnstile actually rendered a widget
+      // (legacy browsers skip module scripts, so window.turnstile is never set)
+      if (turnstileResponse) body.cf_turnstile_response = turnstileResponse;
       if (mode === "register") body.email = emailInput;
       if (forceLogin) body.force = true;
 
@@ -81,24 +84,23 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
         body: JSON.stringify(body),
       });
       let data = await res.json();
-      
-      if (!res.ok) {
-        if (data.code === 'MAX_LOGINS_REACHED') {
-          // Reset turnstile as the token is now consumed
-          if (window.turnstile) window.turnstile.reset();
-          
-          if (window.confirm("Max login reached. Do you want to force login which will logout previous user? (You will need to re-verify CAPTCHA)")) {
-            setForceLogin(true);
-            setErr("Please re-verify CAPTCHA and click Login again to force login.");
-            return;
-          } else {
-            throw new Error(data.error || "Failed");
-          }
+
+      // Check MAX_LOGINS_REACHED regardless of HTTP status
+      if (data.code === 'MAX_LOGINS_REACHED') {
+        if (window.turnstile) window.turnstile.reset();
+        if (window.confirm("Max login reached. Do you want to force login which will logout previous user? (You will need to re-verify CAPTCHA)")) {
+          setForceLogin(true);
+          setErr("Please re-verify CAPTCHA and click Login again to force login.");
+          return;
         } else {
           throw new Error(data.error || "Failed");
         }
       }
-      
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed");
+      }
+
       onAuth(data.user);
     } catch (e) {
       setErr(e.message);

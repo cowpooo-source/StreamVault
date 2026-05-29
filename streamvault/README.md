@@ -18,6 +18,8 @@ npm run build
 # Output: dist/
 ```
 
+The production build includes both modern and legacy bundles.
+
 ## Environment
 
 | Variable | Default | Description |
@@ -33,3 +35,7 @@ npm run build
 3. Build command: `npm run build`
 4. Build output: `dist`
 5. Add env vars as needed
+
+## Static Hosting
+
+If you host this frontend on a VPS or any static server, point it at `dist/` after running `npm run build`. No extra runtime switch is required for the legacy bundle.

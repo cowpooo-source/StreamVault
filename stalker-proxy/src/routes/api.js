@@ -47,8 +47,11 @@ function createApiRouter(deps) {
           if (r.ok) {
             try {
               const data = await r.json();
-              result.details.auth = data?.user_info?.auth === 1 ? "ok" : "failed";
-              result.details.status = data?.user_info?.status || "—";
+              const ui = data?.user_info;
+              result.details.auth = ui?.auth === 1 ? "ok" : "failed";
+              result.details.status = ui?.status || "—";
+              result.details.maxCons = ui?.max_connections ?? "—";
+              result.details.activeConns = ui?.active_cons ?? "—";
             } catch { result.details.parse = "non-JSON"; }
           }
         } else { result.details.status = "unreachable"; }

@@ -2,11 +2,19 @@ const ENC_ALGO = "AES-GCM";
 const KEY_SALT = ":sv-enc-key";
 let _encKeySource = null; // Set by App.jsx on login/guest
 
+// Detect WebCrypto availability upfront — older smart-TV browsers lack crypto.subtle
+const _hasCryptoSubtle = typeof crypto !== "undefined" && typeof crypto.subtle !== "undefined";
+
 export function setEncKeySource(id) {
   _encKeySource = id;
 }
 
+export function hasCrypto() {
+  return _hasCryptoSubtle;
+}
+
 export async function deriveKey() {
+  if (!_hasCryptoSubtle) throw new Error("crypto.subtle not available");
   if (!_encKeySource) {
     console.warn("⚠️ deriveKey called with no _encKeySource set, using default");
   }
@@ -16,6 +24,7 @@ export async function deriveKey() {
 }
 
 export async function encryptData(plaintext) {
+  if (!_hasCryptoSubtle) return plaintext;
   try {
     const key = await deriveKey();
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -28,6 +37,7 @@ export async function encryptData(plaintext) {
 }
 
 export async function decryptData(ciphertext) {
+  if (!_hasCryptoSubtle) return ciphertext;
   try {
     if (!ciphertext || !ciphertext.includes(".")) return ciphertext;
     const [ivB64, dataB64] = ciphertext.split(".");
@@ -55,7 +65,8 @@ export async function encryptConnections(conns) {
 export async function decryptConnections(data) {
   try {
     const json = await decryptData(data);
-    return JSON.parse(json);
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
     console.warn("Failed to decrypt connections:", err.message);
     return [];
