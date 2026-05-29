@@ -1,4 +1,39 @@
 // EPG-related utility functions
+// Jellyfin LiveTV mapping helpers
+
+export function mapJellyfinChannel(ch) {
+  return {
+    id: ch.Id,
+    name: ch.Name,
+    number: ch.Number || ch.ChannelNumber,
+    logo: ch.ImageUrl || null,
+  };
+}
+
+export function mapJellyfinProgram(prog) {
+  return {
+    id: prog.Id,
+    channel: prog.ChannelId,
+    title: prog.Name || prog.Title,
+    description: prog.Overview || '',
+    startMs: new Date(prog.StartTime).getTime(),
+    endMs: new Date(prog.EndTime).getTime(),
+    image: prog.ImageUrl || null,
+  };
+}
+
+export function mergeJellyfinEPG(channels, programs) {
+  const byChannel = {};
+  for (const ch of channels) {
+    byChannel[ch.Id] = mapJellyfinChannel(ch);
+  }
+  for (const prog of programs) {
+    if (!byChannel[prog.ChannelId]) continue;
+    if (!byChannel[prog.ChannelId].programs) byChannel[prog.ChannelId].programs = [];
+    byChannel[prog.ChannelId].programs.push(mapJellyfinProgram(prog));
+  }
+  return Object.values(byChannel);
+}
 
 // TimelineGrid constants
 export const PX_PER_MIN = 3;
