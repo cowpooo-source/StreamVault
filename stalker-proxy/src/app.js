@@ -115,6 +115,8 @@ function createApp(deps) {
   const { createAnalyticsRouter } = require("./routes/analytics");
   const { createApiRouter } = require("./routes/api");
   const { createStalkerRouter } = require("./routes/stalker");
+  const { createBillingRouter } = require("./routes/billing");
+  const { stripe, handleWebhook } = require("./stripe.js");
 
   const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
 
@@ -124,6 +126,7 @@ function createApp(deps) {
   if (pool) app.use("/api", createSyncRouter(pool));
   app.use("/stalker", stalkerLimit, createStalkerRouter(routerDeps));
   app.use("/api", createApiRouter(routerDeps));
+  if (pool) app.use("/api/billing", createBillingRouter(pool, auth, stripe, handleWebhook));
   app.use("/", createAnalyticsRouter(routerDeps));
 
   // ── MEDIA PROXY ROUTES (Legacy support or shared) ──
