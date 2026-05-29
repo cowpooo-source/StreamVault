@@ -1,56 +1,59 @@
 const { encryptToken } = require('../middleware/encrypt');
+const auth = require('../auth');
 
 function createSyncRouter(pool) {
   const router = require('express').Router({ mergeParams: true });
 
-  // GET /sync/watch-progress/:profileId
-  router.get('/watch-progress/:profileId', async (req, res) => {
-    const { profileId } = req.params;
+  // GET /sync/watch-progress
+  router.get('/watch-progress', auth.requireAuth, async (req, res) => {
+    const userId = req.user.id;
     const { rows } = await pool.query(
       `SELECT item_id, position_ms, duration_ms, provider_updated_at, synced_at
-       FROM watch_progress WHERE profile_id = $1 ORDER BY synced_at DESC`,
-      [profileId]
+       FROM watch_progress WHERE user_id = $1 ORDER BY synced_at DESC`,
+      [userId]
     );
     res.json({ progress: rows });
   });
 
   // POST /sync/watch-progress
   // Upserts watch progress with conflict resolution (newest provider_updated_at wins)
-  router.post('/watch-progress', async (req, res) => {
-    const { profileId, serverId, itemId, positionMs, providerUpdatedAt } = req.body;
+  router.post('/watch-progress', auth.requireAuth, async (req, res) => {
+    const userId = req.user.id;
+    const { serverId, itemId, positionMs, providerUpdatedAt } = req.body;
     const { rows } = await pool.query(`
-      INSERT INTO watch_progress (id, profile_id, server_id, item_id, position_ms, provider_updated_at, synced_at)
+      INSERT INTO watch_progress (id, user_id, server_id, item_id, position_ms, provider_updated_at, synced_at)
       VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5, NOW())
-      ON CONFLICT (profile_id, server_id, item_id) DO UPDATE
+      ON CONFLICT (user_id, server_id, item_id) DO UPDATE
         SET position_ms = EXCLUDED.position_ms,
             provider_updated_at = EXCLUDED.provider_updated_at,
             synced_at = NOW()
         WHERE watch_progress.provider_updated_at < EXCLUDED.provider_updated_at
       RETURNING *
-    `, [profileId, serverId, itemId, positionMs, providerUpdatedAt]);
+    `, [userId, serverId, itemId, positionMs, providerUpdatedAt]);
     res.json({ updated: rows[0] });
   });
 
-  // GET /sync/watchlist/:profileId
-  router.get('/watchlist/:profileId', async (req, res) => {
-    const { profileId } = req.params;
+  // GET /sync/watchlist
+  router.get('/watchlist', auth.requireAuth, async (req, res) => {
+    const userId = req.user.id;
     const { rows } = await pool.query(
-      `SELECT id, item_id, title_enc, type, added_at FROM watchlist WHERE profile_id = $1`,
-      [profileId]
+      `SELECT id, item_id, title_enc, type, added_at FROM watchlist WHERE user_id = $1`,
+      [userId]
     );
     res.json({ watchlist: rows });
   });
 
   // POST /sync/watchlist
-  router.post('/watchlist', async (req, res) => {
-    const { profileId, serverId, itemId, title, type } = req.body;
+  router.post('/watchlist', auth.requireAuth, async (req, res) => {
+    const userId = req.user.id;
+    const { serverId, itemId, title, type } = req.body;
     const titleEnc = encryptToken(title);
     const { rows } = await pool.query(`
-      INSERT INTO watchlist (id, profile_id, server_id, item_id, title_enc, type)
+      INSERT INTO watchlist (id, user_id, server_id, item_id, title_enc, type)
       VALUES (uuid_generate_v4(), $1, $2, $3, $4, $5)
-      ON CONFLICT (profile_id, server_id, item_id) DO NOTHING
+      ON CONFLICT (user_id, server_id, item_id) DO NOTHING
       RETURNING *
-    `, [profileId, serverId, itemId, titleEnc, type]);
+    `, [userId, serverId, itemId, titleEnc, type]);
     res.status(201).json({ added: rows[0] });
   });
 
