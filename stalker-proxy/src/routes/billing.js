@@ -33,7 +33,7 @@ export function createBillingRouter(pool, auth, stripeInstance, handleWebhook) {
   router.get('/portal', auth.requireAuth, async (req, res) => {
     const { stripeId } = req.user;
     const { url } = await stripe.billingPortal.sessions.create({ customer: stripeId });
-    await res.json({ url });
+    res.json({ url });
   });
 
   return router;
