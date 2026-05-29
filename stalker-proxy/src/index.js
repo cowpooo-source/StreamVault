@@ -5,6 +5,12 @@ const auth = require("./auth");
 const fetch = require("node-fetch");
 const system = require("./services/system");
 const email = require("./email");
+const { Pool } = require("pg");
+
+let pool;
+if (process.env.DATABASE_URL) {
+  pool = new Pool({ connectionString: process.env.DATABASE_URL });
+}
 
 const PORT = process.env.PORT || 3001;
 

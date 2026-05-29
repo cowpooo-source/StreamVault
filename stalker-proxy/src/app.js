@@ -10,7 +10,7 @@ const path = require("path");
 const { createProxyHelpers } = require("./utils/proxyHelpers");
 
 function createApp(deps) {
-  const { cache, auth, fetch, system, email } = deps;
+  const { cache, auth, fetch, system, email, pool } = deps;
   const app = express();
 
   const helpers = createProxyHelpers({ fetch });
@@ -111,6 +111,7 @@ function createApp(deps) {
 
   const { createAuthRouter } = require("./routes/auth");
   const { createSSORouter } = require("./routes/sso");
+  const { createSyncRouter } = require("./routes/sync");
   const { createAnalyticsRouter } = require("./routes/analytics");
   const { createApiRouter } = require("./routes/api");
   const { createStalkerRouter } = require("./routes/stalker");
@@ -120,6 +121,7 @@ function createApp(deps) {
   app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));
   app.use("/api", createSSORouter(routerDeps));
+  if (pool) app.use("/api", createSyncRouter(pool));
   app.use("/stalker", stalkerLimit, createStalkerRouter(routerDeps));
   app.use("/api", createApiRouter(routerDeps));
   app.use("/", createAnalyticsRouter(routerDeps));
