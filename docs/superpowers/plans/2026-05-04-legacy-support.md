@@ -19,7 +19,8 @@
 
 **Support matrix:**
 - LG webOS 5.0 and newer
-- Samsung Tizen 5.5 and newer
+- Samsung Tizen 5.5 and newer (Smart TV / TV box)
+- Samsung mobile browser >= 10 (Android phone/tablet)
 - Android TV / Google TV boxes with Chromium 68 or newer
 - Not included: Roku web playback target
 
@@ -33,20 +34,22 @@
 - Modify: `streamvault/package.json`
 - Modify: `streamvault/package-lock.json`
 
-- [ ] **Step 1: Install `@vitejs/plugin-legacy` and `terser`**
+- [ ] **Step 1: Install `@vitejs/plugin-legacy`, `terser`, and `regenerator-runtime`**
 Run the npm install command within the `streamvault` directory to add the required development dependencies.
 ```bash
 cd streamvault
 npm install -D @vitejs/plugin-legacy terser
+npm install regenerator-runtime
 ```
 Expected:
 - `package.json` gains `@vitejs/plugin-legacy` and `terser` under `devDependencies`
+- `package.json` gains `regenerator-runtime` under `dependencies`
 - `package-lock.json` records the new packages and their transitive dependencies
 
 - [ ] **Step 2: Commit**
 ```bash
 git add streamvault/package.json streamvault/package-lock.json
-git commit -m "chore: install @vitejs/plugin-legacy and terser for legacy device support"
+git commit -m "chore: install @vitejs/plugin-legacy, terser, and regenerator-runtime for legacy device support"
 ```
 
 ### Task 2: Configure Vite for Legacy Builds

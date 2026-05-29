@@ -1,3 +1,7 @@
+-- Migration: Initial schema setup
+-- Creates the core tables for StreamVault: users, servers, profiles, watchlist, and watch_progress
+-- This is the foundational migration that establishes the database structure.
+
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE users (
@@ -40,7 +44,7 @@ CREATE TABLE watchlist (
   title_enc BYTEA,
   type TEXT CHECK (type IN ('movie','series','channel')),
   added_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(profile_id, server_id, item_id)
+  UNIQUE(user_id, server_id, item_id)
 );
 
 CREATE TABLE watch_progress (
@@ -53,7 +57,7 @@ CREATE TABLE watch_progress (
   duration_ms BIGINT,
   provider_updated_at TIMESTAMPTZ,
   synced_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(profile_id, server_id, item_id)
+  UNIQUE(user_id, server_id, item_id)
 );
 
 CREATE INDEX idx_watch_progress_profile ON watch_progress(profile_id);

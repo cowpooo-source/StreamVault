@@ -1,4 +1,4 @@
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const { Pool } = require('pg');
 
@@ -28,7 +28,7 @@ async function runMigrations() {
     const runMigrations = await getRunMigrations(client);
 
     const migrationsDir = path.join(__dirname, 'migrations');
-    const files = fs.readdirSync(migrationsDir)
+    const files = (await fs.readdir(migrationsDir))
       .filter(f => f.endsWith('.sql'))
       .sort();
 
@@ -39,7 +39,7 @@ async function runMigrations() {
       }
 
       console.log(`Running migration: ${file}`);
-      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+      const sql = await fs.readFile(path.join(migrationsDir, file), 'utf8');
 
       await client.query('BEGIN');
       try {
