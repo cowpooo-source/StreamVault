@@ -1,6 +1,6 @@
-import { Router } from 'express';
+const { Router } = require('express');
 
-export function createBillingRouter(pool, auth, stripeInstance, handleWebhook) {
+function createBillingRouter(pool, auth, stripeInstance, handleWebhook) {
   const router = Router();
   const stripe = stripeInstance;
 
@@ -38,3 +38,5 @@ export function createBillingRouter(pool, auth, stripeInstance, handleWebhook) {
 
   return router;
 }
+
+module.exports = { createBillingRouter };

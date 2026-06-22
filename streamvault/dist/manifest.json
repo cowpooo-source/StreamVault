@@ -5,7 +5,7 @@
   "start_url": "/",
   "display": "standalone",
   "background_color": "#07070f",
-  "theme_color": "#00d4ff",
+  "theme_color": "#1a1a2e",
   "orientation": "any",
   "categories": ["entertainment", "video"],
   "icons": [

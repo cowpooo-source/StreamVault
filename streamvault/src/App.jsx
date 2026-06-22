@@ -2650,6 +2650,11 @@ export default function App() {
       const resolved_item = { ...item, url: resolved };
       setPlaying(resolved_item);
       addHistory(resolved_item);
+    } else if (conn?.type === "xtream" || conn?.type === "m3u") {
+      // Xtream and M3U streams play directly — no proxy needed for .ts/.m3u8 content
+      const directItem = { ...item, _direct: true };
+      setPlaying(directItem);
+      addHistory(directItem);
     } else {
       setPlaying(item);
       addHistory(item);
@@ -2705,6 +2710,7 @@ export default function App() {
         const startFmt = new Date(program.start).toISOString().replace(/[-:T]/g, "").slice(0, 14); // YYYYMMDDHHmmss
         const tsUrl = `${base}/timeshift/${conn.user}/${conn.pass}/${durationMin}/${startFmt}/${streamId}.ts`;
         catchupItem.url = tsUrl;
+        catchupItem._direct = true;
       } else if (channel.url) {
         // M3U / generic: try appending ?utc=&lutc= params
         const sep = channel.url.includes("?") ? "&" : "?";

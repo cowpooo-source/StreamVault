@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+const crypto = require('crypto');
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
@@ -9,7 +9,7 @@ function getMasterKey() {
   return Buffer.from(key, 'hex');
 }
 
-export function encryptToken(plaintext) {
+function encryptToken(plaintext) {
   const key = getMasterKey();
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -18,7 +18,7 @@ export function encryptToken(plaintext) {
   return [iv.toString('base64'), tag.toString('base64'), enc.toString('base64')].join(':');
 }
 
-export function decryptToken(encrypted) {
+function decryptToken(encrypted) {
   const key = getMasterKey();
   const [ivB64, tagB64, cipherB64] = encrypted.split(':');
   const iv = Buffer.from(ivB64, 'base64');
@@ -29,7 +29,7 @@ export function decryptToken(encrypted) {
   return Buffer.concat([decipher.update(cipher), decipher.final()]).toString('utf8');
 }
 
-export function encryptField(obj, ...fields) {
+function encryptField(obj, ...fields) {
   const out = { ...obj };
   for (const f of fields) {
     if (obj[f]) out[f + '_enc'] = encryptToken(obj[f]);
@@ -37,10 +37,12 @@ export function encryptField(obj, ...fields) {
   return out;
 }
 
-export function decryptField(obj, ...fields) {
+function decryptField(obj, ...fields) {
   const out = { ...obj };
   for (const f of fields) {
     if (obj[f + '_enc']) out[f] = decryptToken(obj[f + '_enc']);
   }
   return out;
 }
+
+module.exports = { encryptToken, decryptToken, encryptField, decryptField };

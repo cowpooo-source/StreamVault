@@ -238,7 +238,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     return () => clearInterval(statsInterval.current);
   }, [showStats, current.url]);
 
-  // External IPTV servers don't send CORS headers — always proxy M3U/Xtream streams
+  // Xtream and M3U streams play directly from the browser (no proxy, no byte relay).
+  // Stalker, Jellyfin, and Plex still go through the VPS proxy (portal headers, CORS).
   const origin = API || location.origin;
   const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin) && !current?._direct;
 
