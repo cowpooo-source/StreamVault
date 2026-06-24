@@ -125,8 +125,10 @@ function createProxyHelpers(deps) {
   const sessionCache = new Map();
   const inFlightSessions = new Map();
   const portalCooldowns = new Map();
+  const handshakeFailureCache = new Map();
   const SESSION_TTL_MS = 30 * 1000;
   const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
+  const HANDSHAKE_FAILURE_COOLDOWN_MS = 90 * 1000; // 90s — prevents cascade when portal is down
 
   function setPathCache(key, value) {
     if (pathCache.size >= PATH_CACHE_MAX) {
@@ -190,6 +192,31 @@ function createProxyHelpers(deps) {
       return 0;
     }
     return expiresAt;
+  }
+
+  // ── Handshake failure cache: prevent hammering a portal that's down ──
+  function getHandshakeFailure(portal, mac, opts = {}) {
+    const key = sessionCacheKey(portal, mac, opts);
+    const entry = handshakeFailureCache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      handshakeFailureCache.delete(key);
+      return null;
+    }
+    return entry;
+  }
+
+  function setHandshakeFailure(portal, mac, opts, errorMsg) {
+    const key = sessionCacheKey(portal, mac, opts);
+    handshakeFailureCache.set(key, {
+      error: errorMsg,
+      expiresAt: Date.now() + HANDSHAKE_FAILURE_COOLDOWN_MS,
+    });
+  }
+
+  function clearHandshakeFailure(portal, mac, opts = {}) {
+    const key = sessionCacheKey(portal, mac, opts);
+    handshakeFailureCache.delete(key);
   }
 
   function buildStalkerStreamHeaders(session, reqHeaders = {}) {
@@ -295,9 +322,17 @@ function createProxyHelpers(deps) {
 
     if (config.forceRefresh) {
       sessionCache.delete(sessionKey);
+      clearHandshakeFailure(portal, mac, normalized);
     } else {
       const cachedSession = getCachedSession(portal, mac, normalized);
       if (cachedSession) return cachedSession;
+
+      // Check failure cache — skip handshake if this combo recently failed
+      const recentFailure = getHandshakeFailure(portal, mac, normalized);
+      if (recentFailure) {
+        const waitSeconds = Math.max(1, Math.ceil((recentFailure.expiresAt - Date.now()) / 1000));
+        throw new Error(`Portal handshake recently failed. Retry in ${waitSeconds}s. (${recentFailure.error})`);
+      }
     }
 
     const cooldownUntil = getPortalCooldown(portal, mac, normalized);
@@ -374,7 +409,15 @@ function createProxyHelpers(deps) {
 
     if (!config.forceRefresh) inFlightSessions.set(sessionKey, loader);
     try {
-      return await loader;
+      const result = await loader;
+      clearHandshakeFailure(portal, mac, normalized); // success — clear any prior failure
+      return result;
+    } catch (e) {
+      // Cache non-rate-limit failures to prevent cascade (e.g. 350 users hammering a dead portal)
+      if (e.message?.includes("could not obtain token") || e.message?.includes("Handshake failed")) {
+        setHandshakeFailure(portal, mac, normalized, e.message);
+      }
+      throw e;
     } finally {
       const cooldownUntil = getPortalCooldown(portal, mac, normalized);
       const deleteDelay = cooldownUntil ? 1000 : 0;
@@ -447,6 +490,7 @@ function createProxyHelpers(deps) {
     sessionCache.clear();
     inFlightSessions.clear();
     portalCooldowns.clear();
+    handshakeFailureCache.clear();
   }
 
   // ── URL resolution ──────────────────────────────────────────────────────────

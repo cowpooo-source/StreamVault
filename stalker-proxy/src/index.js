@@ -14,6 +14,17 @@ if (process.env.DATABASE_URL) {
 
 const PORT = process.env.PORT || 3001;
 
+// ── Safety nets ──
+// unhandledRejection: log and survive (process state is still valid)
+// uncaughtException: log and exit (process state is undefined — PM2 restarts clean)
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[unhandledRejection]", reason?.message || reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err.message);
+  process.exit(1); // exit clean — PM2 restarts; staying alive risks undefined process state
+});
+
 // Initialize auth with database
 auth.init(cache.db);
 

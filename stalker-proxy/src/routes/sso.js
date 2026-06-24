@@ -19,6 +19,11 @@ function createSSORouter(deps) {
   async function handleOAuthCallback(req, provider, subjectRaw, displayName, email, done) {
     const subject = String(subjectRaw);
     try {
+      // Guard against missing SSO methods (e.g. federated_credentials table not created)
+      if (typeof auth.getFederatedCredential !== "function" || typeof auth.createFederatedUser !== "function") {
+        console.error(`[SSO] Missing required auth methods for ${provider} — SSO may not be fully configured`);
+        return done(null, false, { message: "sso_not_configured" });
+      }
       const token = req.cookies?.sv_auth || (req.headers.authorization ? req.headers.authorization.slice(7) : null);
       if (token) {
         try {
@@ -50,16 +55,26 @@ function createSSORouter(deps) {
       callbackURL: `${CALLBACK_BASE}/api/auth/google/callback`, passReqToCallback: true
     }, (req, at, rt, profile, done) => {
       const email = profile.emails && profile.emails.length > 0 ? profile.emails[0].value : null;
-      handleOAuthCallback(req, 'google', profile.id, profile.displayName, email, done);
+      handleOAuthCallback(req, 'google', profile.id, profile.displayName, email, done).catch(err => { try { done(err); } catch (_e) { /* done already called or threw */ } });
     }));
     router.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
     router.get('/auth/google/callback', (req, res, next) => {
-      passport.authenticate('google', { session: false }, (err, user, info) => {
-        if (err) return res.redirect(`${APP_URL}?error=sso_failed`);
-        if (!user) return res.redirect(`${APP_URL}?error=${info?.message?.startsWith('email_exists') ? info.message : (info?.message === 'already_linked' ? 'already_linked' : 'sso_failed')}`);
-        res.cookie("sv_auth", auth.generateSSOToken(user.id), cookieOptions);
-        res.redirect(`${APP_URL}`);
-      })(req, res, next);
+      try {
+        passport.authenticate('google', { session: false }, (err, user, info) => {
+          try {
+            if (err) return res.redirect(`${APP_URL}?error=sso_failed`);
+            if (!user) return res.redirect(`${APP_URL}?error=${info?.message?.startsWith('email_exists') ? info.message : (info?.message === 'already_linked' ? 'already_linked' : 'sso_failed')}`);
+            res.cookie("sv_auth", auth.generateSSOToken(user.id), cookieOptions);
+            res.redirect(`${APP_URL}`);
+          } catch (e) {
+            console.error("[SSO Google callback error]", e);
+            if (!res.headersSent) res.redirect(`${APP_URL}?error=sso_failed`);
+          }
+        })(req, res, next);
+      } catch (e) {
+        console.error("[SSO Google authenticate error]", e);
+        if (!res.headersSent) res.redirect(`${APP_URL}?error=sso_failed`);
+      }
     });
   }
 
@@ -69,16 +84,26 @@ function createSSORouter(deps) {
       callbackURL: `${CALLBACK_BASE}/api/auth/github/callback`, scope: ['user:email'], passReqToCallback: true
     }, (req, at, rt, profile, done) => {
       const email = profile.emails && profile.emails.length > 0 ? profile.emails[0].value : null;
-      handleOAuthCallback(req, 'github', profile.id, profile.displayName || profile.username, email, done);
+      handleOAuthCallback(req, 'github', profile.id, profile.displayName || profile.username, email, done).catch(err => { try { done(err); } catch (_e) { /* done already called or threw */ } });
     }));
     router.get('/auth/github', passport.authenticate('github', { scope: ['user:email'], session: false }));
     router.get('/auth/github/callback', (req, res, next) => {
-      passport.authenticate('github', { session: false }, (err, user, info) => {
-        if (err) return res.redirect(`${APP_URL}?error=sso_failed`);
-        if (!user) return res.redirect(`${APP_URL}?error=${info?.message?.startsWith('email_exists') ? info.message : (info?.message === 'already_linked' ? 'already_linked' : 'sso_failed')}`);
-        res.cookie("sv_auth", auth.generateSSOToken(user.id), cookieOptions);
-        res.redirect(`${APP_URL}`);
-      })(req, res, next);
+      try {
+        passport.authenticate('github', { session: false }, (err, user, info) => {
+          try {
+            if (err) return res.redirect(`${APP_URL}?error=sso_failed`);
+            if (!user) return res.redirect(`${APP_URL}?error=${info?.message?.startsWith('email_exists') ? info.message : (info?.message === 'already_linked' ? 'already_linked' : 'sso_failed')}`);
+            res.cookie("sv_auth", auth.generateSSOToken(user.id), cookieOptions);
+            res.redirect(`${APP_URL}`);
+          } catch (e) {
+            console.error("[SSO GitHub callback error]", e);
+            if (!res.headersSent) res.redirect(`${APP_URL}?error=sso_failed`);
+          }
+        })(req, res, next);
+      } catch (e) {
+        console.error("[SSO GitHub authenticate error]", e);
+        if (!res.headersSent) res.redirect(`${APP_URL}?error=sso_failed`);
+      }
     });
   }
 
