@@ -24,12 +24,17 @@ function createApp(deps) {
 
   app.use(cookieParser());
 
+  const validateCors = cors({ origin: "*", methods: ["GET", "OPTIONS"], maxAge: 600 });
   const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "";
   const allowedOrigins = ALLOWED_ORIGIN ? ALLOWED_ORIGIN.split(",").map(s => s.trim()) : false;
-  app.use(cors({
-    origin: allowedOrigins || false,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-  }));
+  app.use((req, res, next) => {
+    if (req.path === "/api/validate-token") return validateCors(req, res, next);
+    if (allowedOrigins) {
+      cors({ origin: allowedOrigins, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"] })(req, res, next);
+    } else {
+      cors({ origin: false })(req, res, next);
+    }
+  });
 
   app.use(passport.initialize());
 
@@ -40,7 +45,8 @@ function createApp(deps) {
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://challenges.cloudflare.com", "https://cdn.jsdelivr.net", "https://www.googletagmanager.com"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "https:"],
-        connectSrc: ["'self'", "https://cdn.jsdelivr.net", "https://www.google-analytics.com"],
+        mediaSrc: ["*"],
+        connectSrc: ["'self'", "https://cdn.jsdelivr.net", "https://www.google-analytics.com", "https://portalheaven.stream"],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
@@ -116,6 +122,7 @@ function createApp(deps) {
   const { createApiRouter } = require("./routes/api");
   const { createStalkerRouter } = require("./routes/stalker");
   const { createBillingRouter } = require("./routes/billing");
+  const { createPlayerRouter } = require("./routes/player");
   const { stripe, handleWebhook } = require("./stripe.js");
 
   const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
@@ -128,6 +135,69 @@ function createApp(deps) {
   app.use("/api", createApiRouter(routerDeps));
   if (pool) app.use("/api/billing", createBillingRouter(pool, auth, stripe, handleWebhook));
   app.use("/", createAnalyticsRouter(routerDeps));
+  app.use("/api", createPlayerRouter(routerDeps));
+
+  // ── TOKEN-GATED PLAYER PAGE ──
+  app.get("/player", (req, res) => {
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Play - StreamVault</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
+#player{display:block;object-fit:contain}
+#error{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#fff;font-family:sans-serif;text-align:center;font-size:14px;line-height:1.6;padding:20px}
+#loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#888;font-family:sans-serif;font-size:13px}
+</style>
+</head>
+<body>
+<div id="loading">Loading player…</div>
+<div id="error"></div>
+<video id="player" autoplay controls playsinline></video>
+<script>
+(function(){
+  const p=document.getElementById('player');
+  const e=document.getElementById('error');
+  const l=document.getElementById('loading');
+
+  function showError(msg){
+    l.style.display='none';
+    e.style.display='block';
+    e.textContent=msg||'Playback failed';
+  }
+
+  function getToken(){
+    const m=location.search.match(/[?&]token=([^&]+)/);
+    return m?decodeURIComponent(m[1]):null;
+  }
+
+  const token=getToken();
+  if(!token){showError('Missing play token');return}
+
+  // Validate token against the production API
+  fetch('https://portalheaven.stream/api/validate-token?token='+encodeURIComponent(token))
+    .then(function(r){
+      if(!r.ok)return r.json().then(function(d){throw new Error(d.error||'Validation failed')});
+      return r.json();
+    })
+    .then(function(data){
+      if(!data.url)throw new Error('No stream URL');
+      l.style.display='none';
+      p.src=data.url;
+      p.play().catch(function(){});
+    })
+    .catch(function(err){
+      showError(err.message);
+    });
+})();
+</script>
+</body>
+</html>`);
+  });
 
   // ── MEDIA PROXY ROUTES (Legacy support or shared) ──
   // These could also be moved into api.js if desired.

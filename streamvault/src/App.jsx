@@ -2651,7 +2651,24 @@ export default function App() {
       setPlaying(resolved_item);
       addHistory(resolved_item);
     } else if (conn?.type === "xtream" || conn?.type === "m3u") {
-      // Xtream and M3U streams play directly — no proxy needed for .ts/.m3u8 content
+      // Xtream and M3U streams play via token-gated redirect to HTTP player
+      const streamUrl = item.url;
+      if (!streamUrl) return;
+      try {
+        const res = await fetch("/api/play-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ url: streamUrl }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          window.location.href = data.playerUrl;
+          return;
+        }
+      } catch (e) {
+        console.warn("Play token failed, falling back to direct play", e);
+      }
+      // Fallback: play directly in-page
       const directItem = { ...item, _direct: true };
       setPlaying(directItem);
       addHistory(directItem);
