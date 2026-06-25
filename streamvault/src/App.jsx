@@ -1952,6 +1952,7 @@ export default function App() {
   // ── last synced timestamps
   const [lastSynced, setLastSynced] = useState({}); // {live: timestamp, vod: timestamp, series: timestamp}
   const [autoConnected, setAutoConnected] = useState(false); // true if loaded from IDB cache
+  const [connError, setConnError] = useState(""); // Xtream auth or fetch error
 
   // ── TMDB
   const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "server");
@@ -2283,7 +2284,7 @@ export default function App() {
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); setConnError(e.message); }
     finally { setLoading(false); }
   }
 
@@ -2319,7 +2320,7 @@ export default function App() {
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, vod: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); setConnError(e.message); }
     finally { 
       if (!background) setLoading(false); 
       else setVodSyncing(false);
@@ -2356,7 +2357,7 @@ export default function App() {
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, series: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error(e); setConnError(e.message); }
     finally { 
       if (!background) setLoading(false); 
       else setSeriesSyncing(false);
@@ -3503,6 +3504,15 @@ export default function App() {
 
       {/* ── CONTENT ── */}
       <div className="content">
+        {/* Error banner */}
+        {connError && (
+          <div style={{background:"var(--danger)",color:"#fff",padding:".5rem 1rem",fontSize:".78rem",
+            display:"flex",alignItems:"center",gap:".5rem",margin:"0 0 .5rem",borderRadius:"6px"}}>
+            <span style={{flex:1}}>⚠️ {connError}</span>
+            <button onClick={() => setConnError("")} style={{background:"none",border:"none",color:"#fff",
+              cursor:"pointer",fontSize:"1rem",padding:0,lineHeight:1}}>✕</button>
+          </div>
+        )}
         {/* Header */}
         <div className="c-header">
           <span className="c-title">

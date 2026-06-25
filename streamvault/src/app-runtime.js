@@ -41,8 +41,14 @@ export async function safeJsonFetch(res) {
     throw new Error(`Server error (HTTP ${res.status})`);
   }
   try {
-    return JSON.parse(text);
-  } catch {
+    const data = JSON.parse(text);
+    // Xtream: auth 0 means invalid/expired credentials
+    if (data?.user_info?.auth === 0) {
+      throw new Error("Xtream authentication failed. Check your username and password.");
+    }
+    return data;
+  } catch (e) {
+    if (e.message.startsWith("Xtream")) throw e;
     if (text.trim().startsWith("<")) {
       throw new Error("Server returned HTML/XML instead of JSON. Check if your URL and credentials are correct.");
     }
