@@ -8,6 +8,7 @@ describe('Integration Tests - Routes', () => {
   let app;
   let mockAuth;
   let mockCache;
+  let mockFetch;
 
   beforeAll(async () => {
     // 1. Set environment variables
@@ -88,10 +89,11 @@ describe('Integration Tests - Routes', () => {
     const { createApp } = require('../src/app');
     
     // Inject the MOCKED dependencies defined above directly into the factory!
+    mockFetch = vi.fn();
     app = createApp({ 
       auth: mockAuth, 
       cache: mockCache, 
-      fetch: vi.fn(), // we can mock fetch here too if needed
+      fetch: mockFetch, // shared fetch mock for player routes
       system: {
         getNetworkStats: vi.fn().mockReturnValue({ rx_bytes: 0, tx_bytes: 0, rx_gb: 0, tx_gb: 0 }),
         getDiskUsage: vi.fn().mockReturnValue({ total_gb: 100, used_gb: 50, percent: 50 }),
@@ -108,6 +110,9 @@ describe('Integration Tests - Routes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    const { tokens, playbackSessions } = require("../src/routes/player");
+    tokens.clear();
+    playbackSessions.clear();
   });
 
   it('GET /health returns 200', async () => {
@@ -116,6 +121,38 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.status).toBe('ok');
   });
 
+
+  it('POST /api/play-token issues a playbackId and refreshes to a new URL', async () => {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
+    mockFetch.mockResolvedValueOnce({
+      url: 'http://provider.example.com/live/index.m3u8?token=old',
+      body: { cancel: vi.fn() },
+    });
+    mockFetch.mockResolvedValueOnce({
+      url: 'http://provider.example.com/live/index.m3u8?token=new',
+      body: { cancel: vi.fn() },
+    });
+
+    const playRes = await request(app)
+      .post('/api/play-token')
+      .set('authorization', 'Bearer valid-token')
+      .send({ url: 'http://provider.example.com/live/index.m3u8' });
+
+    expect(playRes.status).toBe(200);
+    expect(playRes.body.playerUrl).toContain('/player?token=');
+
+    const validateRes = await request(app)
+      .get(`/api/validate-token?token=${playRes.body.token}`);
+
+    expect(validateRes.status).toBe(200);
+    expect(validateRes.body.playbackId).toBeTruthy();
+
+    const refreshRes = await request(app)
+      .get(`/api/refresh-playback?playbackId=${validateRes.body.playbackId}`);
+
+    expect(refreshRes.status).toBe(200);
+    expect(refreshRes.body.url).toContain('token=new');
+  });
   it('POST /api/track returns 200', async () => {
     const res = await request(app)
       .post('/api/track')

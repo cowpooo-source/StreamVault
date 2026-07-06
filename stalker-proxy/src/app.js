@@ -183,6 +183,76 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   var token=getToken();
   if(!token){showError('Missing play token');return}
 
+  var playbackId=null;
+  var streamType='direct';
+  var hlsInstance=null;
+  var refreshPending=false;
+
+  function destroyHls(){
+    if(hlsInstance){hlsInstance.destroy();hlsInstance=null}
+  }
+
+  function normalizeForPlayback(url){
+    var isHttps=location.protocol==='https:';
+    if(isHttps && url.indexOf('http://')===0){
+      return '/stream?url='+encodeURIComponent(url);
+    }
+    return url;
+  }
+
+  function shouldRefresh(data){
+    var status=(data&&data.response&&data.response.code)||0;
+    var details=data&&data.details;
+    return status===403||status===404||status===410||
+      data.type===Hls.ErrorTypes.NETWORK_ERROR||
+      details===Hls.ErrorDetails.MANIFEST_LOAD_ERROR||
+      details===Hls.ErrorDetails.LEVEL_LOAD_ERROR||
+      details===Hls.ErrorDetails.FRAG_LOAD_ERROR;
+  }
+
+  function playUrl(rawUrl){
+    var url=normalizeForPlayback(rawUrl);
+    destroyHls();
+    if((streamType==='hls'||/\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
+      hlsInstance=new Hls();
+      hlsInstance.loadSource(url);
+      hlsInstance.attachMedia(p);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED,function(){p.play().catch(function(){})});
+      hlsInstance.on(Hls.Events.ERROR,function(_ev,data){
+        // Refresh the upstream URL if the provider token expired or the manifest was re-signed.
+        if(shouldRefresh(data)){
+          refreshStream();
+          return;
+        }
+        if(data.fatal){showError('Playback error: '+data.type)}
+      });
+    }else{
+      p.src=url;
+      p.play().catch(function(){})
+    }
+  }
+
+  function refreshStream(){
+    if(refreshPending){return}
+    if(!playbackId){showError('Missing playback session');return}
+    refreshPending=true;
+    fetch('/api/refresh-playback?playbackId='+encodeURIComponent(playbackId))
+      .then(function(r){
+        if(!r.ok)return r.json().then(function(d){throw new Error(d.error||'Refresh failed')});
+        return r.json();
+      })
+      .then(function(data){
+        refreshPending=false;
+        if(!data.url)throw new Error('No stream URL');
+        if(data.type)streamType=data.type;
+        playUrl(data.url);
+      })
+      .catch(function(err){
+        refreshPending=false;
+        showError(err.message);
+      });
+  }
+
   // Validate token against the same origin API
   fetch('/api/validate-token?token='+encodeURIComponent(token))
     .then(function(r){
@@ -192,26 +262,9 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     .then(function(data){
       if(!data.url)throw new Error('No stream URL');
       l.style.display='none';
-      var url=data.url;
-      var type=data.type||'direct';
-      var isHttps=location.protocol==='https:';
-      // On HTTPS, route HTTP streams through proxy to avoid mixed-content blocking
-      if(isHttps && url.indexOf('http://')===0){
-        url='/stream?url='+encodeURIComponent(url);
-      }
-      // Use HLS.js for HLS streams (M3U8 playlist + .ts segments)
-      if((type==='hls'||/\\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
-        var hls=new Hls();
-        hls.loadSource(url);
-        hls.attachMedia(p);
-        hls.on(Hls.Events.MANIFEST_PARSED,function(){p.play().catch(function(){})});
-        hls.on(Hls.Events.ERROR,function(_ev,data){
-          if(data.fatal){showError('Playback error: '+data.type)}
-        });
-      }else{
-        p.src=url;
-        p.play().catch(function(){});
-      }
+      playbackId=data.playbackId||null;
+      streamType=data.type||'direct';
+      playUrl(data.url);
     })
     .catch(function(err){
       showError(err.message);
