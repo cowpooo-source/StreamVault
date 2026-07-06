@@ -1,0 +1,21 @@
+# Local testing of feature/direct-play-no-proxy
+# Backend only — SPA runs via `npm run dev` on host
+services:
+  feature-backend:
+    build:
+      context: ./stalker-proxy
+      dockerfile: Dockerfile
+    ports:
+      - "3201:3201"
+    volumes:
+      - ./stalker-proxy/src:/home/node/app/src
+      - ./stalker-proxy/package.json:/home/node/app/package.json
+      - stalker-data:/home/node/app/data
+    environment:
+      - PORT=3201
+      - ALLOWED_ORIGIN=*
+      - ADMIN_PASS=Mango!123
+      - PLAYER_BASE=http://localhost:3201
+
+volumes:
+  stalker-data:

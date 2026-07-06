@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "docker": "cross-env PORT=3201 PLAYER_BASE=http://localhost:3201 node src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --configLoader native --pool threads"

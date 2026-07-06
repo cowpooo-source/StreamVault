@@ -153,11 +153,31 @@ describe('Integration Tests - Routes', () => {
     expect(refreshRes.status).toBe(200);
     expect(refreshRes.body.url).toContain('token=new');
   });
+  it('POST /api/play-token preserves Xtream live TS URLs for MPEG-TS playback', async () => {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
+
+    const playRes = await request(app)
+      .post('/api/play-token')
+      .set('authorization', 'Bearer valid-token')
+      .send({ url: 'http://provider.example.com/live/user/pass/509164.ts' });
+
+    expect(playRes.status).toBe(200);
+
+    const validateRes = await request(app)
+      .get(`/api/validate-token?token=${playRes.body.token}`);
+
+    expect(validateRes.status).toBe(200);
+    expect(validateRes.body.type).toBe('mpegts');
+    expect(validateRes.body.url).toBe('http://provider.example.com/live/user/pass/509164.ts');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
   it('GET /player serves direct-play HTML without the VPS stream proxy rewrite', async () => {
     const res = await request(app).get('/player?token=test-token');
 
     expect(res.status).toBe(200);
     expect(res.text).toContain("hls.js");
+    expect(res.text).toContain("mpegts.js");
+    expect(res.text).toContain("/\\.ts(?:\\?|$)/i.test(url)");
     expect(res.text).not.toContain("/stream?url=");
   });
 
@@ -1738,3 +1758,5 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.error).toContain('503');
   });
 });
+
+

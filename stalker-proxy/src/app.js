@@ -151,6 +151,7 @@ function createApp(deps) {
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>Play - StreamVault</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
@@ -186,10 +187,12 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   var playbackId=null;
   var streamType='direct';
   var hlsInstance=null;
+  var mpegtsInstance=null;
   var refreshPending=false;
 
-  function destroyHls(){
+  function destroyPlayers(){
     if(hlsInstance){hlsInstance.destroy();hlsInstance=null}
+    if(mpegtsInstance){mpegtsInstance.destroy();mpegtsInstance=null}
   }
 
   function shouldRefresh(data){
@@ -204,8 +207,13 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 
   function playUrl(rawUrl){
     var url=rawUrl;
-    destroyHls();
-    if((streamType==='hls'||/\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
+    destroyPlayers();
+    if((streamType==='mpegts'||/\\.ts(?:\\?|$)/i.test(url)) && typeof mpegts !== 'undefined' && mpegts.isSupported()){
+      mpegtsInstance=mpegts.createPlayer({type:'mpegts',url:url});
+      mpegtsInstance.attachMediaElement(p);
+      mpegtsInstance.load();
+      mpegtsInstance.play().catch(function(){})
+    }else if((streamType==='hls'||/\\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
       hlsInstance=new Hls();
       hlsInstance.loadSource(url);
       hlsInstance.attachMedia(p);
@@ -383,3 +391,5 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 }
 
 module.exports = { createApp };
+
+

@@ -37,12 +37,12 @@ export default defineConfig({
 
   server: {
     proxy: {
-      '/stalker': { target: 'http://localhost:3001', changeOrigin: true },
-      '/stream': { target: 'http://localhost:3001', changeOrigin: true },
-      '/proxy': { target: 'http://localhost:3001', changeOrigin: true },
-      '/img': { target: 'http://localhost:3001', changeOrigin: true },
-      '/health': { target: 'http://localhost:3001', changeOrigin: true },
-      '/api': { target: 'http://localhost:3001', changeOrigin: true },
+      '/stalker': { target: 'http://localhost:3201', changeOrigin: true },
+      '/stream': { target: 'http://localhost:3201', changeOrigin: true },
+      '/proxy': { target: 'http://localhost:3201', changeOrigin: true },
+      '/img': { target: 'http://localhost:3201', changeOrigin: true },
+      '/health': { target: 'http://localhost:3201', changeOrigin: true },
+      '/api': { target: 'http://localhost:3201', changeOrigin: true },
     },
   },
 
