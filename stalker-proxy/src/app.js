@@ -231,6 +231,10 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     try {
       const headers = { "User-Agent": req.headers["user-agent"] || "StreamVault/1.0" };
       if (req.headers.range) headers["Range"] = req.headers.range;
+      // Forward Referer/Origin so stream server sees a legitimate HLS session
+      if (req.headers.referer) headers["Referer"] = req.headers.referer;
+      if (req.headers.origin) headers["Origin"] = req.headers.origin;
+      try { headers["Referer"] = headers["Referer"] || new URL(url).origin + "/"; } catch {}
       const controller = new AbortController();
       req.on("close", () => controller.abort());
       const upstream = await fetch(url, { headers, redirect: "follow", signal: controller.signal });
@@ -254,6 +258,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
         const { Transform } = require("stream");
         const baseDir = url.substring(0, url.lastIndexOf("/") + 1);
+        const serverRoot = new URL(url).origin + "/";
         let leftover = "";
         const rewriter = new Transform({
           transform(chunk, enc, cb) {
@@ -263,7 +268,15 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
             const rewritten = lines.map(line => {
               const t = line.trim();
               if (!t || t.startsWith("#")) return line;
-              const abs = t.startsWith("http") ? t : baseDir + t;
+              let abs;
+              if (t.startsWith("http")) {
+                abs = t;
+              } else if (t.startsWith("/")) {
+                // Absolute path — resolve against server root, not M3U8 directory
+                abs = serverRoot + t.replace(/^\//, "");
+              } else {
+                abs = baseDir + t;
+              }
               return `/stream?url=${encodeURIComponent(abs)}`;
             }).join("\n") + "\n";
             cb(null, rewritten);
