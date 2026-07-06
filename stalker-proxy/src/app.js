@@ -45,16 +45,18 @@ function createApp(deps) {
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://challenges.cloudflare.com", "https://cdn.jsdelivr.net", "https://www.googletagmanager.com"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "https:"],
-        mediaSrc: ["*"],
-        connectSrc: ["'self'", "https://cdn.jsdelivr.net", "https://www.google-analytics.com", "https://portalheaven.stream"],
+        mediaSrc: ["*", "blob:"],
+        connectSrc: ["'self'", "https:", "https://cdn.jsdelivr.net", "https://www.google-analytics.com", "https://portalheaven.stream"],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         scriptSrcAttr: ["'unsafe-inline'"],
-      }
+      },
+      upgradeInsecureRequests: null,
     },
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
+    strictTransportSecurity: false,
   }));
 
   // Rate limiting
@@ -140,12 +142,15 @@ function createApp(deps) {
   // ── TOKEN-GATED PLAYER PAGE ──
   app.get("/player", (req, res) => {
     res.set("Content-Type", "text/html; charset=utf-8");
+    // Permissive CSP — stream URLs are HTTP, hls.js uses blob: for MSE
+    res.set("Content-Security-Policy", "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'self'");
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>Play - StreamVault</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
@@ -160,9 +165,9 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 <video id="player" autoplay controls playsinline></video>
 <script>
 (function(){
-  const p=document.getElementById('player');
-  const e=document.getElementById('error');
-  const l=document.getElementById('loading');
+  var p=document.getElementById('player');
+  var e=document.getElementById('error');
+  var l=document.getElementById('loading');
 
   function showError(msg){
     l.style.display='none';
@@ -171,15 +176,15 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   }
 
   function getToken(){
-    const m=location.search.match(/[?&]token=([^&]+)/);
+    var m=location.search.match(/[?&]token=([^&]+)/);
     return m?decodeURIComponent(m[1]):null;
   }
 
-  const token=getToken();
+  var token=getToken();
   if(!token){showError('Missing play token');return}
 
-  // Validate token against the production API
-  fetch('https://portalheaven.stream/api/validate-token?token='+encodeURIComponent(token))
+  // Validate token against the same origin API
+  fetch('/api/validate-token?token='+encodeURIComponent(token))
     .then(function(r){
       if(!r.ok)return r.json().then(function(d){throw new Error(d.error||'Validation failed')});
       return r.json();
@@ -187,8 +192,26 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     .then(function(data){
       if(!data.url)throw new Error('No stream URL');
       l.style.display='none';
-      p.src=data.url;
-      p.play().catch(function(){});
+      var url=data.url;
+      var type=data.type||'direct';
+      var isHttps=location.protocol==='https:';
+      // On HTTPS, route HTTP streams through proxy to avoid mixed-content blocking
+      if(isHttps && url.indexOf('http://')===0){
+        url='/stream?url='+encodeURIComponent(url);
+      }
+      // Use HLS.js for HLS streams (M3U8 playlist + .ts segments)
+      if((type==='hls'||/\\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
+        var hls=new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(p);
+        hls.on(Hls.Events.MANIFEST_PARSED,function(){p.play().catch(function(){})});
+        hls.on(Hls.Events.ERROR,function(_ev,data){
+          if(data.fatal){showError('Playback error: '+data.type)}
+        });
+      }else{
+        p.src=url;
+        p.play().catch(function(){});
+      }
     })
     .catch(function(err){
       showError(err.message);
@@ -231,7 +254,6 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
         const { Transform } = require("stream");
         const baseDir = url.substring(0, url.lastIndexOf("/") + 1);
-        const selfBase = `${req.protocol}://${req.get("host")}`;
         let leftover = "";
         const rewriter = new Transform({
           transform(chunk, enc, cb) {
@@ -242,7 +264,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
               const t = line.trim();
               if (!t || t.startsWith("#")) return line;
               const abs = t.startsWith("http") ? t : baseDir + t;
-              return `${selfBase}/stream?url=${encodeURIComponent(abs)}`;
+              return `/stream?url=${encodeURIComponent(abs)}`;
             }).join("\n") + "\n";
             cb(null, rewritten);
           },
@@ -274,10 +296,10 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     const { url } = req.query;
     if (!url || !(await isUrlAllowed(url))) return res.status(400).end();
     try {
-      // Allow up to 5 minutes for massive VOD/Series JSON dumps
-      const tt = transferTimeout(300000);
+      // Allow up to 15s for metadata responses; fail fast if upstream is dead
+      const tt = transferTimeout(15000);
       req.on("close", () => tt.abort());
-      const r = await fetch(url, { timeout: 300000, signal: tt.signal });
+      const r = await fetch(url, { timeout: 15000, signal: tt.signal });
       
       const ct = r.headers.get("content-type") || "application/json";
       res.set("Content-Type", ct);

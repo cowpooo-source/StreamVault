@@ -4,7 +4,7 @@ import React, { useState } from "react";
  * M3UForm - M3U playlist URL + raw text import with detection
  * @param {{ form: object, setForm: function, rawText: string, setRawText: function, loading: boolean, err: string, detected: array, selected: Set, setSelected: function, onSubmit: function, onFileImport: function, onDetect: function }} props
  */
-export function M3UForm({ form, setForm, rawText, setRawText, loading, err, detected, selected, setSelected, onSubmit, onFileImport, onDetect }) {
+export function M3UForm({ form, setForm, rawText, setRawText, loading, err, detected, selected, setSelected, onSubmit, onFileImport, onImportMultiple, onDetect }) {
   const set = (k, v) => setForm(k, v);
 
   const handleTextChange = (e) => {
@@ -107,7 +107,7 @@ export function M3UForm({ form, setForm, rawText, setRawText, loading, err, dete
               <button className="btn-primary" style={{ marginTop: ".4rem" }}
                 onClick={() => {
                   const items = [...selected].sort((a, b) => a - b).map(i => detected[i]);
-                  if (onFileImport) onFileImport(null, items);
+                  if (onImportMultiple) onImportMultiple(items);
                 }}>
                 Import {selected.size} connection{selected.size > 1 ? "s" : ""}
               </button>

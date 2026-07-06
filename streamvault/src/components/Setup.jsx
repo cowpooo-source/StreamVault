@@ -343,6 +343,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
             setSelected={setSelected}
             onSubmit={handleConnectClick}
             onFileImport={handleFileImport}
+            onImportMultiple={onImportMultiple}
           />
         )}
         {type==="stalker" && (

@@ -48,7 +48,7 @@ function createPlayerRouter(deps) {
   });
 
   // Validate and consume a play token — called from the player page
-  router.get("/validate-token", (req, res) => {
+  router.get("/validate-token", async (req, res) => {
     const { token } = req.query;
     if (!token) { res.status(400).json({ error: "Missing token" }); return; }
 
@@ -63,7 +63,22 @@ function createPlayerRouter(deps) {
     entry.used = true;
     tokens.delete(token); // Clean up immediately
 
-    res.json({ url: entry.url });
+    // Resolve redirects — browser video elements can't follow 302 for media.
+    // Xtream .ts URLs redirect with a token; swap to .m3u8 for HLS playback.
+    let finalUrl = entry.url;
+    let streamType = finalUrl.endsWith(".m3u8") || finalUrl.endsWith(".ts") ? "hls" : "direct";
+    if (finalUrl.endsWith(".ts")) {
+      finalUrl = finalUrl.replace(/\.ts$/, ".m3u8");
+    }
+    try {
+      const getRes = await fetch(finalUrl, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+      if (getRes.url !== finalUrl) finalUrl = getRes.url;
+      getRes.body?.cancel();
+      // Force back to HTTP — stream servers don't speak TLS
+      finalUrl = finalUrl.replace(/^https:/, "http:");
+    } catch {} // fall through with original URL
+
+    res.json({ url: finalUrl, type: streamType });
   });
 
   return router;

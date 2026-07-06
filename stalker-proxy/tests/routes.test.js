@@ -296,6 +296,46 @@ describe('Integration Tests - Routes', () => {
     expect(deps.cache.trackWatch).toHaveBeenCalledWith('ABC', 'live');
   });
 
+  it('GET /stream keeps rewritten HLS URLs relative to the current origin', async () => {
+    const { createApp } = require('../src/app');
+    const miniApp = createApp({
+      auth: mockAuth,
+      cache: mockCache,
+      fetch: vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (key) => {
+            if (key === 'content-type') return 'application/vnd.apple.mpegurl';
+            if (key === 'content-length') return null;
+            if (key === 'content-range') return null;
+            return null;
+          }
+        },
+        body: Readable.from(['#EXTM3U\nsegment.ts\n'])
+      }),
+      system: {
+        getNetworkStats: vi.fn().mockReturnValue({ rx_bytes: 0, tx_bytes: 0, rx_gb: 0, tx_gb: 0 }),
+        getDiskUsage: vi.fn().mockReturnValue({ total_gb: 100, used_gb: 50, percent: 50 }),
+        trackDailyBandwidth: vi.fn(),
+        getLastNetStat: vi.fn(),
+        setLastNetStat: vi.fn(),
+        getSystemMetrics: vi.fn().mockReturnValue({})
+      },
+      email: {
+        sendPasswordReset: vi.fn().mockResolvedValue(true)
+      }
+    });
+
+    const res = await request(miniApp)
+      .get('/stream?url=https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8')
+      .set('Host', 'play.portalheaven.stream');
+
+    expect(res.status).toBe(200);
+    expect(res.text).toMatch(/^\/stream\?url=https%3A%2F%2Ftest-streams.mux.dev%2Fx36xhzz%2Fsegment.ts$/m);
+    expect(res.text).not.toContain('http://play.portalheaven.stream/stream?url=');
+  });
+
   it('GET /stalker/stream sends legacy create_link params and normalizes localhost URLs', async () => {
     const miniApp = express();
     const portalFetchRetry = vi.fn().mockResolvedValue({
