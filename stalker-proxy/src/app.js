@@ -192,14 +192,6 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     if(hlsInstance){hlsInstance.destroy();hlsInstance=null}
   }
 
-  function normalizeForPlayback(url){
-    var isHttps=location.protocol==='https:';
-    if(isHttps && url.indexOf('http://')===0){
-      return '/stream?url='+encodeURIComponent(url);
-    }
-    return url;
-  }
-
   function shouldRefresh(data){
     var status=(data&&data.response&&data.response.code)||0;
     var details=data&&data.details;
@@ -211,7 +203,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   }
 
   function playUrl(rawUrl){
-    var url=normalizeForPlayback(rawUrl);
+    var url=rawUrl;
     destroyHls();
     if((streamType==='hls'||/\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
       hlsInstance=new Hls();

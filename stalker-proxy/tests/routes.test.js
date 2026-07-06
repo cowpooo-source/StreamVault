@@ -153,6 +153,14 @@ describe('Integration Tests - Routes', () => {
     expect(refreshRes.status).toBe(200);
     expect(refreshRes.body.url).toContain('token=new');
   });
+  it('GET /player serves direct-play HTML without the VPS stream proxy rewrite', async () => {
+    const res = await request(app).get('/player?token=test-token');
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("hls.js");
+    expect(res.text).not.toContain("/stream?url=");
+  });
+
   it('POST /api/track returns 200', async () => {
     const res = await request(app)
       .post('/api/track')
