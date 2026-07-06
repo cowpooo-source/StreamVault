@@ -65,7 +65,7 @@ function createPlayerRouter(deps) {
       const id = crypto.randomBytes(24).toString("hex");
       tokens.set(id, { url, used: false, expiresAt: Date.now() + TOKEN_TTL });
 
-      const PLAYER_BASE = process.env.PLAYER_BASE || "http://play.portalheaven.stream";
+      const PLAYER_BASE = process.env.PLAYER_BASE || "http://40.233.113.76";
       res.json({
         token: id,
         playerUrl: `${PLAYER_BASE}/player?token=${id}`,
