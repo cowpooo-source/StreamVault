@@ -113,6 +113,8 @@ describe('Integration Tests - Routes', () => {
     const { tokens, playbackSessions } = require("../src/routes/player");
     tokens.clear();
     playbackSessions.clear();
+    const { contentSessions } = require("../src/routes/contentSession");
+    contentSessions.clear();
   });
 
   it('GET /health returns 200', async () => {
@@ -191,6 +193,74 @@ describe('Integration Tests - Routes', () => {
     expect(res.text).toContain("/\\.m3u8(?:\\?|$)/i");
     expect(res.text).toContain("refreshStream");
     expect(res.text).not.toContain("/stream?url=");
+  });
+
+  it('POST /api/content-session requires auth', async () => {
+    const res = await request(app)
+      .post('/api/content-session')
+      .send({ connection: { id: 'c1', type: 'xtream', config: {} } });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Unauthorized');
+  });
+
+  it('POST /api/content-session rejects unsupported provider types', async () => {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
+
+    const res = await request(app)
+      .post('/api/content-session')
+      .set('authorization', 'Bearer valid-token')
+      .send({
+        connection: {
+          id: 'stalker-1',
+          type: 'stalker',
+          label: 'Portal',
+          config: { type: 'stalker', server: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' },
+        },
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Unsupported content session provider');
+  });
+
+  it('POST /api/content-session creates a scoped HTTP content URL for Xtream', async () => {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
+
+    const res = await request(app)
+      .post('/api/content-session')
+      .set('authorization', 'Bearer valid-token')
+      .send({
+        connection: {
+          id: 'xtream-1',
+          type: 'xtream',
+          label: 'Demo Xtream',
+          config: { type: 'xtream', server: 'http://provider.example.com', user: 'u', pass: 'p' },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.contentUrl).toMatch(/^http:\/\/40\.233\.113\.76\/content\?token=/);
+    expect(res.body.expiresAt).toBeGreaterThan(Date.now());
+
+    const validate = await request(app).get(`/api/content-session/validate?token=${res.body.token}`);
+    expect(validate.status).toBe(200);
+    expect(validate.body).toMatchObject({
+      connection: {
+        id: 'xtream-1',
+        type: 'xtream',
+        label: 'Demo Xtream',
+        config: { type: 'xtream', server: 'http://provider.example.com', user: 'u', pass: 'p' },
+      },
+    });
+    expect(validate.body.user).toBeUndefined();
+  });
+
+  it('GET /api/content-session/validate rejects unknown tokens', async () => {
+    const res = await request(app).get('/api/content-session/validate?token=missing');
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Content session not found');
   });
 
   it('POST /api/track returns 200', async () => {

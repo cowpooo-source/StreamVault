@@ -124,6 +124,7 @@ function createApp(deps) {
   const { createApiRouter } = require("./routes/api");
   const { createStalkerRouter } = require("./routes/stalker");
   const { createBillingRouter } = require("./routes/billing");
+  const { createContentSessionRouter } = require("./routes/contentSession");
   const { createPlayerRouter } = require("./routes/player");
   const { stripe, handleWebhook } = require("./stripe.js");
 
@@ -137,6 +138,7 @@ function createApp(deps) {
   app.use("/api", createApiRouter(routerDeps));
   if (pool) app.use("/api/billing", createBillingRouter(pool, auth, stripe, handleWebhook));
   app.use("/", createAnalyticsRouter(routerDeps));
+  app.use("/api", createContentSessionRouter(routerDeps));
   app.use("/api", createPlayerRouter(routerDeps));
 
   // -- TOKEN-GATED PLAYER PAGE --
