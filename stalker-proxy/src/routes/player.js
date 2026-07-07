@@ -22,18 +22,21 @@ setInterval(cleanupExpiredEntries, 60_000);
 
 async function resolvePlayableUrl(rawUrl, fetchImpl = fetch) {
   let finalUrl = rawUrl;
-  const streamType = finalUrl.endsWith(".m3u8") ? "hls" : finalUrl.endsWith(".ts") ? "mpegts" : "direct";
+  const streamType = finalUrl.endsWith(".m3u8") || finalUrl.endsWith(".ts") ? "hls" : "direct";
 
-  if (streamType === "mpegts") {
-    return { url: finalUrl.replace(/^https:/, "http:"), type: streamType };
+  if (finalUrl.endsWith(".ts")) {
+    finalUrl = finalUrl.replace(/\.ts$/, ".m3u8");
   }
 
   try {
     const getRes = await fetchImpl(finalUrl, { redirect: "follow", signal: AbortSignal.timeout(8000) });
     if (getRes.url && getRes.url !== finalUrl) finalUrl = getRes.url;
     getRes.body?.cancel?.();
+    // Provider endpoints are HTTP-only; the browser/player layer decides whether to proxy.
     finalUrl = finalUrl.replace(/^https:/, "http:");
-  } catch { }
+  } catch {
+    // Fall through with the best URL we have.
+  }
 
   return { url: finalUrl, type: streamType };
 }
@@ -42,9 +45,10 @@ function createPlayerRouter(deps) {
   const { auth } = deps;
   const router = require("express").Router();
 
-  // Generate a one-time play token â€” requires auth
+  // Generate a one-time play token — requires auth
   router.post("/play-token", (req, res) => {
     try {
+      // Verify auth
       const token = req.cookies?.sv_auth || (req.headers.authorization?.slice(7));
       if (!token) return res.status(401).json({ error: "Unauthorized" });
       const user = auth.verifyToken(token);
@@ -53,6 +57,7 @@ function createPlayerRouter(deps) {
       const { url } = req.body;
       if (!url) return res.status(400).json({ error: "Missing stream URL" });
 
+      // Validate URL is HTTP (must be provider HTTP stream)
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
         return res.status(400).json({ error: "Invalid stream URL" });
       }
@@ -60,7 +65,7 @@ function createPlayerRouter(deps) {
       const id = crypto.randomBytes(24).toString("hex");
       tokens.set(id, { url, used: false, expiresAt: Date.now() + TOKEN_TTL });
 
-      const PLAYER_BASE = process.env.PLAYER_BASE || "http://localhost:3201";
+      const PLAYER_BASE = process.env.PLAYER_BASE || "http://40.233.113.76";
       res.json({
         token: id,
         playerUrl: `${PLAYER_BASE}/player?token=${id}`,
@@ -71,6 +76,7 @@ function createPlayerRouter(deps) {
     }
   });
 
+  // Validate and consume a play token — called from the player page
   router.get("/validate-token", async (req, res) => {
     const { token } = req.query;
     if (!token) { res.status(400).json({ error: "Missing token" }); return; }
@@ -84,7 +90,7 @@ function createPlayerRouter(deps) {
     if (entry.used) { res.status(410).json({ error: "Token already used" }); return; }
 
     entry.used = true;
-    tokens.delete(token);
+    tokens.delete(token); // Clean up immediately
 
     const playbackId = crypto.randomBytes(24).toString("hex");
     playbackSessions.set(playbackId, {
@@ -96,6 +102,7 @@ function createPlayerRouter(deps) {
     res.json({ url: resolved.url, type: resolved.type, playbackId });
   });
 
+  // Refresh a previously validated playback session with a fresh upstream URL.
   router.get("/refresh-playback", async (req, res) => {
     const { playbackId } = req.query;
     if (!playbackId) { res.status(400).json({ error: "Missing playbackId" }); return; }
@@ -119,4 +126,3 @@ function createPlayerRouter(deps) {
 }
 
 module.exports = { createPlayerRouter, tokens, playbackSessions };
-

@@ -115,7 +115,7 @@ function createApp(deps) {
     next();
   });
 
-  // ── MOUNT MODULAR ROUTES ──
+  // -- MOUNT MODULAR ROUTES --
 
   const { createAuthRouter } = require("./routes/auth");
   const { createSSORouter } = require("./routes/sso");
@@ -139,10 +139,10 @@ function createApp(deps) {
   app.use("/", createAnalyticsRouter(routerDeps));
   app.use("/api", createPlayerRouter(routerDeps));
 
-  // ── TOKEN-GATED PLAYER PAGE ──
+  // -- TOKEN-GATED PLAYER PAGE --
   app.get("/player", (req, res) => {
     res.set("Content-Type", "text/html; charset=utf-8");
-    // Permissive CSP — stream URLs are HTTP, hls.js uses blob: for MSE
+    // Permissive CSP � stream URLs are HTTP, hls.js uses blob: for MSE
     res.set("Content-Security-Policy", "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'self'");
     res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -151,7 +151,6 @@ function createApp(deps) {
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>Play - StreamVault</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-<script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
@@ -161,7 +160,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 </style>
 </head>
 <body>
-<div id="loading">Loading player…</div>
+<div id="loading">Loading player�</div>
 <div id="error"></div>
 <video id="player" autoplay controls playsinline></video>
 <script>
@@ -187,12 +186,10 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   var playbackId=null;
   var streamType='direct';
   var hlsInstance=null;
-  var mpegtsInstance=null;
   var refreshPending=false;
 
-  function destroyPlayers(){
+  function destroyHls(){
     if(hlsInstance){hlsInstance.destroy();hlsInstance=null}
-    if(mpegtsInstance){mpegtsInstance.destroy();mpegtsInstance=null}
   }
 
   function shouldRefresh(data){
@@ -205,17 +202,16 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       details===Hls.ErrorDetails.FRAG_LOAD_ERROR;
   }
 
+  function hlsSourceFor(url){
+    var wrapper=['#EXTM3U','#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f,mp4a.40.5"',url,''].join(String.fromCharCode(10));
+    return URL.createObjectURL(new Blob([wrapper],{type:'application/vnd.apple.mpegurl'}));
+  }
   function playUrl(rawUrl){
     var url=rawUrl;
-    destroyPlayers();
-    if((streamType==='mpegts'||/\\.ts(?:\\?|$)/i.test(url)) && typeof mpegts !== 'undefined' && mpegts.isSupported()){
-      mpegtsInstance=mpegts.createPlayer({type:'mpegts',url:url});
-      mpegtsInstance.attachMediaElement(p);
-      mpegtsInstance.load();
-      mpegtsInstance.play().catch(function(){})
-    }else if((streamType==='hls'||/\\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
+    destroyHls();
+    if((streamType==='hls'||/\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
       hlsInstance=new Hls();
-      hlsInstance.loadSource(url);
+      hlsInstance.loadSource(hlsSourceFor(url));
       hlsInstance.attachMedia(p);
       hlsInstance.on(Hls.Events.MANIFEST_PARSED,function(){p.play().catch(function(){})});
       hlsInstance.on(Hls.Events.ERROR,function(_ev,data){
@@ -275,7 +271,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 </html>`);
   });
 
-  // ── MEDIA PROXY ROUTES (Legacy support or shared) ──
+  // -- MEDIA PROXY ROUTES (Legacy support or shared) --
   // These could also be moved into api.js if desired.
 
   app.get("/stream", async (req, res) => {
@@ -325,7 +321,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
               if (t.startsWith("http")) {
                 abs = t;
               } else if (t.startsWith("/")) {
-                // Absolute path — resolve against server root, not M3U8 directory
+                // Absolute path � resolve against server root, not M3U8 directory
                 abs = serverRoot + t.replace(/^\//, "");
               } else {
                 abs = baseDir + t;
@@ -391,5 +387,4 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 }
 
 module.exports = { createApp };
-
 
