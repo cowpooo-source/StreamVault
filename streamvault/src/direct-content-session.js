@@ -1,97 +1,109 @@
-const DIRECT_CONNECTION_TYPES = new Set(["xtream", "m3u"]);
-const CONTENT_SESSION_ROUTE = "/api/content-session";
-const CONTENT_SESSION_VALIDATE_ROUTE = "/api/content-session/validate";
+function currentLocation(locationObject = typeof window !== "undefined" ? window.location : { pathname: "", search: "" }) {
+  return {
+    pathname: locationObject?.pathname || "",
+    search: locationObject?.search || "",
+  };
+}
 
-function pickDefinedFields(source, keys) {
-  const target = {};
-  for (const key of keys) {
-    if (source?.[key] !== undefined) target[key] = source[key];
-  }
-  return target;
+function trimTrailingSlash(pathname) {
+  return pathname.replace(/\/+$/, "") || "/";
 }
 
 export function isDirectContentConnection(connection) {
-  return !!connection && DIRECT_CONNECTION_TYPES.has(connection.type);
+  return connection?.type === "xtream" || connection?.type === "m3u";
 }
 
-export function buildSafeContentSessionPayload(connection, item = {}) {
+export function contentSessionPayload(connection) {
+  const config = connection?.config || {};
+  const safeConfig = {};
+  for (const key of ["type", "server", "user", "pass", "url"]) {
+    if (config[key] !== undefined) safeConfig[key] = config[key];
+  }
+
   return {
-    connection: pickDefinedFields(connection, ["id", "type", "label", "server", "user", "url", "name"]),
-    item: pickDefinedFields(item, ["id", "name", "url", "type", "logo", "group", "streamId", "channelId", "seriesId", "season", "episode"]),
+    connection: {
+      id: connection?.id,
+      type: connection?.type,
+      label: connection?.label,
+      config: safeConfig,
+    },
   };
 }
 
-export function detectContentMode(locationLike = globalThis.location) {
-  const pathname = locationLike?.pathname || "";
-  if (pathname !== "/content" && pathname !== "/content/") {
-    return { isContentMode: false, token: null };
-  }
-
-  const searchParams = new URLSearchParams(locationLike?.search || "");
-  return {
-    isContentMode: true,
-    token: searchParams.get("token"),
-  };
+export function isHttpContentMode(locationObject = typeof window !== "undefined" ? window.location : { pathname: "", search: "" }) {
+  return trimTrailingSlash(currentLocation(locationObject).pathname) === "/content";
 }
 
-export async function validateContentSessionToken(token, fetchImpl = globalThis.fetch) {
-  if (!token) return false;
-
-  const response = await fetchImpl(`${CONTENT_SESSION_VALIDATE_ROUTE}?token=${encodeURIComponent(token)}`);
-  return !!response?.ok;
+export function contentSessionToken(locationObject = typeof window !== "undefined" ? window.location : { pathname: "", search: "" }) {
+  const { search } = currentLocation(locationObject);
+  return isHttpContentMode(locationObject) ? new URLSearchParams(search).get("token") : null;
 }
 
-export async function openDirectContentSession(connection, item, options = {}) {
-  if (!isDirectContentConnection(connection)) {
-    return { opened: false, contentUrl: null };
+export async function validateContentSession(token) {
+  if (!token) throw new Error("Missing content session token");
+
+  const res = await fetch(`/api/content-session/validate?token=${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    let message = "Content session expired or invalid";
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {}
+    throw new Error(message);
   }
 
-  const fetchImpl = options.fetch || globalThis.fetch;
-  const navigate = options.navigate || ((url) => {
-    if (typeof globalThis.location?.assign === "function") {
-      globalThis.location.assign(url);
-    } else {
-      globalThis.location.href = url;
-    }
-  });
+  if (res.status === 204) return true;
 
-  const response = await fetchImpl(CONTENT_SESSION_ROUTE, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildSafeContentSessionPayload(connection, item)),
-  });
-
-  if (!response?.ok) {
-    return { opened: false, contentUrl: null };
-  }
-
-  let data = {};
+  const text = await res.text();
+  if (!text.trim()) return true;
   try {
-    data = await response.json();
+    return JSON.parse(text);
   } catch {
-    data = {};
+    return true;
   }
-
-  if (!data?.contentUrl) {
-    return { opened: false, contentUrl: null };
-  }
-
-  navigate(data.contentUrl);
-  return { opened: true, contentUrl: data.contentUrl };
 }
 
-export async function maybeOpenDirectContentSession(connection, item, options = {}) {
-  const mode = options.contentMode ? { isContentMode: true, token: options.token ?? null } : detectContentMode(options.location);
-  if (mode.isContentMode || !isDirectContentConnection(connection)) {
-    return false;
+export async function openDirectContentSession(connection, options = {}) {
+  const { authHeaders } = await import("./app-runtime.js");
+  const res = await fetch("/api/content-session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(contentSessionPayload(connection)),
+  });
+
+  if (!res.ok) {
+    let message = "Failed to open direct content session";
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {}
+    throw new Error(message);
   }
 
-  const result = await openDirectContentSession(connection, item, options);
-  return result.opened;
+  const data = await res.json();
+  if (!data?.contentUrl) throw new Error("Missing content URL");
+
+  if (typeof options.navigate === "function") {
+    options.navigate(data.contentUrl);
+  } else if (typeof window !== "undefined" && window.location) {
+    if (typeof window.location.assign === "function") {
+      window.location.assign(data.contentUrl);
+    } else {
+      window.location.href = data.contentUrl;
+    }
+  }
+
+  return data;
 }
 
-export function shouldUseTokenPlayerForItem(connection, item, locationLike = globalThis.location) {
-  const { isContentMode } = detectContentMode(locationLike);
-  return isContentMode && isDirectContentConnection(connection) && !!item;
+export async function maybeOpenDirectContentSession(connection, options = {}) {
+  if (!isDirectContentConnection(connection) || isHttpContentMode(options.location)) return false;
+  await openDirectContentSession(connection, options);
+  return true;
 }
+
+export function shouldUseTokenPlayerForItem(connection, item, locationObject = typeof window !== "undefined" ? window.location : { pathname: "", search: "" }) {
+  return isDirectContentConnection(connection) && !!item && !isHttpContentMode(locationObject);
+}
+
+
