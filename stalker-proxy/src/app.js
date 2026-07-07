@@ -151,6 +151,7 @@ function createApp(deps) {
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>Play - StreamVault</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
@@ -169,10 +170,22 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   var e=document.getElementById('error');
   var l=document.getElementById('loading');
 
-  function showError(msg){
+  var playbackId=null;
+  var streamType='direct';
+  var hlsInstance=null;
+  var mpegtsInstance=null;
+  var refreshPending=false;
+
+  function showError(title, body){
     l.style.display='none';
     e.style.display='block';
-    e.textContent=msg||'Playback failed';
+    e.innerHTML='<strong>'+escapeHtml(title||'Playback Error')+'</strong><br>'+escapeHtml(body||'Playback failed');
+  }
+
+  function escapeHtml(value){
+    return String(value).replace(/[&<>"']/g,function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+    });
   }
 
   function getToken(){
@@ -180,22 +193,34 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     return m?decodeURIComponent(m[1]):null;
   }
 
-  var token=getToken();
-  if(!token){showError('Missing play token');return}
-
-  var playbackId=null;
-  var streamType='direct';
-  var hlsInstance=null;
-  var refreshPending=false;
-
-  function destroyHls(){
+  function destroyPlayers(){
     if(hlsInstance){hlsInstance.destroy();hlsInstance=null}
+    if(mpegtsInstance){mpegtsInstance.destroy();mpegtsInstance=null}
+    p.removeAttribute('src');
+    try{p.load()}catch(_err){}
   }
+
+  function statusMessage(code, fallback){
+    if(code===404)return ['Stream Not Found (404)','The stream URL returned 404. The channel may be offline, or its URL may have changed.'];
+    if(code===401||code===403)return ['Access Denied ('+code+')','The stream server rejected the request. Your IP may be blocked or your credentials lack access.'];
+    if(code===429)return ['Rate Limited (429)','Too many requests to the provider. Please wait a minute before trying again.'];
+    if(code===456)return ['Account Blocked (456)',"The provider rejected the stream. Your account may be expired, in use elsewhere, or your IP is blocked by the provider's firewall."];
+    if(code===459||code===462)return ['Token Expired ('+code+')','The stream token has expired or was rejected. Click play again to get a fresh token.'];
+    if(code>=500)return ['Server Error ('+code+')','The stream server returned an error. It may be overloaded or temporarily down.'];
+    return ['Playback Error',fallback||'Playback failed'];
+  }
+
+  p.onerror=function(){
+    if(hlsInstance||mpegtsInstance)return;
+    var code=p.error&&p.error.code;
+    var msgs={1:'Playback aborted',2:'Network error - could not load stream',3:'Decode error - stream format not supported',4:'Source not supported - the stream format or URL is invalid'};
+    showError('Playback Error',msgs[code]||'Unknown video error');
+  };
 
   function shouldRefresh(data){
     var status=(data&&data.response&&data.response.code)||0;
     var details=data&&data.details;
-    return status===403||status===404||status===410||
+    return status===403||status===404||status===410||status===459||status===462||
       data.type===Hls.ErrorTypes.NETWORK_ERROR||
       details===Hls.ErrorDetails.MANIFEST_LOAD_ERROR||
       details===Hls.ErrorDetails.LEVEL_LOAD_ERROR||
@@ -206,31 +231,70 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     var wrapper=['#EXTM3U','#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.4d401f,mp4a.40.5"',url,''].join(String.fromCharCode(10));
     return URL.createObjectURL(new Blob([wrapper],{type:'application/vnd.apple.mpegurl'}));
   }
+
+  function isTsUrl(url){
+    return /\.ts(?:\?|$)/i.test(url)||url.indexOf('extension=ts')!==-1;
+  }
+
+  function startHls(url){
+    if(typeof Hls==='undefined'||!Hls.isSupported()){
+      p.src=url;
+      p.play().catch(function(){});
+      return;
+    }
+    hlsInstance=new Hls({enableWorker:false,fragLoadingMaxRetry:2});
+    hlsInstance.loadSource(hlsSourceFor(url));
+    hlsInstance.attachMedia(p);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED,function(){p.play().catch(function(){})});
+    hlsInstance.on(Hls.Events.ERROR,function(_ev,data){
+      if(shouldRefresh(data)){
+        refreshStream();
+        return;
+      }
+      if(!data.fatal)return;
+      var code=data.response&&data.response.code;
+      var msg=statusMessage(code,data.type===Hls.ErrorTypes.NETWORK_ERROR?'Could not reach the stream server. Check your connection or try again.':'HLS error: '+data.details);
+      showError(msg[0],msg[1]);
+      destroyPlayers();
+    });
+  }
+
+  function startMpegts(url){
+    if(typeof mpegts==='undefined'||!mpegts.isSupported()){
+      p.src=url;
+      p.play().catch(function(){});
+      return;
+    }
+    mpegtsInstance=mpegts.createPlayer({type:'mpegts',isLive:true,url:url},{enableWorker:false,lazyLoadMaxDuration:180,seekType:'range'});
+    mpegtsInstance.on(mpegts.Events.ERROR,function(errType,errDetail,errInfo){
+      var code=errInfo&&errInfo.code;
+      var msg=statusMessage(code,errType==='NetworkError'?'Could not load the stream. '+((errInfo&&errInfo.msg)||'Check your connection or try again.'):errType+': '+(errDetail||'Unknown error'));
+      showError(msg[0],msg[1]);
+      destroyPlayers();
+    });
+    mpegtsInstance.attachMediaElement(p);
+    mpegtsInstance.load();
+    mpegtsInstance.play().catch(function(){});
+  }
+
   function playUrl(rawUrl){
     var url=rawUrl;
-    destroyHls();
-    if((streamType==='hls'||/\.m3u8/i.test(url)) && typeof Hls !== 'undefined' && Hls.isSupported()){
-      hlsInstance=new Hls();
-      hlsInstance.loadSource(hlsSourceFor(url));
-      hlsInstance.attachMedia(p);
-      hlsInstance.on(Hls.Events.MANIFEST_PARSED,function(){p.play().catch(function(){})});
-      hlsInstance.on(Hls.Events.ERROR,function(_ev,data){
-        // Refresh the upstream URL if the provider token expired or the manifest was re-signed.
-        if(shouldRefresh(data)){
-          refreshStream();
-          return;
-        }
-        if(data.fatal){showError('Playback error: '+data.type)}
-      });
+    destroyPlayers();
+    l.style.display='none';
+    e.style.display='none';
+    if(streamType==='hls'||/\.m3u8(?:\?|$)/i.test(url)){
+      startHls(url);
+    }else if(streamType==='ts'||isTsUrl(url)){
+      startMpegts(url);
     }else{
       p.src=url;
-      p.play().catch(function(){})
+      p.play().catch(function(){});
     }
   }
 
   function refreshStream(){
-    if(refreshPending){return}
-    if(!playbackId){showError('Missing playback session');return}
+    if(refreshPending)return;
+    if(!playbackId){showError('Playback Error','Missing playback session');return}
     refreshPending=true;
     fetch('/api/refresh-playback?playbackId='+encodeURIComponent(playbackId))
       .then(function(r){
@@ -245,11 +309,13 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       })
       .catch(function(err){
         refreshPending=false;
-        showError(err.message);
+        showError('Playback Error',err.message);
       });
   }
 
-  // Validate token against the same origin API
+  var token=getToken();
+  if(!token){showError('Playback Error','Missing play token');return}
+
   fetch('/api/validate-token?token='+encodeURIComponent(token))
     .then(function(r){
       if(!r.ok)return r.json().then(function(d){throw new Error(d.error||'Validation failed')});
@@ -257,13 +323,12 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     })
     .then(function(data){
       if(!data.url)throw new Error('No stream URL');
-      l.style.display='none';
       playbackId=data.playbackId||null;
       streamType=data.type||'direct';
       playUrl(data.url);
     })
     .catch(function(err){
-      showError(err.message);
+      showError('Playback Error',err.message);
     });
 })();
 </script>

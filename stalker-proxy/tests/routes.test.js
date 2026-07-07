@@ -158,8 +158,14 @@ describe('Integration Tests - Routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.text).toContain("hls.js");
+    expect(res.text).toContain("mpegts.js");
     expect(res.text).toContain("CODECS=\"avc1.4d401f,mp4a.40.5\"");
     expect(res.text).toContain("String.fromCharCode(10)");
+    expect(res.text).toContain("Account Blocked (456)");
+    expect(res.text).toContain("Rate Limited (429)");
+    expect(res.text).toContain("Network error - could not load stream");
+    expect(res.text).toContain("startMpegts");
+    expect(res.text).toContain("refreshStream");
     expect(res.text).not.toContain("/stream?url=");
   });
 
