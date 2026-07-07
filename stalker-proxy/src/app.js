@@ -259,14 +259,24 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     });
   }
 
+  function fallbackToNative(url){
+    destroyPlayers();
+    p.src=url;
+    p.play().catch(function(){});
+  }
+
   function startMpegts(url){
     if(typeof mpegts==='undefined'||!mpegts.isSupported()){
-      p.src=url;
-      p.play().catch(function(){});
+      fallbackToNative(url);
       return;
     }
     mpegtsInstance=mpegts.createPlayer({type:'mpegts',isLive:true,url:url},{enableWorker:false,lazyLoadMaxDuration:180,seekType:'range'});
     mpegtsInstance.on(mpegts.Events.ERROR,function(errType,errDetail,errInfo){
+      var reason=[errType,errDetail,(errInfo&&errInfo.msg)||''].join(' ');
+      if(/FormatUnsupported|Unsupported media|unsupported/i.test(reason)){
+        fallbackToNative(url);
+        return;
+      }
       var code=errInfo&&errInfo.code;
       var msg=statusMessage(code,errType==='NetworkError'?'Could not load the stream. '+((errInfo&&errInfo.msg)||'Check your connection or try again.'):errType+': '+(errDetail||'Unknown error'));
       showError(msg[0],msg[1]);

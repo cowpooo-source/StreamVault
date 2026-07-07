@@ -185,6 +185,8 @@ describe('Integration Tests - Routes', () => {
     expect(res.text).toContain("Rate Limited (429)");
     expect(res.text).toContain("Network error - could not load stream");
     expect(res.text).toContain("startMpegts");
+    expect(res.text).toContain("FormatUnsupported");
+    expect(res.text).toContain("fallbackToNative");
     expect(res.text).toContain("/\\.ts(?:\\?|$)/i");
     expect(res.text).toContain("/\\.m3u8(?:\\?|$)/i");
     expect(res.text).toContain("refreshStream");
