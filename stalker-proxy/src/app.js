@@ -233,7 +233,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   }
 
   function isTsUrl(url){
-    return /\.ts(?:\?|$)/i.test(url)||url.indexOf('extension=ts')!==-1;
+    return /\\.ts(?:\\?|$)/i.test(url)||url.indexOf('extension=ts')!==-1;
   }
 
   function startHls(url){
@@ -282,7 +282,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     destroyPlayers();
     l.style.display='none';
     e.style.display='none';
-    if(streamType==='hls'||/\.m3u8(?:\?|$)/i.test(url)){
+    if(streamType==='hls'||/\\.m3u8(?:\\?|$)/i.test(url)){
       startHls(url);
     }else if(streamType==='ts'||isTsUrl(url)){
       startMpegts(url);
