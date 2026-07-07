@@ -25,7 +25,7 @@ function normalizeConnection(input) {
   return {
     id: String(connection.id),
     type,
-    label: connection.label || (type === 'xtream' ? `${config.user || 'Xtream'} - Xtream` : 'M3U Playlist'),
+    label: connection.label || (type === 'xtream' ? `${config.user || 'Xtream'} · Xtream` : 'M3U Playlist'),
     config: { ...config, type },
   };
 }
@@ -57,7 +57,6 @@ function createContentSessionRouter(deps) {
       const token = crypto.randomBytes(24).toString('hex');
       const expiresAt = Date.now() + CONTENT_SESSION_TTL;
       contentSessions.set(token, {
-        userId: user.id,
         connection,
         expiresAt,
       });
@@ -99,3 +98,4 @@ module.exports = {
   cleanupExpiredContentSessions,
   normalizeConnection,
 };
+

@@ -263,6 +263,30 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.error).toBe('Content session not found');
   });
 
+  it('GET /api/content-session/validate returns 410 for expired tokens', async () => {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
+
+    const res = await request(app)
+      .post('/api/content-session')
+      .set('authorization', 'Bearer valid-token')
+      .send({
+        connection: {
+          id: 'xtream-expired',
+          type: 'xtream',
+          label: 'Expired Demo',
+          config: { type: 'xtream', server: 'http://provider.example.com', user: 'u', pass: 'p' },
+        },
+      });
+
+    expect(res.status).toBe(200);
+
+    const { contentSessions } = require("../src/routes/contentSession");
+    contentSessions.get(res.body.token).expiresAt = Date.now() - 1;
+
+    const validate = await request(app).get(`/api/content-session/validate?token=${res.body.token}`);
+    expect(validate.status).toBe(410);
+    expect(validate.body.error).toBe('Content session expired');
+  });
   it('POST /api/track returns 200', async () => {
     const res = await request(app)
       .post('/api/track')
@@ -1840,6 +1864,8 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.error).toContain('503');
   });
 });
+
+
 
 
 
