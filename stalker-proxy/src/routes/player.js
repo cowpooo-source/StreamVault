@@ -20,13 +20,20 @@ function cleanupExpiredEntries() {
 // Cleanup expired entries every 60s
 setInterval(cleanupExpiredEntries, 60_000);
 
+function classifyStreamType(url) {
+  if (url.endsWith(".m3u8")) return "hls";
+  if (url.endsWith(".ts")) return "hls";
+  if (url.includes("/live/") || url.includes("extension=ts")) return "ts";
+  return "direct";
+}
+
 async function resolvePlayableUrl(rawUrl, fetchImpl = fetch) {
   let finalUrl = rawUrl;
-  const streamType = finalUrl.endsWith(".m3u8") || finalUrl.endsWith(".ts") ? "hls" : "direct";
 
   if (finalUrl.endsWith(".ts")) {
     finalUrl = finalUrl.replace(/\.ts$/, ".m3u8");
   }
+  let streamType = classifyStreamType(finalUrl);
 
   try {
     const getRes = await fetchImpl(finalUrl, { redirect: "follow", signal: AbortSignal.timeout(8000) });
@@ -34,6 +41,7 @@ async function resolvePlayableUrl(rawUrl, fetchImpl = fetch) {
     getRes.body?.cancel?.();
     // Provider endpoints are HTTP-only; the browser/player layer decides whether to proxy.
     finalUrl = finalUrl.replace(/^https:/, "http:");
+    streamType = classifyStreamType(finalUrl);
   } catch {
     // Fall through with the best URL we have.
   }

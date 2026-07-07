@@ -153,6 +153,26 @@ describe('Integration Tests - Routes', () => {
     expect(refreshRes.status).toBe(200);
     expect(refreshRes.body.url).toContain('token=new');
   });
+
+  it('GET /api/validate-token classifies extensionless live URLs as TS playback', async () => {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
+    mockFetch.mockResolvedValueOnce({
+      url: 'http://195.128.27.183/live/play/token/840584',
+      body: { cancel: vi.fn() },
+    });
+
+    const playRes = await request(app)
+      .post('/api/play-token')
+      .set('authorization', 'Bearer valid-token')
+      .send({ url: 'http://195.128.27.183/live/play/token/840584' });
+
+    const validateRes = await request(app)
+      .get(`/api/validate-token?token=${playRes.body.token}`);
+
+    expect(validateRes.status).toBe(200);
+    expect(validateRes.body.url).toBe('http://195.128.27.183/live/play/token/840584');
+    expect(validateRes.body.type).toBe('ts');
+  });
   it('GET /player serves direct-play HTML without the VPS stream proxy rewrite', async () => {
     const res = await request(app).get('/player?token=test-token');
 

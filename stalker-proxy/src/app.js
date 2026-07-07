@@ -233,7 +233,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   }
 
   function isTsUrl(url){
-    return /\\.ts(?:\\?|$)/i.test(url)||url.indexOf('extension=ts')!==-1;
+    return /\\.ts(?:\\?|$)/i.test(url)||url.indexOf('extension=ts')!==-1||url.indexOf('/live/')!==-1;
   }
 
   function startHls(url){
