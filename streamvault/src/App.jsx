@@ -14,6 +14,13 @@ import Setup from './components/Setup.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 import { useStreamVault } from "./useStreamVault.js";
+import {
+  contentSessionToken,
+  isHttpContentMode,
+  maybeOpenDirectContentSession,
+  validateContentSession,
+  shouldUseTokenPlayerForItem,
+} from "./direct-content-session.js";
 
 // ── i18n ──
 const RTL_LANGS = ["ar","ur"];
@@ -1857,6 +1864,8 @@ export default function App() {
   const [showConnManager, setShowConnManager] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [editingConn, setEditingConn] = useState(null);
+  const [contentSessionError, setContentSessionError] = useState("");
+  const [httpContentMode] = useState(() => isHttpContentMode());
 
   // ── hidden cats per section
   const [hiddenCats, setHiddenCats] = useState({live:[], vod:[], series:[]});
@@ -1868,6 +1877,57 @@ export default function App() {
       setPage(1);
     }
   }, [hiddenCats, section, cat, isCatHidden]);
+
+  useEffect(() => {
+    if (!httpContentMode) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const token = contentSessionToken();
+        if (!token) throw new Error("Missing content session token");
+
+        const session = await validateContentSession(token);
+        if (cancelled) return;
+
+        const sessionConnection = session?.connection;
+        if (!sessionConnection?.id) {
+          throw new Error("Missing content session connection");
+        }
+
+        const normalizedConnection = {
+          ...sessionConnection,
+          id: sessionConnection.id,
+          type: sessionConnection.type || sessionConnection.config?.type || "xtream",
+          label: sessionConnection.label || sessionConnection.config?.label || sessionConnection.id,
+          color: sessionConnection.color || PROFILE_COLORS[0],
+          config: sessionConnection.config || sessionConnection,
+        };
+
+        setContentSessionError("");
+        setConnections([normalizedConnection]);
+        setConn(normalizedConnection.config);
+        setActiveConnId(normalizedConnection.id);
+        setSection("live");
+        setShowConnManager(false);
+        setMobileMenuOpen(false);
+        setEditingConn(null);
+        setShowUpgradePrompt(false);
+        setPlaying(null);
+        setChannels([]);
+        setVod([]);
+        setSeries([]);
+        setCat("All");
+        setSearch("");
+        setGlobalQ("");
+      } catch (e) {
+        if (!cancelled) setContentSessionError(e?.message || "Content session expired or invalid");
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [httpContentMode, setActiveConnId, setConnections]);
 
   // ── EPG
   const [epgURL, setEpgURL]   = useState("");
@@ -2651,7 +2711,7 @@ export default function App() {
       const resolved_item = { ...item, url: resolved };
       setPlaying(resolved_item);
       addHistory(resolved_item);
-    } else if (conn?.type === "xtream" || conn?.type === "m3u") {
+    } else if (shouldUseTokenPlayerForItem(conn, item, window.location)) {
       // Xtream and M3U streams play via token-gated redirect to HTTP player
       const streamUrl = item.url;
       if (!streamUrl) return;
@@ -2670,6 +2730,10 @@ export default function App() {
         console.warn("Play token failed, falling back to direct play", e);
       }
       // Fallback: play directly in-page
+      const directItem = { ...item, _direct: true };
+      setPlaying(directItem);
+      addHistory(directItem);
+    } else if (conn?.type === "xtream" || conn?.type === "m3u") {
       const directItem = { ...item, _direct: true };
       setPlaying(directItem);
       addHistory(directItem);
@@ -2868,10 +2932,13 @@ export default function App() {
     return null;
   }
 
-  function switchConnection(id) {
+  async function switchConnection(id) {
     if (id === activeConnId) { setShowConnManager(false); return; }
     const target = connections.find(c => c.id === id);
     if (!target) return;
+    if (!httpContentMode && await maybeOpenDirectContentSession(target, { location: window.location })) {
+      return;
+    }
     setShowConnManager(false);
     epgLoadToken.current++; // Invalidate any in-flight EPG loads
     // Clear current content
@@ -3272,13 +3339,37 @@ export default function App() {
 
   // Auth gate: show login/register before anything else
   if (authLoading) return (<><style>{genCSS(THEMES[themeName])}</style><div className="setup"><div className="card" style={{textAlign:"center",padding:"3rem"}}><div className="spinner" /></div></div></>);
-  if (!authUser && !isGuest) return (
+  if (!httpContentMode && !authUser && !isGuest) return (
     <>
       <style>{genCSS(THEMES[themeName])}</style>
       <AuthScreen onAuth={handleAuth} onGuest={handleGuest} api={API} />
       {resetToken && createPortal(<ResetPasswordModal token={resetToken} onClose={() => setResetToken(null)} />, document.body)}
     </>
   );
+
+  if (httpContentMode && contentSessionError) {
+    return (
+      <div className="app" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "2rem", textAlign: "center" }}>
+        <div style={{ maxWidth: 520, width: "100%", background: "var(--s1, #111)", border: "1px solid var(--b1, rgba(255,255,255,0.08))", borderRadius: 16, padding: "1.5rem" }}>
+          <div style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: ".5rem" }}>Unable to open content session</div>
+          <div style={{ color: "var(--t2, #9aa)", fontSize: ".9rem" }}>{contentSessionError}</div>
+        </div>
+      </div>
+    );
+  }
+
+
+
+  if (httpContentMode && !conn) {
+    return (
+      <div className="app" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "2rem" }}>
+        <div style={{ width: "100%", maxWidth: 360, textAlign: "center", background: "var(--s1, #111)", border: "1px solid var(--b1, rgba(255,255,255,0.08))", borderRadius: 16, padding: "2rem" }}>
+          <div className="spinner" style={{ margin: "0 auto 1rem" }} />
+          <div style={{ color: "var(--t2, #9aa)", fontSize: ".9rem" }}>Loading content session...</div>
+        </div>
+      </div>
+    );
+  }
 
   if (!conn) return (
     <>
@@ -4315,3 +4406,17 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 
 // DirectHLSView moved to src/components/DirectHLSView.jsx
 // DiscoverView moved to src/components/DiscoverView.jsx
+
+
+
+
+
+
+
+
+
+
+
+
+
+
