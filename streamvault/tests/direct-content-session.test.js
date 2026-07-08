@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   contentSessionPayload,
   contentSessionToken,
+  getAppHomeUrl,
   isDirectContentConnection,
   isHttpContentMode,
   maybeOpenDirectContentSession,
+  navigateToAppHome,
   openDirectContentSession,
   shouldUseTokenPlayerForItem,
   validateContentSession,
@@ -62,6 +64,22 @@ describe("direct-content-session helpers", () => {
     expect(contentSessionToken({ pathname: "/app", search: "?token=abc123" })).toBe(null);
   });
 
+  it("builds the HTTPS app home URL for returning from direct content mode", () => {
+    expect(getAppHomeUrl()).toBe("https://media.portalheaven.stream/");
+    expect(getAppHomeUrl({ baseUrl: "https://media.portalheaven.stream/content?token=abc123" })).toBe("https://media.portalheaven.stream/");
+    expect(getAppHomeUrl({ baseUrl: "https://portal.example/app/" })).toBe("https://portal.example/");
+  });
+
+  it("navigates back to the HTTPS app home through a callback or window.location", () => {
+    const navigate = vi.fn();
+    expect(navigateToAppHome({ navigate })).toBe("https://media.portalheaven.stream/");
+    expect(navigate).toHaveBeenCalledWith("https://media.portalheaven.stream/");
+
+    const assign = vi.fn();
+    vi.stubGlobal("window", { location: { assign } });
+    expect(navigateToAppHome({ location: window.location, baseUrl: "https://portal.example/content?token=abc123" })).toBe("https://portal.example/");
+    expect(assign).toHaveBeenCalledWith("https://portal.example/");
+  });
   it("rejects missing content session tokens", async () => {
     await expect(validateContentSession(null)).rejects.toThrow("Missing content session token");
   });
@@ -189,5 +207,3 @@ describe("direct-content-session helpers", () => {
     ).toBe(false);
   });
 });
-
-

@@ -9,6 +9,16 @@ function trimTrailingSlash(pathname) {
   return pathname.replace(/\/+$/, "") || "/";
 }
 
+function normalizeBaseUrl(baseUrl, fallback) {
+  try {
+    return new URL(String(baseUrl || fallback)).origin;
+  } catch {
+    return fallback;
+  }
+}
+
+const DEFAULT_APP_BASE_URL = "https://media.portalheaven.stream";
+
 export function isDirectContentConnection(connection) {
   return connection?.type === "xtream" || connection?.type === "m3u";
 }
@@ -37,6 +47,32 @@ export function isHttpContentMode(locationObject = typeof window !== "undefined"
 export function contentSessionToken(locationObject = typeof window !== "undefined" ? window.location : { pathname: "", search: "" }) {
   const { search } = currentLocation(locationObject);
   return isHttpContentMode(locationObject) ? new URLSearchParams(search).get("token") : null;
+}
+
+export function getAppHomeUrl(options = {}) {
+  return `${normalizeBaseUrl(options.baseUrl, DEFAULT_APP_BASE_URL)}/`;
+}
+
+export function navigateToAppHome(options = {}) {
+  const url = getAppHomeUrl(options);
+
+  if (typeof options.navigate === "function") {
+    options.navigate(url);
+    return url;
+  }
+
+  const locationObject = options.location || (typeof window !== "undefined" ? window.location : null);
+  if (locationObject && typeof locationObject.assign === "function") {
+    locationObject.assign(url);
+  } else if (typeof window !== "undefined" && window.location) {
+    if (typeof window.location.assign === "function") {
+      window.location.assign(url);
+    } else {
+      window.location.href = url;
+    }
+  }
+
+  return url;
 }
 
 export async function validateContentSession(token) {
@@ -105,5 +141,3 @@ export async function maybeOpenDirectContentSession(connection, options = {}) {
 export function shouldUseTokenPlayerForItem(connection, item, locationObject = typeof window !== "undefined" ? window.location : { pathname: "", search: "" }) {
   return isDirectContentConnection(connection) && !!item && !isHttpContentMode(locationObject);
 }
-
-
