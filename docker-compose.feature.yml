@@ -1,21 +1,51 @@
-# Local testing of feature/direct-play-no-proxy
-# Backend only — SPA runs via `npm run dev` on host
+# Local testing of feature/direct-play-no-proxy.
+# Exposes one HTTP origin on :3201 so /content is served by the SPA and
+# same-origin /api calls route to the backend.
 services:
-  feature-backend:
+  backend:
     build:
       context: ./stalker-proxy
       dockerfile: Dockerfile
-    ports:
-      - "3201:3201"
     volumes:
       - ./stalker-proxy/src:/home/node/app/src
       - ./stalker-proxy/package.json:/home/node/app/package.json
       - stalker-data:/home/node/app/data
     environment:
-      - PORT=3201
+      - PORT=3001
       - ALLOWED_ORIGIN=*
       - ADMIN_PASS=Mango!123
       - PLAYER_BASE=http://localhost:3201
+      - CONTENT_BASE_URL=http://localhost:3201
+    networks:
+      - streamvault-feature-net
+
+  frontend:
+    build:
+      context: ./streamvault
+      dockerfile: Dockerfile
+    volumes:
+      - ./streamvault:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=
+    networks:
+      - streamvault-feature-net
+
+  gateway:
+    image: nginx:alpine
+    ports:
+      - "3201:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - streamvault-feature-net
 
 volumes:
   stalker-data:
+
+networks:
+  streamvault-feature-net:
+    driver: bridge
