@@ -1716,7 +1716,7 @@ export default function App() {
     const wasGuest = localStorage.getItem("sv-guest-mode") === "1";
     if (wasGuest) { setIsGuest(true); setAuthLoading(false); return; }
     // Check auth via httpOnly cookie
-    fetch(`${API}/api/auth/me`, { credentials: "same-origin" })
+    fetch(`${API}/api/auth/me`, { credentials: "include" })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(async u => {
         setAuthUser(u);
@@ -1863,6 +1863,8 @@ export default function App() {
   const favs = sv.favorites;
   const setFavs = svActions.setFavorites;
   const history = sv.history;
+  const historyRef = useRef(history);
+  useEffect(() => { historyRef.current = history; }, [history]);
   const setHistory = svActions.setHistory;
 
   const [showConnManager, setShowConnManager] = useState(false);
@@ -2681,17 +2683,57 @@ export default function App() {
   }
 
   // ── history / continue watching
-  function addHistory(item) {
-    const entry = { ...item, timestamp: Date.now(), position: 0 };
-    const newH = [entry, ...history.filter(h => (h.id||h.url) !== (item.id||item.url))].slice(0, 60);
-    setHistory(newH);
+  function persistHistory(newHistory) {
+    historyRef.current = newHistory;
+    setHistory(newHistory);
     if (activeConnId) {
-      db.set(`sv-history-${activeConnId}`, newH);
-      if (activeConnId) syncToServer("history", activeConnId, newH);
+      db.set(`sv-history-${activeConnId}`, newHistory);
+      syncToServer("history", activeConnId, newHistory);
     }
   }
 
+  function historyKey(item) {
+    return item?.id || item?.url;
+  }
+
+  function withResumePosition(item) {
+    const key = historyKey(item);
+    if (!key || item?.type === "live") return item;
+    const previous = historyRef.current.find(h => historyKey(h) === key);
+    if (!previous?.position || previous.position <= 5) return item;
+    return { ...item, position: previous.position, duration: previous.duration || item.duration };
+  }
+
+  function addHistory(item) {
+    const previous = historyRef.current.find(h => historyKey(h) === historyKey(item));
+    const entry = {
+      ...item,
+      timestamp: Date.now(),
+      position: item.type === "live" ? 0 : Number(previous?.position || item.position || 0),
+      duration: Number(previous?.duration || item.duration || 0),
+    };
+    persistHistory([entry, ...historyRef.current.filter(h => historyKey(h) !== historyKey(item))].slice(0, 60));
+  }
+
+  function updateHistoryProgress(item, { position = 0, duration = 0, completed = false } = {}) {
+    if (!item || item.type === "live") return;
+    const key = historyKey(item);
+    if (!key) return;
+    const nearEnd = duration > 0 && duration - position < 30;
+    const next = historyRef.current.map(h => {
+      if (historyKey(h) !== key) return h;
+      return {
+        ...h,
+        timestamp: Date.now(),
+        position: completed || nearEnd ? 0 : Math.max(0, position),
+        duration: duration || h.duration || item.duration || 0,
+      };
+    });
+    persistHistory(next);
+  }
+
   async function playItem(item) {
+    item = withResumePosition(item);
     // If this is a series item, open the detail modal instead of playing
     if (item.type === "series") {
       openSeriesDetail(item);
@@ -3157,7 +3199,11 @@ export default function App() {
   const searchResults = useMemo(() => {
     if (deferredGlobalQ.length <= 1) return [];
     const q = deferredGlobalQ.toLowerCase();
-    return [...channels, ...vod, ...series].filter(i => i.name?.toLowerCase().includes(q)).slice(0, 80);
+    const matches = (item) => {
+      const haystack = [item?.name, item?.group, item?.genre, item?.plot, item?.description].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(q);
+    };
+    return [...channels, ...vod, ...series].filter(matches).slice(0, 80);
   }, [deferredGlobalQ, channels, vod, series]);
 
   const onAllowedPage = (authUser || isGuest) && !!conn;
@@ -3696,7 +3742,7 @@ export default function App() {
           {section==="search" && (
             <div className="c-search-wrap" style={{flex:1}}>
               <span className="c-search-icon">🔍</span>
-              <input className="c-search" style={{width:"100%"}} placeholder={t("searchAll")}
+              <input className="c-search" style={{width:"100%"}} placeholder={t("searchEverything")}
                 autoFocus
                 value={globalQ} onChange={e => handleGlobalSearch(e.target.value)} />
             </div>
@@ -4003,6 +4049,7 @@ export default function App() {
           epgData={epgData}
           onClose={() => setPlaying(null)}
           onPlayCatchup={playCatchup}
+          onProgress={updateHistoryProgress}
           toggleFav={toggleFav}
           onFav={toggleFav}
           isFav={isFav}

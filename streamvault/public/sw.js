@@ -1,5 +1,5 @@
 const CACHE = "sv-v2";
-const APP_SHELL = ['/', '/index.html', '/landing.html', '/dist/assets/app.css'];
+const APP_SHELL = ['/', '/index.html', '/landing.html'];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)));

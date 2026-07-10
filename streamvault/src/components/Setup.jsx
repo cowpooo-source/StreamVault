@@ -83,10 +83,39 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
   }
 
   async function validateAndReconnect(conn) {
-    if (conn.type !== "stalker") { onReconnect(conn.id); return; }
-    setLoading(true); setErr("");
+    setLoading(true);
+    setErr("");
     const startTime = Date.now();
     try {
+      if (conn.type === "xtream") {
+        const cfg = conn.config || {};
+        const server = (cfg.server || "").trim().replace(/\/$/, "");
+        const user = cfg.user || "";
+        const pass = cfg.pass || "";
+        if (!server || !user || !pass) throw new Error("All fields required");
+        const api = makeXtreamAPI(server, user, pass);
+        const data = await api.auth();
+        if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
+        trackAnalytics("portal_connect", { provider_type: "xtream", success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        onReconnect(conn.id);
+        return;
+      }
+
+      if (conn.type === "m3u") {
+        const cfg = conn.config || {};
+        const url = (cfg.url || "").trim();
+        if (!url) throw new Error("Playlist URL required");
+        const res = await proxyFetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
+        const channels = parseM3U(text);
+        if (!channels.length) throw new Error("No channels found");
+        trackAnalytics("portal_connect", { provider_type: "m3u", success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        onReconnect(conn.id);
+        return;
+      }
+
       const cfg = conn.config || {};
       const vRes = await fetch(`${API}/stalker/validate`, {
         method: "POST",
@@ -95,25 +124,24 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
       });
       const v = await vRes.json();
       if (!v.portalReachable) {
-        setErr("Portal unreachable. Connecting anyway...");
+        setErr("Portal unreachable. Try again later.");
         trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.error || "unreachable").slice(0,50) });
-        onReconnect(conn.id);
         return;
       }
       if (v.status === "expired" || v.status === "blocked" || v.status === "suspended" || v.status === "unregistered") {
         setExpiredPrompt({ conn, validation: v });
         trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.status).slice(0,50) });
-        onReconnect(conn.id);
         return;
       }
       trackAnalytics("portal_connect", { provider_type: "stalker", success: "true", latency_ms: Date.now() - startTime, error_code: null });
       onReconnect(conn.id);
     } catch (e) {
-      console.warn("Validation failed, reconnecting anyway:", e.message);
-      trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(e.message || "unknown").slice(0,50) });
-      onReconnect(conn.id);
+      console.warn("Validation failed:", e.message);
+      setErr(e.message || "Connection validation failed");
+      trackAnalytics("portal_connect", { provider_type: conn.type || "unknown", success: "false", latency_ms: Date.now() - startTime, error_code: String(e.message || "unknown").slice(0,50) });
+    } finally {
+      setLoading(false);
     }
-    finally { setLoading(false); }
   }
 
   useEffect(() => {

@@ -3,7 +3,7 @@ import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalyti
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 
-function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, t: pt, isAdEligible, connType }) {
+function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
@@ -12,6 +12,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const adSessionRef = useRef(0);
   const adFinishRef = useRef(null);
   const osdTimer   = useRef(null);
+  const resumeAppliedRef = useRef(null);
   const [osd, setOsd]         = useState(true);
   const [showQCH, setShowQCH] = useState(false);
   const qchTimer = useRef(null);
@@ -474,6 +475,37 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     let debounceTimer = null;
     let isTracking = false;
     let lastHeartbeatTime = 0;
+    let lastProgressTime = 0;
+
+    const reportProgress = (completed = false) => {
+      if (!onProgress || current.type === "live") return;
+      const position = Math.floor(video.currentTime || 0);
+      const duration = Math.floor(video.duration || 0);
+      onProgress(current, { position, duration, completed });
+    };
+
+    const handleLoadedMetadata = () => {
+      const resumeKey = current.id || current.url;
+      const resumePosition = Number(current.position || 0);
+      const duration = Number.isFinite(video.duration) ? video.duration : 0;
+      if (
+        current.type !== "live" &&
+        resumePosition > 5 &&
+        resumeAppliedRef.current !== resumeKey &&
+        (!duration || resumePosition < duration - 10)
+      ) {
+        try {
+          video.currentTime = resumePosition;
+          resumeAppliedRef.current = resumeKey;
+        } catch {}
+      }
+    };
+
+    const handleTimeUpdate = () => {
+      if (Date.now() - lastProgressTime < 5000) return;
+      lastProgressTime = Date.now();
+      reportProgress(false);
+    };
 
     const sendHeartbeat = (completed = false, useBeacon = false) => {
       if (!isTracking && !useBeacon && !completed) return;
@@ -524,6 +556,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           isTracking = false;
           clearInterval(heartbeatTimer);
           sendHeartbeat(); // log the position where they paused
+          reportProgress(false);
         }
       }, 1500);
     };
@@ -533,14 +566,18 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       isTracking = false;
       clearInterval(heartbeatTimer);
       sendHeartbeat(true);
+      reportProgress(true);
     };
 
     const handleUnload = () => {
       if (isTracking) {
         sendHeartbeat(false, true);
+        reportProgress(false);
       }
     };
 
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("timeupdate", handleTimeUpdate);
     video.addEventListener("playing", handlePlay);
     video.addEventListener("pause", handlePauseOrWait);
     video.addEventListener("ended", handleEnd);
@@ -578,6 +615,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       adSessionRef.current += 1;
       adFinishRef.current = null;
       setAdState(null);
+      reportProgress(false);
       destroyPlayers();
       clearTimeout(osdTimer.current);
       clearTimeout(qchTimer.current);
@@ -586,6 +624,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       clearTimeout(debounceTimer);
       clearInterval(heartbeatTimer);
       if (video) {
+        video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        video.removeEventListener("timeupdate", handleTimeUpdate);
         video.removeEventListener("playing", handlePlay);
         video.removeEventListener("pause", handlePauseOrWait);
         video.removeEventListener("ended", handleEnd);

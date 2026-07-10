@@ -6,7 +6,7 @@ export const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); i
 
 // Auth: relies solely on httpOnly cookies (no localStorage token fallback to prevent XSS theft)
 export function authHeaders(extra = {}) { return { ...extra, "X-Guest-Id": GUEST_ID }; }
-export function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "same-origin"; return fetch(url, opts); }
+export function authFetch(url, opts = {}) { opts.headers = authHeaders(opts.headers || {}); opts.credentials = "include"; return fetch(url, opts); }
 export function track(event, data = {}) { fetch(`${API}/api/track`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ ...data, guestId: GUEST_ID, event }) }).catch(() => {}); }
 
 // Lightweight key/value store (wraps window.storage/IDB or falls back to localStorage)

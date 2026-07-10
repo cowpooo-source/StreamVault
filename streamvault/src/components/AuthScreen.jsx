@@ -14,6 +14,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
   const [forceLogin, setForceLogin] = useState(false);
   const formRef = useRef(null);
   const turnstileContainerRef = useRef(null);
+  const turnstileWidgetIdRef = useRef(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -35,19 +36,64 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
   }, []);
 
   useEffect(() => {
-    if (siteKey && window.turnstile && turnstileContainerRef.current) {
+    let cancelled = false;
+    let retryTimer = null;
+
+    function renderTurnstile() {
+      if (cancelled || !siteKey || !turnstileContainerRef.current) return;
+      if (!window.turnstile?.render) {
+        retryTimer = window.setTimeout(renderTurnstile, 100);
+        return;
+      }
+
+      const existingWidgetId = turnstileWidgetIdRef.current;
+      if (existingWidgetId !== null && existingWidgetId !== undefined && window.turnstile.remove) {
+        try {
+          window.turnstile.remove(existingWidgetId);
+        } catch (e) {
+          console.warn("Turnstile cleanup skipped:", e?.message || e);
+        }
+      }
+
       turnstileContainerRef.current.innerHTML = "";
+      turnstileWidgetIdRef.current = null;
+
       try {
-        window.turnstile.render(turnstileContainerRef.current, {
+        turnstileWidgetIdRef.current = window.turnstile.render(turnstileContainerRef.current, {
           sitekey: siteKey,
-          theme: 'dark'
+          theme: "dark"
         });
       } catch (e) {
         console.error("Turnstile render error", e);
       }
     }
+
+    renderTurnstile();
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      const existingWidgetId = turnstileWidgetIdRef.current;
+      if (existingWidgetId !== null && existingWidgetId !== undefined && window.turnstile?.remove) {
+        try {
+          window.turnstile.remove(existingWidgetId);
+        } catch (e) {
+          console.warn("Turnstile cleanup skipped:", e?.message || e);
+        }
+      }
+      turnstileWidgetIdRef.current = null;
+    };
   }, [mode, siteKey]);
 
+  function resetTurnstile() {
+    if (!window.turnstile) return;
+    try {
+      if (turnstileWidgetIdRef.current !== null && turnstileWidgetIdRef.current !== undefined) {
+        window.turnstile.reset(turnstileWidgetIdRef.current);
+      }
+    } catch (e) {
+      console.warn("Turnstile reset skipped:", e?.message || e);
+    }
+  }
   async function submit(e) {
     e?.preventDefault();
     setErr(""); setMsg(""); setLoading(true);
@@ -59,7 +105,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       if (mode === "forgot") {
         if (!emailInput) throw new Error("Email is required");
         const res = await fetch(`${api}/api/auth/forgot-password`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: emailInput }),
         });
         if (!res.ok) {
@@ -80,14 +126,14 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       if (forceLogin) body.force = true;
 
       let res = await fetch(`${api}${endpoint}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       let data = await res.json();
 
       // Check MAX_LOGINS_REACHED regardless of HTTP status
       if (data.code === 'MAX_LOGINS_REACHED') {
-        if (window.turnstile) window.turnstile.reset();
+        resetTurnstile();
         if (window.confirm("Max login reached. Do you want to force login which will logout previous user? (You will need to re-verify CAPTCHA)")) {
           setForceLogin(true);
           setErr("Please re-verify CAPTCHA and click Login again to force login.");
@@ -104,7 +150,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       onAuth(data.user);
     } catch (e) {
       setErr(e.message);
-      if (window.turnstile) window.turnstile.reset();
+      resetTurnstile();
     }
     finally { setLoading(false); }
   }
@@ -115,7 +161,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
 
     try {
       const res = await fetch(`${api}/api/auth/guest`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
       const data = await res.json();
