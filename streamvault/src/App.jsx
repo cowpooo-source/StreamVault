@@ -15,17 +15,20 @@ import { setEncKeySource, encryptConnections, decryptConnections } from './auth-
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 import { useStreamVault } from "./useStreamVault.js";
 import {
+  clearContentSessionToken,
   contentSessionToken,
+  getAppHomeUrl,
   isHttpContentMode,
   maybeOpenDirectContentSession,
   navigateToAppHome,
+  persistContentSessionToken,
   validateContentSession,
   shouldUseTokenPlayerForItem,
 } from "./direct-content-session.js";
 
-// ── i18n ──
+// Ã¢â€â‚¬Ã¢â€â‚¬ i18n Ã¢â€â‚¬Ã¢â€â‚¬
 const RTL_LANGS = ["ar","ur"];
-const LANG_META = {en:"English",es:"Español",fr:"Français",de:"Deutsch",it:"Italiano",zh:"中文",ar:"العربية",pt:"Português",hi:"हिन्दी",ur:"اردو"};
+const LANG_META = {en:"English",es:"EspaÃƒÂ±ol",fr:"FranÃƒÂ§ais",de:"Deutsch",it:"Italiano",zh:"Ã¤Â¸Â­Ã¦â€“â€¡",ar:"Ã˜Â§Ã™â€žÃ˜Â¹Ã˜Â±Ã˜Â¨Ã™Å Ã˜Â©",pt:"PortuguÃƒÂªs",hi:"Ã Â¤Â¹Ã Â¤Â¿Ã Â¤Â¨Ã Â¥ÂÃ Â¤Â¦Ã Â¥â‚¬",ur:"Ã˜Â§Ã˜Â±Ã˜Â¯Ã™Ë†"};
 const LANGS = {
   "en": {
     "tagline": "Your personal IPTV client",
@@ -43,7 +46,7 @@ const LANGS = {
     "savedConns": "Saved Connections",
     "orAddNew": "or add new",
     "connect": "Connect",
-    "connectArrow": "Connect →",
+    "connectArrow": "Connect Ã¢â€ â€™",
     "disconnect": "Disconnect",
     "feedback": "Feedback",
     "send": "Send",
@@ -69,15 +72,15 @@ const LANGS = {
     "password": "Password",
     "playlistURL": "Playlist URL",
     "connFailed": "Connection failed",
-    "connecting": "Connecting…",
+    "connecting": "ConnectingÃ¢â‚¬Â¦",
     "import": "Import",
     "xtreamCodes": "Xtream Codes",
     "m3uPlaylist": "M3U Playlist",
     "stalkerPortal": "Stalker Portal",
     "directHLS": "Direct HLS",
     "noChannels": "No channels found",
-    "loading": "Loading…",
-    "loadingSection": "Loading {0}…",
+    "loading": "LoadingÃ¢â‚¬Â¦",
+    "loadingSection": "Loading {0}Ã¢â‚¬Â¦",
     "playbackErr": "Playback Error",
     "networkErr": "Network Error",
     "streamNotFound": "Stream Not Found",
@@ -91,7 +94,7 @@ const LANGS = {
     "loadEPG": "Load EPG",
     "noChannelsLoaded": "No channels loaded",
     "noEPGData": "No EPG data",
-    "filterChannels": "Filter channels…",
+    "filterChannels": "Filter channelsÃ¢â‚¬Â¦",
     "sendFeedback": "Send Feedback",
     "thankYou": "Thank you!",
     "feedbackReceived": "Your feedback has been received.",
@@ -99,7 +102,7 @@ const LANGS = {
     "feedbackPlaceholder": "What's on your mind?",
     "sending": "Sending...",
     "noFavsYet": "No favorites yet",
-    "favHint": "Click the ♡ icon on any channel or movie to add it here.",
+    "favHint": "Click the Ã¢â„¢Â¡ icon on any channel or movie to add it here.",
     "liveTV": "Live TV",
     "nothingStarted": "Nothing started yet",
     "resumeHint": "Watch some content and it will appear here for easy resuming.",
@@ -112,19 +115,19 @@ const LANGS = {
   "es": {
     "discover": "Descubrir",
     "live": "TV en Vivo",
-    "movies": "Películas",
+    "movies": "PelÃƒÂ­culas",
     "series": "Series",
     "favorites": "Favoritos",
     "continueWatching": "Seguir Viendo",
-    "tvGuide": "Guía TV",
-    "globalSearch": "Búsqueda Global",
-    "directPlay": "Reproducción Directa",
+    "tvGuide": "GuÃƒÂ­a TV",
+    "globalSearch": "BÃƒÂºsqueda Global",
+    "directPlay": "ReproducciÃƒÂ³n Directa",
     "watch": "Ver",
     "tools": "Herramientas",
     "savedConns": "Conexiones Guardadas",
     "orAddNew": "o agregar nueva",
     "connect": "Conectar",
-    "connectArrow": "Conectar →",
+    "connectArrow": "Conectar Ã¢â€ â€™",
     "disconnect": "Desconectar",
     "feedback": "Comentarios",
     "send": "Enviar",
@@ -144,85 +147,85 @@ const LANGS = {
     "channels": "Canales",
     "volume": "Volumen",
     "portalURL": "URL del Portal",
-    "macAddress": "Dirección MAC",
+    "macAddress": "DirecciÃƒÂ³n MAC",
     "serverURL": "URL del Servidor",
     "username": "Usuario",
-    "password": "Contraseña",
+    "password": "ContraseÃƒÂ±a",
     "playlistURL": "URL de Lista",
-    "connFailed": "Conexión fallida",
-    "connecting": "Conectando…",
+    "connFailed": "ConexiÃƒÂ³n fallida",
+    "connecting": "ConectandoÃ¢â‚¬Â¦",
     "import": "Importar",
     "xtreamCodes": "Xtream Codes",
     "m3uPlaylist": "Lista M3U",
     "stalkerPortal": "Portal Stalker",
     "directHLS": "HLS Directo",
     "noChannels": "No se encontraron canales",
-    "loading": "Cargando…",
-    "loadingSection": "Cargando {0}…",
-    "playbackErr": "Error de Reproducción",
+    "loading": "CargandoÃ¢â‚¬Â¦",
+    "loadingSection": "Cargando {0}Ã¢â‚¬Â¦",
+    "playbackErr": "Error de ReproducciÃƒÂ³n",
     "networkErr": "Error de Red",
-    "streamNotFound": "Transmissão No Encontrada",
+    "streamNotFound": "TransmissÃƒÂ£o No Encontrada",
     "accessDenied": "Acceso Denegado",
     "serverErr": "Error del Servidor",
-    "noContent": "No se encontró contenido",
-    "selectCategory": "Seleccionar categoría",
+    "noContent": "No se encontrÃƒÂ³ contenido",
+    "selectCategory": "Seleccionar categorÃƒÂ­a",
     "fetchingItems": "Obteniendo elementos del portal.",
-    "tryDifferent": "Pruebe otra categoría o borre su búsqueda.",
+    "tryDifferent": "Pruebe otra categorÃƒÂ­a o borre su bÃƒÂºsqueda.",
     "now": "Ahora",
     "loadEPG": "Cargar EPG",
     "noChannelsLoaded": "No hay canales cargados",
     "noEPGData": "Sin datos EPG",
-    "filterChannels": "Filtrar canales…",
+    "filterChannels": "Filtrar canalesÃ¢â‚¬Â¦",
     "sendFeedback": "Enviar Comentarios",
-    "thankYou": "¡Gracias!",
+    "thankYou": "Ã‚Â¡Gracias!",
     "feedbackReceived": "Su comentario ha sido recibido.",
     "feedbackHint": "Reportes de errores, solicitudes o comentarios generales",
-    "feedbackPlaceholder": "¿Qué tienes en mente?",
+    "feedbackPlaceholder": "Ã‚Â¿QuÃƒÂ© tienes en mente?",
     "sending": "Enviando...",
-    "noFavsYet": "Aún no hay favoritos",
-    "favHint": "Haga clic en el icono ♡ en cualquier canal o película para agregarlo aquí.",
+    "noFavsYet": "AÃƒÂºn no hay favoritos",
+    "favHint": "Haga clic en el icono Ã¢â„¢Â¡ en cualquier canal o pelÃƒÂ­cula para agregarlo aquÃƒÂ­.",
     "liveTV": "TV en Vivo",
-    "nothingStarted": "Nada iniciado aún",
-    "resumeHint": "Asista a algún contenido y aparecerá aquí.",
+    "nothingStarted": "Nada iniciado aÃƒÂºn",
+    "resumeHint": "Asista a algÃƒÂºn contenido y aparecerÃƒÂ¡ aquÃƒÂ­.",
     "resumeWatching": "Seguir viendo",
     "recentlyWatched": "Visto recientemente",
     "searchEverything": "Buscar en todo",
-    "searchHint": "Películas, Series o Canales",
+    "searchHint": "PelÃƒÂ­culas, Series o Canales",
     "settings": "Configuraciones"
   },
   "fr": {
-    "discover": "Découvrir",
+    "discover": "DÃƒÂ©couvrir",
     "live": "TV en Direct",
     "movies": "Films",
-    "series": "Séries",
+    "series": "SÃƒÂ©ries",
     "favorites": "Favoris",
-    "continueWatching": "Continuer à Regarder",
+    "continueWatching": "Continuer ÃƒÂ  Regarder",
     "tvGuide": "Guide TV",
     "globalSearch": "Recherche Globale",
     "directPlay": "Lecture Directe",
     "watch": "Regarder",
     "tools": "Outils",
-    "savedConns": "Connexions Enregistrées",
+    "savedConns": "Connexions EnregistrÃƒÂ©es",
     "orAddNew": "ou ajouter nouvelle",
     "connect": "Connecter",
-    "connectArrow": "Connecter →",
-    "disconnect": "Déconnecter",
+    "connectArrow": "Connecter Ã¢â€ â€™",
+    "disconnect": "DÃƒÂ©connecter",
     "feedback": "Commentaires",
     "send": "Envoyer",
     "cancel": "Annuler",
     "close": "Fermer",
     "refresh": "Actualiser",
     "search": "Rechercher",
-    "prev": "Préc.",
+    "prev": "PrÃƒÂ©c.",
     "next": "Suiv.",
     "fav": "Fav",
     "pip": "PiP",
     "play": "Lecture",
     "go": "Go",
     "playPause": "Lecture/Pause",
-    "fullscreen": "Plein Écran",
+    "fullscreen": "Plein Ãƒâ€°cran",
     "mute": "Muet",
-    "channels": "Chaînes",
+    "channels": "ChaÃƒÂ®nes",
     "volume": "Volume",
     "portalURL": "URL du Portail",
     "macAddress": "Adresse MAC",
@@ -230,46 +233,46 @@ const LANGS = {
     "username": "Identifiant",
     "password": "Mot de passe",
     "playlistURL": "URL de la Playlist",
-    "connFailed": "Échec de connexion",
-    "connecting": "Connexion…",
+    "connFailed": "Ãƒâ€°chec de connexion",
+    "connecting": "ConnexionÃ¢â‚¬Â¦",
     "import": "Importer",
     "xtreamCodes": "Xtream Codes",
     "m3uPlaylist": "Playlist M3U",
     "stalkerPortal": "Portail Stalker",
     "directHLS": "HLS Direct",
-    "noChannels": "Aucune chaîne trouvée",
-    "loading": "Chargement…",
-    "loadingSection": "Chargement de {0}…",
+    "noChannels": "Aucune chaÃƒÂ®ne trouvÃƒÂ©e",
+    "loading": "ChargementÃ¢â‚¬Â¦",
+    "loadingSection": "Chargement de {0}Ã¢â‚¬Â¦",
     "playbackErr": "Erreur de Lecture",
-    "networkErr": "Erreur Réseau",
+    "networkErr": "Erreur RÃƒÂ©seau",
     "streamNotFound": "Flux Introuvable",
-    "accessDenied": "Accès Refusé",
+    "accessDenied": "AccÃƒÂ¨s RefusÃƒÂ©",
     "serverErr": "Erreur Serveur",
-    "noContent": "Aucun contenu trouvé",
-    "selectCategory": "Sélectionner une catégorie",
-    "fetchingItems": "Récupération des éléments du portail.",
-    "tryDifferent": "Essayez une autre catégorie ou effacez votre recherche.",
+    "noContent": "Aucun contenu trouvÃƒÂ©",
+    "selectCategory": "SÃƒÂ©lectionner une catÃƒÂ©gorie",
+    "fetchingItems": "RÃƒÂ©cupÃƒÂ©ration des ÃƒÂ©lÃƒÂ©ments du portail.",
+    "tryDifferent": "Essayez une autre catÃƒÂ©gorie ou effacez votre recherche.",
     "now": "Maintenant",
     "loadEPG": "Charger EPG",
-    "noChannelsLoaded": "Aucune chaîne chargée",
-    "noEPGData": "Pas de données EPG",
-    "filterChannels": "Filtrer les chaînes…",
+    "noChannelsLoaded": "Aucune chaÃƒÂ®ne chargÃƒÂ©e",
+    "noEPGData": "Pas de donnÃƒÂ©es EPG",
+    "filterChannels": "Filtrer les chaÃƒÂ®nesÃ¢â‚¬Â¦",
     "sendFeedback": "Envoyer un Commentaire",
     "thankYou": "Merci !",
-    "feedbackReceived": "Votre commentaire a été reçu.",
-    "feedbackHint": "Rapports de bugs, demandes de fonctionnalités ou commentaires généraux",
-    "feedbackPlaceholder": "Qu'avez-vous en tête ?",
+    "feedbackReceived": "Votre commentaire a ÃƒÂ©tÃƒÂ© reÃƒÂ§u.",
+    "feedbackHint": "Rapports de bugs, demandes de fonctionnalitÃƒÂ©s ou commentaires gÃƒÂ©nÃƒÂ©raux",
+    "feedbackPlaceholder": "Qu'avez-vous en tÃƒÂªte ?",
     "sending": "Envoi...",
     "noFavsYet": "Pas encore de favoris",
-    "favHint": "Cliquez sur l'icône ♡ sur une chaîne ou un film pour l'ajouter ici.",
+    "favHint": "Cliquez sur l'icÃƒÂ´ne Ã¢â„¢Â¡ sur une chaÃƒÂ®ne ou un film pour l'ajouter ici.",
     "liveTV": "TV en Direct",
-    "nothingStarted": "Rien n'a encore commencé",
-    "resumeHint": "Regardez du contenu et il apparaîtra ici.",
+    "nothingStarted": "Rien n'a encore commencÃƒÂ©",
+    "resumeHint": "Regardez du contenu et il apparaÃƒÂ®tra ici.",
     "resumeWatching": "Reprendre la lecture",
-    "recentlyWatched": "Vus récemment",
+    "recentlyWatched": "Vus rÃƒÂ©cemment",
     "searchEverything": "Tout rechercher",
-    "searchHint": "Films, séries ou chaînes",
-    "settings": "Paramètres"
+    "searchHint": "Films, sÃƒÂ©ries ou chaÃƒÂ®nes",
+    "settings": "ParamÃƒÂ¨tres"
   },
   "de": {
     "discover": "Entdecken",
@@ -284,17 +287,17 @@ const LANGS = {
     "watch": "Ansehen",
     "tools": "Werkzeuge",
     "savedConns": "Gespeicherte Verbindungen",
-    "orAddNew": "oder neu hinzufügen",
+    "orAddNew": "oder neu hinzufÃƒÂ¼gen",
     "connect": "Verbinden",
-    "connectArrow": "Verbinden →",
+    "connectArrow": "Verbinden Ã¢â€ â€™",
     "disconnect": "Trennen",
     "feedback": "Feedback",
     "send": "Senden",
     "cancel": "Abbrechen",
-    "close": "Schließen",
+    "close": "SchlieÃƒÅ¸en",
     "refresh": "Aktualisieren",
     "search": "Suche",
-    "prev": "Zurück",
+    "prev": "ZurÃƒÂ¼ck",
     "next": "Weiter",
     "fav": "Fav",
     "pip": "PiP",
@@ -304,7 +307,7 @@ const LANGS = {
     "fullscreen": "Vollbild",
     "mute": "Stumm",
     "channels": "Sender",
-    "volume": "Lautstärke",
+    "volume": "LautstÃƒÂ¤rke",
     "portalURL": "Portal URL",
     "macAddress": "MAC Adresse",
     "serverURL": "Server URL",
@@ -312,37 +315,37 @@ const LANGS = {
     "password": "Passwort",
     "playlistURL": "Playlist URL",
     "connFailed": "Verbindung fehlgeschlagen",
-    "connecting": "Verbinde…",
+    "connecting": "VerbindeÃ¢â‚¬Â¦",
     "import": "Importieren",
     "xtreamCodes": "Xtream Codes",
     "m3uPlaylist": "M3U Playlist",
     "stalkerPortal": "Stalker Portal",
     "directHLS": "Direktes HLS",
     "noChannels": "Keine Sender gefunden",
-    "loading": "Lade…",
-    "loadingSection": "Lade {0}…",
+    "loading": "LadeÃ¢â‚¬Â¦",
+    "loadingSection": "Lade {0}Ã¢â‚¬Â¦",
     "playbackErr": "Wiedergabefehler",
     "networkErr": "Netzwerkfehler",
     "streamNotFound": "Stream nicht gefunden",
     "accessDenied": "Zugriff verweigert",
     "serverErr": "Serverfehler",
     "noContent": "Kein Inhalt gefunden",
-    "selectCategory": "Kategorie wählen",
+    "selectCategory": "Kategorie wÃƒÂ¤hlen",
     "fetchingItems": "Hole Daten vom Portal.",
-    "tryDifferent": "Wähle eine andere Kategorie oder lösche die Suche.",
+    "tryDifferent": "WÃƒÂ¤hle eine andere Kategorie oder lÃƒÂ¶sche die Suche.",
     "now": "Jetzt",
     "loadEPG": "EPG laden",
     "noChannelsLoaded": "Keine Sender geladen",
     "noEPGData": "Keine EPG-Daten",
-    "filterChannels": "Sender filtern…",
+    "filterChannels": "Sender filternÃ¢â‚¬Â¦",
     "sendFeedback": "Feedback senden",
     "thankYou": "Danke!",
     "feedbackReceived": "Ihr Feedback wurde empfangen.",
-    "feedbackHint": "Fehlerberichte, Funktionswünsche oder Kommentare",
-    "feedbackPlaceholder": "Was beschäftigt Sie?",
+    "feedbackHint": "Fehlerberichte, FunktionswÃƒÂ¼nsche oder Kommentare",
+    "feedbackPlaceholder": "Was beschÃƒÂ¤ftigt Sie?",
     "sending": "Sende...",
     "noFavsYet": "Noch keine Favoriten",
-    "favHint": "Klicke auf das ♡ Icon bei Sendern oder Filmen.",
+    "favHint": "Klicke auf das Ã¢â„¢Â¡ Icon bei Sendern oder Filmen.",
     "liveTV": "Live TV",
     "nothingStarted": "Noch nichts gestartet",
     "resumeHint": "Inhalte ansehen, um sie hier fortzusetzen.",
@@ -367,7 +370,7 @@ const LANGS = {
     "savedConns": "Connessioni salvate",
     "orAddNew": "o aggiungi nuova",
     "connect": "Connetti",
-    "connectArrow": "Connetti →",
+    "connectArrow": "Connetti Ã¢â€ â€™",
     "disconnect": "Disconnetti",
     "feedback": "Feedback",
     "send": "Invia",
@@ -393,15 +396,15 @@ const LANGS = {
     "password": "Password",
     "playlistURL": "URL della playlist",
     "connFailed": "Connessione fallita",
-    "connecting": "Connessione in corso…",
+    "connecting": "Connessione in corsoÃ¢â‚¬Â¦",
     "import": "Importa",
     "xtreamCodes": "Xtream Codes",
     "m3uPlaylist": "Playlist M3U",
     "stalkerPortal": "Portale Stalker",
     "directHLS": "HLS diretto",
     "noChannels": "Nessun canale trovato",
-    "loading": "Caricamento…",
-    "loadingSection": "Caricamento {0}…",
+    "loading": "CaricamentoÃ¢â‚¬Â¦",
+    "loadingSection": "Caricamento {0}Ã¢â‚¬Â¦",
     "playbackErr": "Errore di riproduzione",
     "networkErr": "Errore di rete",
     "streamNotFound": "Flusso non trovato",
@@ -415,15 +418,15 @@ const LANGS = {
     "loadEPG": "Carica EPG",
     "noChannelsLoaded": "Nessun canale caricato",
     "noEPGData": "Nessun dato EPG",
-    "filterChannels": "Filtra canali…",
+    "filterChannels": "Filtra canaliÃ¢â‚¬Â¦",
     "sendFeedback": "Invia Feedback",
     "thankYou": "Grazie!",
-    "feedbackReceived": "Il tuo feedback è stato ricevuto.",
+    "feedbackReceived": "Il tuo feedback ÃƒÂ¨ stato ricevuto.",
     "feedbackHint": "Segnalazioni bug, richieste funzioni o commenti",
     "feedbackPlaceholder": "Cosa hai in mente?",
     "sending": "Invio in corso...",
     "noFavsYet": "Ancora nessun preferito",
-    "favHint": "Clicca l'icona ♡ su un canale o film.",
+    "favHint": "Clicca l'icona Ã¢â„¢Â¡ su un canale o film.",
     "liveTV": "TV dal vivo",
     "nothingStarted": "Ancora nulla iniziato",
     "resumeHint": "Guarda dei contenuti per vederli qui.",
@@ -434,183 +437,183 @@ const LANGS = {
     "settings": "Impostazioni"
   },
   "zh": {
-    "discover": "发现",
-    "live": "电视直播",
-    "movies": "电影",
-    "series": "连续剧",
-    "favorites": "收藏夹",
-    "continueWatching": "继续观看",
-    "tvGuide": "节目表",
-    "globalSearch": "全局搜索",
-    "directPlay": "直接播放",
-    "watch": "观看",
-    "tools": "工具",
-    "savedConns": "已保存的连接",
-    "orAddNew": "或添加新连接",
-    "connect": "连接",
-    "connectArrow": "连接 →",
-    "disconnect": "断开连接",
-    "feedback": "反馈",
-    "send": "发送",
-    "cancel": "取消",
-    "close": "关闭",
-    "refresh": "刷新",
-    "search": "搜索",
-    "prev": "上一个",
-    "next": "下一个",
-    "fav": "收藏",
-    "pip": "画中画",
-    "play": "播放",
-    "go": "去",
-    "playPause": "播放/暂停",
-    "fullscreen": "全屏",
-    "mute": "静音",
-    "channels": "频道",
-    "volume": "音量",
-    "portalURL": "门户网址",
-    "macAddress": "MAC地址",
-    "serverURL": "服务器网址",
-    "username": "用户名",
-    "password": "密码",
-    "playlistURL": "播放列表网址",
-    "connFailed": "连接失败",
-    "connecting": "连接中…",
-    "import": "导入",
+    "discover": "Ã¥Ââ€˜Ã§Å½Â°",
+    "live": "Ã§â€ÂµÃ¨Â§â€ Ã§â€ºÂ´Ã¦â€™Â­",
+    "movies": "Ã§â€ÂµÃ¥Â½Â±",
+    "series": "Ã¨Â¿Å¾Ã§Â»Â­Ã¥â€°Â§",
+    "favorites": "Ã¦â€Â¶Ã¨â€”ÂÃ¥Â¤Â¹",
+    "continueWatching": "Ã§Â»Â§Ã§Â»Â­Ã¨Â§â€šÃ§Å“â€¹",
+    "tvGuide": "Ã¨Å â€šÃ§â€ºÂ®Ã¨Â¡Â¨",
+    "globalSearch": "Ã¥â€¦Â¨Ã¥Â±â‚¬Ã¦ÂÅ“Ã§Â´Â¢",
+    "directPlay": "Ã§â€ºÂ´Ã¦Å½Â¥Ã¦â€™Â­Ã¦â€Â¾",
+    "watch": "Ã¨Â§â€šÃ§Å“â€¹",
+    "tools": "Ã¥Â·Â¥Ã¥â€¦Â·",
+    "savedConns": "Ã¥Â·Â²Ã¤Â¿ÂÃ¥Â­ËœÃ§Å¡â€žÃ¨Â¿Å¾Ã¦Å½Â¥",
+    "orAddNew": "Ã¦Ë†â€“Ã¦Â·Â»Ã¥Å Â Ã¦â€“Â°Ã¨Â¿Å¾Ã¦Å½Â¥",
+    "connect": "Ã¨Â¿Å¾Ã¦Å½Â¥",
+    "connectArrow": "Ã¨Â¿Å¾Ã¦Å½Â¥ Ã¢â€ â€™",
+    "disconnect": "Ã¦â€“Â­Ã¥Â¼â‚¬Ã¨Â¿Å¾Ã¦Å½Â¥",
+    "feedback": "Ã¥ÂÂÃ©Â¦Ë†",
+    "send": "Ã¥Ââ€˜Ã©â‚¬Â",
+    "cancel": "Ã¥Ââ€“Ã¦Â¶Ë†",
+    "close": "Ã¥â€¦Â³Ã©â€”Â­",
+    "refresh": "Ã¥Ë†Â·Ã¦â€“Â°",
+    "search": "Ã¦ÂÅ“Ã§Â´Â¢",
+    "prev": "Ã¤Â¸Å Ã¤Â¸â‚¬Ã¤Â¸Âª",
+    "next": "Ã¤Â¸â€¹Ã¤Â¸â‚¬Ã¤Â¸Âª",
+    "fav": "Ã¦â€Â¶Ã¨â€”Â",
+    "pip": "Ã§â€Â»Ã¤Â¸Â­Ã§â€Â»",
+    "play": "Ã¦â€™Â­Ã¦â€Â¾",
+    "go": "Ã¥Å½Â»",
+    "playPause": "Ã¦â€™Â­Ã¦â€Â¾/Ã¦Å¡â€šÃ¥ÂÅ“",
+    "fullscreen": "Ã¥â€¦Â¨Ã¥Â±Â",
+    "mute": "Ã©Ââ„¢Ã©Å¸Â³",
+    "channels": "Ã©Â¢â€˜Ã©Ââ€œ",
+    "volume": "Ã©Å¸Â³Ã©â€¡Â",
+    "portalURL": "Ã©â€”Â¨Ã¦Ë†Â·Ã§Â½â€˜Ã¥Ââ‚¬",
+    "macAddress": "MACÃ¥Å“Â°Ã¥Ââ‚¬",
+    "serverURL": "Ã¦Å“ÂÃ¥Å Â¡Ã¥â„¢Â¨Ã§Â½â€˜Ã¥Ââ‚¬",
+    "username": "Ã§â€Â¨Ã¦Ë†Â·Ã¥ÂÂ",
+    "password": "Ã¥Â¯â€ Ã§Â Â",
+    "playlistURL": "Ã¦â€™Â­Ã¦â€Â¾Ã¥Ë†â€”Ã¨Â¡Â¨Ã§Â½â€˜Ã¥Ââ‚¬",
+    "connFailed": "Ã¨Â¿Å¾Ã¦Å½Â¥Ã¥Â¤Â±Ã¨Â´Â¥",
+    "connecting": "Ã¨Â¿Å¾Ã¦Å½Â¥Ã¤Â¸Â­Ã¢â‚¬Â¦",
+    "import": "Ã¥Â¯Â¼Ã¥â€¦Â¥",
     "xtreamCodes": "Xtream Codes",
-    "m3uPlaylist": "M3U播放列表",
-    "stalkerPortal": "Stalker门户",
-    "directHLS": "直接HLS",
-    "noChannels": "未找到频道",
-    "loading": "加载中…",
-    "loadingSection": "正在加载 {0}…",
-    "playbackErr": "播放错误",
-    "networkErr": "网络错误",
-    "streamNotFound": "未找到流",
-    "accessDenied": "拒绝访问",
-    "serverErr": "服务器错误",
-    "noContent": "未找到内容",
-    "selectCategory": "选择一个分类",
-    "fetchingItems": "正在从门户获取项目。",
-    "tryDifferent": "尝试其他分类或清除搜索。",
-    "now": "现在",
-    "loadEPG": "加载节目表",
-    "noChannelsLoaded": "未加载频道",
-    "noEPGData": "没有节目表数据",
-    "filterChannels": "过滤频道…",
-    "sendFeedback": "发送反馈",
-    "thankYou": "谢谢！",
-    "feedbackReceived": "您的反馈已收到。",
-    "feedbackHint": "错误报告、功能请求或一般评论",
-    "feedbackPlaceholder": "您在想什么？",
-    "sending": "正在发送...",
-    "noFavsYet": "暂无收藏",
-    "favHint": "点击频道或电影上的 ♡ 图标进行添加。",
-    "liveTV": "电视直播",
-    "nothingStarted": "尚未开始观看",
-    "resumeHint": "观看内容后，它将出现在这里。",
-    "resumeWatching": "继续观看",
-    "recentlyWatched": "最近观看",
-    "searchEverything": "搜索所有内容",
-    "searchHint": "电影、连续剧或频道",
-    "settings": "设置"
+    "m3uPlaylist": "M3UÃ¦â€™Â­Ã¦â€Â¾Ã¥Ë†â€”Ã¨Â¡Â¨",
+    "stalkerPortal": "StalkerÃ©â€”Â¨Ã¦Ë†Â·",
+    "directHLS": "Ã§â€ºÂ´Ã¦Å½Â¥HLS",
+    "noChannels": "Ã¦Å“ÂªÃ¦â€°Â¾Ã¥Ë†Â°Ã©Â¢â€˜Ã©Ââ€œ",
+    "loading": "Ã¥Å Â Ã¨Â½Â½Ã¤Â¸Â­Ã¢â‚¬Â¦",
+    "loadingSection": "Ã¦Â­Â£Ã¥Å“Â¨Ã¥Å Â Ã¨Â½Â½ {0}Ã¢â‚¬Â¦",
+    "playbackErr": "Ã¦â€™Â­Ã¦â€Â¾Ã©â€â„¢Ã¨Â¯Â¯",
+    "networkErr": "Ã§Â½â€˜Ã§Â»Å“Ã©â€â„¢Ã¨Â¯Â¯",
+    "streamNotFound": "Ã¦Å“ÂªÃ¦â€°Â¾Ã¥Ë†Â°Ã¦ÂµÂ",
+    "accessDenied": "Ã¦â€¹â€™Ã§Â»ÂÃ¨Â®Â¿Ã©â€”Â®",
+    "serverErr": "Ã¦Å“ÂÃ¥Å Â¡Ã¥â„¢Â¨Ã©â€â„¢Ã¨Â¯Â¯",
+    "noContent": "Ã¦Å“ÂªÃ¦â€°Â¾Ã¥Ë†Â°Ã¥â€ â€¦Ã¥Â®Â¹",
+    "selectCategory": "Ã©â‚¬â€°Ã¦â€¹Â©Ã¤Â¸â‚¬Ã¤Â¸ÂªÃ¥Ë†â€ Ã§Â±Â»",
+    "fetchingItems": "Ã¦Â­Â£Ã¥Å“Â¨Ã¤Â»Å½Ã©â€”Â¨Ã¦Ë†Â·Ã¨Å½Â·Ã¥Ââ€“Ã©Â¡Â¹Ã§â€ºÂ®Ã£â‚¬â€š",
+    "tryDifferent": "Ã¥Â°ÂÃ¨Â¯â€¢Ã¥â€¦Â¶Ã¤Â»â€“Ã¥Ë†â€ Ã§Â±Â»Ã¦Ë†â€“Ã¦Â¸â€¦Ã©â„¢Â¤Ã¦ÂÅ“Ã§Â´Â¢Ã£â‚¬â€š",
+    "now": "Ã§Å½Â°Ã¥Å“Â¨",
+    "loadEPG": "Ã¥Å Â Ã¨Â½Â½Ã¨Å â€šÃ§â€ºÂ®Ã¨Â¡Â¨",
+    "noChannelsLoaded": "Ã¦Å“ÂªÃ¥Å Â Ã¨Â½Â½Ã©Â¢â€˜Ã©Ââ€œ",
+    "noEPGData": "Ã¦Â²Â¡Ã¦Å“â€°Ã¨Å â€šÃ§â€ºÂ®Ã¨Â¡Â¨Ã¦â€¢Â°Ã¦ÂÂ®",
+    "filterChannels": "Ã¨Â¿â€¡Ã¦Â»Â¤Ã©Â¢â€˜Ã©Ââ€œÃ¢â‚¬Â¦",
+    "sendFeedback": "Ã¥Ââ€˜Ã©â‚¬ÂÃ¥ÂÂÃ©Â¦Ë†",
+    "thankYou": "Ã¨Â°Â¢Ã¨Â°Â¢Ã¯Â¼Â",
+    "feedbackReceived": "Ã¦â€šÂ¨Ã§Å¡â€žÃ¥ÂÂÃ©Â¦Ë†Ã¥Â·Â²Ã¦â€Â¶Ã¥Ë†Â°Ã£â‚¬â€š",
+    "feedbackHint": "Ã©â€â„¢Ã¨Â¯Â¯Ã¦Å Â¥Ã¥â€˜Å Ã£â‚¬ÂÃ¥Å Å¸Ã¨Æ’Â½Ã¨Â¯Â·Ã¦Â±â€šÃ¦Ë†â€“Ã¤Â¸â‚¬Ã¨Ë†Â¬Ã¨Â¯â€žÃ¨Â®Âº",
+    "feedbackPlaceholder": "Ã¦â€šÂ¨Ã¥Å“Â¨Ã¦Æ’Â³Ã¤Â»â‚¬Ã¤Â¹Ë†Ã¯Â¼Å¸",
+    "sending": "Ã¦Â­Â£Ã¥Å“Â¨Ã¥Ââ€˜Ã©â‚¬Â...",
+    "noFavsYet": "Ã¦Å¡â€šÃ¦â€”Â Ã¦â€Â¶Ã¨â€”Â",
+    "favHint": "Ã§â€šÂ¹Ã¥â€¡Â»Ã©Â¢â€˜Ã©Ââ€œÃ¦Ë†â€“Ã§â€ÂµÃ¥Â½Â±Ã¤Â¸Å Ã§Å¡â€ž Ã¢â„¢Â¡ Ã¥â€ºÂ¾Ã¦Â â€¡Ã¨Â¿â€ºÃ¨Â¡Å’Ã¦Â·Â»Ã¥Å Â Ã£â‚¬â€š",
+    "liveTV": "Ã§â€ÂµÃ¨Â§â€ Ã§â€ºÂ´Ã¦â€™Â­",
+    "nothingStarted": "Ã¥Â°Å¡Ã¦Å“ÂªÃ¥Â¼â‚¬Ã¥Â§â€¹Ã¨Â§â€šÃ§Å“â€¹",
+    "resumeHint": "Ã¨Â§â€šÃ§Å“â€¹Ã¥â€ â€¦Ã¥Â®Â¹Ã¥ÂÅ½Ã¯Â¼Å’Ã¥Â®Æ’Ã¥Â°â€ Ã¥â€¡ÂºÃ§Å½Â°Ã¥Å“Â¨Ã¨Â¿â„¢Ã©â€¡Å’Ã£â‚¬â€š",
+    "resumeWatching": "Ã§Â»Â§Ã§Â»Â­Ã¨Â§â€šÃ§Å“â€¹",
+    "recentlyWatched": "Ã¦Å“â‚¬Ã¨Â¿â€˜Ã¨Â§â€šÃ§Å“â€¹",
+    "searchEverything": "Ã¦ÂÅ“Ã§Â´Â¢Ã¦â€°â‚¬Ã¦Å“â€°Ã¥â€ â€¦Ã¥Â®Â¹",
+    "searchHint": "Ã§â€ÂµÃ¥Â½Â±Ã£â‚¬ÂÃ¨Â¿Å¾Ã§Â»Â­Ã¥â€°Â§Ã¦Ë†â€“Ã©Â¢â€˜Ã©Ââ€œ",
+    "settings": "Ã¨Â®Â¾Ã§Â½Â®"
   },
   "ar": {
-    "discover": "اكتشف",
-    "live": "البث المباشر",
-    "movies": "أفلام",
-    "series": "مسلسلات",
-    "favorites": "المفضلة",
-    "continueWatching": "متابعة المشاهدة",
-    "tvGuide": "دليل التلفزيون",
-    "globalSearch": "بحث شامل",
-    "directPlay": "تشغيل مباشر",
-    "watch": "مشاهدة",
-    "tools": "أدوات",
-    "savedConns": "الاتصالات المحفوظة",
-    "orAddNew": "أو أضف جديد",
-    "connect": "اتصال",
-    "connectArrow": "← اتصال",
-    "disconnect": "قطع الاتصال",
-    "feedback": "ملاحظات",
-    "send": "إرسال",
-    "cancel": "إلغاء",
-    "close": "إغلاق",
-    "refresh": "تحديث",
-    "search": "بحث",
-    "prev": "السابق",
-    "next": "التالي",
-    "fav": "مفضلة",
-    "pip": "صورة في صورة",
-    "play": "تشغيل",
-    "go": "انطلق",
-    "playPause": "تشغيل/إيقاف",
-    "fullscreen": "ملء الشاشة",
-    "mute": "كتم الصوت",
-    "channels": "القنوات",
-    "volume": "الصوت",
-    "portalURL": "رابط البوابة",
-    "macAddress": "عنوان MAC",
-    "serverURL": "رابط الخادم",
-    "username": "اسم المستخدم",
-    "password": "كلمة المرور",
-    "playlistURL": "رابط قائمة التشغيل",
-    "connFailed": "فشل الاتصال",
-    "connecting": "جارٍ الاتصال…",
-    "import": "استيراد",
+    "discover": "Ã˜Â§Ã™Æ’Ã˜ÂªÃ˜Â´Ã™Â",
+    "live": "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â« Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â¨Ã˜Â§Ã˜Â´Ã˜Â±",
+    "movies": "Ã˜Â£Ã™ÂÃ™â€žÃ˜Â§Ã™â€¦",
+    "series": "Ã™â€¦Ã˜Â³Ã™â€žÃ˜Â³Ã™â€žÃ˜Â§Ã˜Âª",
+    "favorites": "Ã˜Â§Ã™â€žÃ™â€¦Ã™ÂÃ˜Â¶Ã™â€žÃ˜Â©",
+    "continueWatching": "Ã™â€¦Ã˜ÂªÃ˜Â§Ã˜Â¨Ã˜Â¹Ã˜Â© Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â´Ã˜Â§Ã™â€¡Ã˜Â¯Ã˜Â©",
+    "tvGuide": "Ã˜Â¯Ã™â€žÃ™Å Ã™â€ž Ã˜Â§Ã™â€žÃ˜ÂªÃ™â€žÃ™ÂÃ˜Â²Ã™Å Ã™Ë†Ã™â€ ",
+    "globalSearch": "Ã˜Â¨Ã˜Â­Ã˜Â« Ã˜Â´Ã˜Â§Ã™â€¦Ã™â€ž",
+    "directPlay": "Ã˜ÂªÃ˜Â´Ã˜ÂºÃ™Å Ã™â€ž Ã™â€¦Ã˜Â¨Ã˜Â§Ã˜Â´Ã˜Â±",
+    "watch": "Ã™â€¦Ã˜Â´Ã˜Â§Ã™â€¡Ã˜Â¯Ã˜Â©",
+    "tools": "Ã˜Â£Ã˜Â¯Ã™Ë†Ã˜Â§Ã˜Âª",
+    "savedConns": "Ã˜Â§Ã™â€žÃ˜Â§Ã˜ÂªÃ˜ÂµÃ˜Â§Ã™â€žÃ˜Â§Ã˜Âª Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â­Ã™ÂÃ™Ë†Ã˜Â¸Ã˜Â©",
+    "orAddNew": "Ã˜Â£Ã™Ë† Ã˜Â£Ã˜Â¶Ã™Â Ã˜Â¬Ã˜Â¯Ã™Å Ã˜Â¯",
+    "connect": "Ã˜Â§Ã˜ÂªÃ˜ÂµÃ˜Â§Ã™â€ž",
+    "connectArrow": "Ã¢â€ Â Ã˜Â§Ã˜ÂªÃ˜ÂµÃ˜Â§Ã™â€ž",
+    "disconnect": "Ã™â€šÃ˜Â·Ã˜Â¹ Ã˜Â§Ã™â€žÃ˜Â§Ã˜ÂªÃ˜ÂµÃ˜Â§Ã™â€ž",
+    "feedback": "Ã™â€¦Ã™â€žÃ˜Â§Ã˜Â­Ã˜Â¸Ã˜Â§Ã˜Âª",
+    "send": "Ã˜Â¥Ã˜Â±Ã˜Â³Ã˜Â§Ã™â€ž",
+    "cancel": "Ã˜Â¥Ã™â€žÃ˜ÂºÃ˜Â§Ã˜Â¡",
+    "close": "Ã˜Â¥Ã˜ÂºÃ™â€žÃ˜Â§Ã™â€š",
+    "refresh": "Ã˜ÂªÃ˜Â­Ã˜Â¯Ã™Å Ã˜Â«",
+    "search": "Ã˜Â¨Ã˜Â­Ã˜Â«",
+    "prev": "Ã˜Â§Ã™â€žÃ˜Â³Ã˜Â§Ã˜Â¨Ã™â€š",
+    "next": "Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â§Ã™â€žÃ™Å ",
+    "fav": "Ã™â€¦Ã™ÂÃ˜Â¶Ã™â€žÃ˜Â©",
+    "pip": "Ã˜ÂµÃ™Ë†Ã˜Â±Ã˜Â© Ã™ÂÃ™Å  Ã˜ÂµÃ™Ë†Ã˜Â±Ã˜Â©",
+    "play": "Ã˜ÂªÃ˜Â´Ã˜ÂºÃ™Å Ã™â€ž",
+    "go": "Ã˜Â§Ã™â€ Ã˜Â·Ã™â€žÃ™â€š",
+    "playPause": "Ã˜ÂªÃ˜Â´Ã˜ÂºÃ™Å Ã™â€ž/Ã˜Â¥Ã™Å Ã™â€šÃ˜Â§Ã™Â",
+    "fullscreen": "Ã™â€¦Ã™â€žÃ˜Â¡ Ã˜Â§Ã™â€žÃ˜Â´Ã˜Â§Ã˜Â´Ã˜Â©",
+    "mute": "Ã™Æ’Ã˜ÂªÃ™â€¦ Ã˜Â§Ã™â€žÃ˜ÂµÃ™Ë†Ã˜Âª",
+    "channels": "Ã˜Â§Ã™â€žÃ™â€šÃ™â€ Ã™Ë†Ã˜Â§Ã˜Âª",
+    "volume": "Ã˜Â§Ã™â€žÃ˜ÂµÃ™Ë†Ã˜Âª",
+    "portalURL": "Ã˜Â±Ã˜Â§Ã˜Â¨Ã˜Â· Ã˜Â§Ã™â€žÃ˜Â¨Ã™Ë†Ã˜Â§Ã˜Â¨Ã˜Â©",
+    "macAddress": "Ã˜Â¹Ã™â€ Ã™Ë†Ã˜Â§Ã™â€  MAC",
+    "serverURL": "Ã˜Â±Ã˜Â§Ã˜Â¨Ã˜Â· Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã˜Â¯Ã™â€¦",
+    "username": "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â³Ã˜ÂªÃ˜Â®Ã˜Â¯Ã™â€¦",
+    "password": "Ã™Æ’Ã™â€žÃ™â€¦Ã˜Â© Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â±Ã™Ë†Ã˜Â±",
+    "playlistURL": "Ã˜Â±Ã˜Â§Ã˜Â¨Ã˜Â· Ã™â€šÃ˜Â§Ã˜Â¦Ã™â€¦Ã˜Â© Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â´Ã˜ÂºÃ™Å Ã™â€ž",
+    "connFailed": "Ã™ÂÃ˜Â´Ã™â€ž Ã˜Â§Ã™â€žÃ˜Â§Ã˜ÂªÃ˜ÂµÃ˜Â§Ã™â€ž",
+    "connecting": "Ã˜Â¬Ã˜Â§Ã˜Â±Ã™Â Ã˜Â§Ã™â€žÃ˜Â§Ã˜ÂªÃ˜ÂµÃ˜Â§Ã™â€žÃ¢â‚¬Â¦",
+    "import": "Ã˜Â§Ã˜Â³Ã˜ÂªÃ™Å Ã˜Â±Ã˜Â§Ã˜Â¯",
     "xtreamCodes": "Xtream Codes",
-    "m3uPlaylist": "قائمة M3U",
-    "stalkerPortal": "بوابة Stalker",
-    "directHLS": "HLS مباشر",
-    "noChannels": "لم يتم العثور على قنوات",
-    "loading": "جارٍ التحميل…",
-    "loadingSection": "جارٍ تحميل {0}…",
-    "playbackErr": "خطأ في التشغيل",
-    "networkErr": "خطأ في الشبكة",
-    "streamNotFound": "البث غير موجود",
-    "accessDenied": "الوصول مرفوض",
-    "serverErr": "خطأ في الخادم",
-    "noContent": "لم يتم العور على محتوى",
-    "selectCategory": "اختر فئة",
-    "fetchingItems": "جارٍ جلب العناصر من البوابة.",
-    "tryDifferent": "جرّب فئة أخرى أو امسح البحث.",
-    "now": "الآن",
-    "loadEPG": "تحميل EPG",
-    "noChannelsLoaded": "لا توجد قنوات محمّلة",
-    "noEPGData": "لا توجد بيانات EPG",
-    "filterChannels": "تصفية القنوات…",
-    "sendFeedback": "إرسال ملاحظات",
-    "thankYou": "شكراً لك!",
-    "feedbackReceived": "تم استلام ملاحظاتك.",
-    "feedbackHint": "تقارير الأخطاء أو طلبات الميزات أو التعليقات العامة",
-    "feedbackPlaceholder": "ما الذي يدور في ذهنك؟",
-    "sending": "جارٍ الإرسال...",
-    "noFavsYet": "لا توجد مفضلات بعد",
-    "favHint": "اضغط على أيقونة ♡ على أي قناة أو فيلم لإضافته هنا.",
-    "liveTV": "البث المباشر",
-    "nothingStarted": "لم تبدأ شيئاً بعد",
-    "resumeHint": "شاهد بعض المحتوى وسيظهر هنا لاستئنافه بسهولة.",
-    "resumeWatching": "استئناف المشاهدة",
-    "recentlyWatched": "شوهد مؤخراً",
-    "searchEverything": "بحث في كل شيء",
-    "searchHint": "أفلام أو مسلسلات أو قنوات",
-    "settings": "الإعدادات"
+    "m3uPlaylist": "Ã™â€šÃ˜Â§Ã˜Â¦Ã™â€¦Ã˜Â© M3U",
+    "stalkerPortal": "Ã˜Â¨Ã™Ë†Ã˜Â§Ã˜Â¨Ã˜Â© Stalker",
+    "directHLS": "HLS Ã™â€¦Ã˜Â¨Ã˜Â§Ã˜Â´Ã˜Â±",
+    "noChannels": "Ã™â€žÃ™â€¦ Ã™Å Ã˜ÂªÃ™â€¦ Ã˜Â§Ã™â€žÃ˜Â¹Ã˜Â«Ã™Ë†Ã˜Â± Ã˜Â¹Ã™â€žÃ™â€° Ã™â€šÃ™â€ Ã™Ë†Ã˜Â§Ã˜Âª",
+    "loading": "Ã˜Â¬Ã˜Â§Ã˜Â±Ã™Â Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â­Ã™â€¦Ã™Å Ã™â€žÃ¢â‚¬Â¦",
+    "loadingSection": "Ã˜Â¬Ã˜Â§Ã˜Â±Ã™Â Ã˜ÂªÃ˜Â­Ã™â€¦Ã™Å Ã™â€ž {0}Ã¢â‚¬Â¦",
+    "playbackErr": "Ã˜Â®Ã˜Â·Ã˜Â£ Ã™ÂÃ™Å  Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â´Ã˜ÂºÃ™Å Ã™â€ž",
+    "networkErr": "Ã˜Â®Ã˜Â·Ã˜Â£ Ã™ÂÃ™Å  Ã˜Â§Ã™â€žÃ˜Â´Ã˜Â¨Ã™Æ’Ã˜Â©",
+    "streamNotFound": "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â« Ã˜ÂºÃ™Å Ã˜Â± Ã™â€¦Ã™Ë†Ã˜Â¬Ã™Ë†Ã˜Â¯",
+    "accessDenied": "Ã˜Â§Ã™â€žÃ™Ë†Ã˜ÂµÃ™Ë†Ã™â€ž Ã™â€¦Ã˜Â±Ã™ÂÃ™Ë†Ã˜Â¶",
+    "serverErr": "Ã˜Â®Ã˜Â·Ã˜Â£ Ã™ÂÃ™Å  Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã˜Â¯Ã™â€¦",
+    "noContent": "Ã™â€žÃ™â€¦ Ã™Å Ã˜ÂªÃ™â€¦ Ã˜Â§Ã™â€žÃ˜Â¹Ã™Ë†Ã˜Â± Ã˜Â¹Ã™â€žÃ™â€° Ã™â€¦Ã˜Â­Ã˜ÂªÃ™Ë†Ã™â€°",
+    "selectCategory": "Ã˜Â§Ã˜Â®Ã˜ÂªÃ˜Â± Ã™ÂÃ˜Â¦Ã˜Â©",
+    "fetchingItems": "Ã˜Â¬Ã˜Â§Ã˜Â±Ã™Â Ã˜Â¬Ã™â€žÃ˜Â¨ Ã˜Â§Ã™â€žÃ˜Â¹Ã™â€ Ã˜Â§Ã˜ÂµÃ˜Â± Ã™â€¦Ã™â€  Ã˜Â§Ã™â€žÃ˜Â¨Ã™Ë†Ã˜Â§Ã˜Â¨Ã˜Â©.",
+    "tryDifferent": "Ã˜Â¬Ã˜Â±Ã™â€˜Ã˜Â¨ Ã™ÂÃ˜Â¦Ã˜Â© Ã˜Â£Ã˜Â®Ã˜Â±Ã™â€° Ã˜Â£Ã™Ë† Ã˜Â§Ã™â€¦Ã˜Â³Ã˜Â­ Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â­Ã˜Â«.",
+    "now": "Ã˜Â§Ã™â€žÃ˜Â¢Ã™â€ ",
+    "loadEPG": "Ã˜ÂªÃ˜Â­Ã™â€¦Ã™Å Ã™â€ž EPG",
+    "noChannelsLoaded": "Ã™â€žÃ˜Â§ Ã˜ÂªÃ™Ë†Ã˜Â¬Ã˜Â¯ Ã™â€šÃ™â€ Ã™Ë†Ã˜Â§Ã˜Âª Ã™â€¦Ã˜Â­Ã™â€¦Ã™â€˜Ã™â€žÃ˜Â©",
+    "noEPGData": "Ã™â€žÃ˜Â§ Ã˜ÂªÃ™Ë†Ã˜Â¬Ã˜Â¯ Ã˜Â¨Ã™Å Ã˜Â§Ã™â€ Ã˜Â§Ã˜Âª EPG",
+    "filterChannels": "Ã˜ÂªÃ˜ÂµÃ™ÂÃ™Å Ã˜Â© Ã˜Â§Ã™â€žÃ™â€šÃ™â€ Ã™Ë†Ã˜Â§Ã˜ÂªÃ¢â‚¬Â¦",
+    "sendFeedback": "Ã˜Â¥Ã˜Â±Ã˜Â³Ã˜Â§Ã™â€ž Ã™â€¦Ã™â€žÃ˜Â§Ã˜Â­Ã˜Â¸Ã˜Â§Ã˜Âª",
+    "thankYou": "Ã˜Â´Ã™Æ’Ã˜Â±Ã˜Â§Ã™â€¹ Ã™â€žÃ™Æ’!",
+    "feedbackReceived": "Ã˜ÂªÃ™â€¦ Ã˜Â§Ã˜Â³Ã˜ÂªÃ™â€žÃ˜Â§Ã™â€¦ Ã™â€¦Ã™â€žÃ˜Â§Ã˜Â­Ã˜Â¸Ã˜Â§Ã˜ÂªÃ™Æ’.",
+    "feedbackHint": "Ã˜ÂªÃ™â€šÃ˜Â§Ã˜Â±Ã™Å Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â£Ã˜Â®Ã˜Â·Ã˜Â§Ã˜Â¡ Ã˜Â£Ã™Ë† Ã˜Â·Ã™â€žÃ˜Â¨Ã˜Â§Ã˜Âª Ã˜Â§Ã™â€žÃ™â€¦Ã™Å Ã˜Â²Ã˜Â§Ã˜Âª Ã˜Â£Ã™Ë† Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â¹Ã™â€žÃ™Å Ã™â€šÃ˜Â§Ã˜Âª Ã˜Â§Ã™â€žÃ˜Â¹Ã˜Â§Ã™â€¦Ã˜Â©",
+    "feedbackPlaceholder": "Ã™â€¦Ã˜Â§ Ã˜Â§Ã™â€žÃ˜Â°Ã™Å  Ã™Å Ã˜Â¯Ã™Ë†Ã˜Â± Ã™ÂÃ™Å  Ã˜Â°Ã™â€¡Ã™â€ Ã™Æ’Ã˜Å¸",
+    "sending": "Ã˜Â¬Ã˜Â§Ã˜Â±Ã™Â Ã˜Â§Ã™â€žÃ˜Â¥Ã˜Â±Ã˜Â³Ã˜Â§Ã™â€ž...",
+    "noFavsYet": "Ã™â€žÃ˜Â§ Ã˜ÂªÃ™Ë†Ã˜Â¬Ã˜Â¯ Ã™â€¦Ã™ÂÃ˜Â¶Ã™â€žÃ˜Â§Ã˜Âª Ã˜Â¨Ã˜Â¹Ã˜Â¯",
+    "favHint": "Ã˜Â§Ã˜Â¶Ã˜ÂºÃ˜Â· Ã˜Â¹Ã™â€žÃ™â€° Ã˜Â£Ã™Å Ã™â€šÃ™Ë†Ã™â€ Ã˜Â© Ã¢â„¢Â¡ Ã˜Â¹Ã™â€žÃ™â€° Ã˜Â£Ã™Å  Ã™â€šÃ™â€ Ã˜Â§Ã˜Â© Ã˜Â£Ã™Ë† Ã™ÂÃ™Å Ã™â€žÃ™â€¦ Ã™â€žÃ˜Â¥Ã˜Â¶Ã˜Â§Ã™ÂÃ˜ÂªÃ™â€¡ Ã™â€¡Ã™â€ Ã˜Â§.",
+    "liveTV": "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â« Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â¨Ã˜Â§Ã˜Â´Ã˜Â±",
+    "nothingStarted": "Ã™â€žÃ™â€¦ Ã˜ÂªÃ˜Â¨Ã˜Â¯Ã˜Â£ Ã˜Â´Ã™Å Ã˜Â¦Ã˜Â§Ã™â€¹ Ã˜Â¨Ã˜Â¹Ã˜Â¯",
+    "resumeHint": "Ã˜Â´Ã˜Â§Ã™â€¡Ã˜Â¯ Ã˜Â¨Ã˜Â¹Ã˜Â¶ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â­Ã˜ÂªÃ™Ë†Ã™â€° Ã™Ë†Ã˜Â³Ã™Å Ã˜Â¸Ã™â€¡Ã˜Â± Ã™â€¡Ã™â€ Ã˜Â§ Ã™â€žÃ˜Â§Ã˜Â³Ã˜ÂªÃ˜Â¦Ã™â€ Ã˜Â§Ã™ÂÃ™â€¡ Ã˜Â¨Ã˜Â³Ã™â€¡Ã™Ë†Ã™â€žÃ˜Â©.",
+    "resumeWatching": "Ã˜Â§Ã˜Â³Ã˜ÂªÃ˜Â¦Ã™â€ Ã˜Â§Ã™Â Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â´Ã˜Â§Ã™â€¡Ã˜Â¯Ã˜Â©",
+    "recentlyWatched": "Ã˜Â´Ã™Ë†Ã™â€¡Ã˜Â¯ Ã™â€¦Ã˜Â¤Ã˜Â®Ã˜Â±Ã˜Â§Ã™â€¹",
+    "searchEverything": "Ã˜Â¨Ã˜Â­Ã˜Â« Ã™ÂÃ™Å  Ã™Æ’Ã™â€ž Ã˜Â´Ã™Å Ã˜Â¡",
+    "searchHint": "Ã˜Â£Ã™ÂÃ™â€žÃ˜Â§Ã™â€¦ Ã˜Â£Ã™Ë† Ã™â€¦Ã˜Â³Ã™â€žÃ˜Â³Ã™â€žÃ˜Â§Ã˜Âª Ã˜Â£Ã™Ë† Ã™â€šÃ™â€ Ã™Ë†Ã˜Â§Ã˜Âª",
+    "settings": "Ã˜Â§Ã™â€žÃ˜Â¥Ã˜Â¹Ã˜Â¯Ã˜Â§Ã˜Â¯Ã˜Â§Ã˜Âª"
   },
   "pt": {
     "discover": "Descobrir",
     "live": "TV ao Vivo",
     "movies": "Filmes",
-    "series": "Séries",
+    "series": "SÃƒÂ©ries",
     "favorites": "Favoritos",
     "continueWatching": "Continuar Assistindo",
     "tvGuide": "Guia TV",
     "globalSearch": "Busca Global",
-    "directPlay": "Reprodução Direta",
+    "directPlay": "ReproduÃƒÂ§ÃƒÂ£o Direta",
     "watch": "Assistir",
     "tools": "Ferramentas",
     "savedConns": "Conexiones Salvas",
     "orAddNew": "ou adicionar nova",
     "connect": "Conectar",
-    "connectArrow": "Conectar →",
+    "connectArrow": "Conectar Ã¢â€ â€™",
     "disconnect": "Desconectar",
     "feedback": "Feedback",
     "send": "Enviar",
@@ -619,7 +622,7 @@ const LANGS = {
     "refresh": "Atualizar",
     "search": "Buscar",
     "prev": "Anterior",
-    "next": "Próximo",
+    "next": "PrÃƒÂ³ximo",
     "fav": "Fav",
     "pip": "PiP",
     "play": "Reproduzir",
@@ -630,27 +633,27 @@ const LANGS = {
     "channels": "Canais",
     "volume": "Volume",
     "portalURL": "URL do Portal",
-    "macAddress": "Endereço MAC",
+    "macAddress": "EndereÃƒÂ§o MAC",
     "serverURL": "URL do Servidor",
-    "username": "Usuário",
+    "username": "UsuÃƒÂ¡rio",
     "password": "Senha",
     "playlistURL": "URL da Playlist",
-    "connFailed": "Falha na conexão",
-    "connecting": "Conectando…",
+    "connFailed": "Falha na conexÃƒÂ£o",
+    "connecting": "ConectandoÃ¢â‚¬Â¦",
     "import": "Importar",
     "xtreamCodes": "Xtream Codes",
     "m3uPlaylist": "Playlist M3U",
     "stalkerPortal": "Portal Stalker",
     "directHLS": "HLS Direct",
     "noChannels": "Nenhum canal encontrado",
-    "loading": "Carregando…",
-    "loadingSection": "Carregando {0}…",
-    "playbackErr": "Erro de Reprodução",
+    "loading": "CarregandoÃ¢â‚¬Â¦",
+    "loadingSection": "Carregando {0}Ã¢â‚¬Â¦",
+    "playbackErr": "Erro de ReproduÃƒÂ§ÃƒÂ£o",
     "networkErr": "Erro de Rede",
-    "streamNotFound": "Transmissão Não Encontrada",
+    "streamNotFound": "TransmissÃƒÂ£o NÃƒÂ£o Encontrada",
     "accessDenied": "Acesso Negado",
     "serverErr": "Erro do Servidor",
-    "noContent": "Nenhum conteúdo encontrado",
+    "noContent": "Nenhum conteÃƒÂºdo encontrado",
     "selectCategory": "Selecione uma categoria",
     "fetchingItems": "Buscando itens do portal.",
     "tryDifferent": "Tente outra categoria ou limpe sua busca.",
@@ -658,185 +661,185 @@ const LANGS = {
     "loadEPG": "Carregar EPG",
     "noChannelsLoaded": "Nenhum canal carregado",
     "noEPGData": "Sem dados EPG",
-    "filterChannels": "Filtrar canais…",
+    "filterChannels": "Filtrar canaisÃ¢â‚¬Â¦",
     "sendFeedback": "Enviar Feedback",
     "thankYou": "Obrigado!",
     "feedbackReceived": "Seu feedback foi recebido.",
-    "feedbackHint": "Relatos de bugs, solicitações de recursos ou comentários gerais",
-    "feedbackPlaceholder": "O que está em sua mente?",
+    "feedbackHint": "Relatos de bugs, solicitaÃƒÂ§ÃƒÂµes de recursos ou comentÃƒÂ¡rios gerais",
+    "feedbackPlaceholder": "O que estÃƒÂ¡ em sua mente?",
     "sending": "Enviando...",
     "noFavsYet": "Nenhum favorito ainda",
-    "favHint": "Clique no ícone ♡ em qualquer canal ou filme para adicioná-lo aqui.",
+    "favHint": "Clique no ÃƒÂ­cone Ã¢â„¢Â¡ em qualquer canal ou filme para adicionÃƒÂ¡-lo aqui.",
     "liveTV": "TV ao Vivo",
     "nothingStarted": "Nada iniciado ainda",
-    "resumeHint": "Assista a algum conteúdo e ele aparecerá aqui.",
+    "resumeHint": "Assista a algum conteÃƒÂºdo e ele aparecerÃƒÂ¡ aqui.",
     "resumeWatching": "Continuar assistindo",
     "recentlyWatched": "Visto recentemente",
     "searchEverything": "Pesquisar tudo",
-    "searchHint": "Filmes, Séries ou Canais",
-    "settings": "Configurações"
+    "searchHint": "Filmes, SÃƒÂ©ries ou Canais",
+    "settings": "ConfiguraÃƒÂ§ÃƒÂµes"
   },
   "hi": {
-    "discover": "खोजें",
-    "live": "लाइव टीवी",
-    "movies": "फ़िल्में",
-    "series": "सीरीज़",
-    "favorites": "पसंदीदा",
-    "continueWatching": "देखना जारी रखें",
-    "tvGuide": "टीवी गाइड",
-    "globalSearch": "वैश्विक खोज",
-    "directPlay": "डायरेक्ट प्ले",
-    "watch": "देखें",
-    "tools": "उपकरण",
-    "savedConns": "सहेजे गए कनेक्शन",
-    "orAddNew": "या नया जोड़ें",
-    "connect": "कनेक्ट",
-    "connectArrow": "कनेक्ट →",
-    "disconnect": "डिस्कनेक्ट",
-    "feedback": "प्रतिक्रिया",
-    "send": "भेजें",
-    "cancel": "रद्द करें",
-    "close": "बंद करें",
-    "refresh": "रीफ़्रेश",
-    "search": "खोजें",
-    "prev": "पिछला",
-    "next": "अगला",
-    "fav": "पसंद",
+    "discover": "Ã Â¤â€“Ã Â¥â€¹Ã Â¤Å“Ã Â¥â€¡Ã Â¤â€š",
+    "live": "Ã Â¤Â²Ã Â¤Â¾Ã Â¤â€¡Ã Â¤Âµ Ã Â¤Å¸Ã Â¥â‚¬Ã Â¤ÂµÃ Â¥â‚¬",
+    "movies": "Ã Â¤Â«Ã Â¤Â¼Ã Â¤Â¿Ã Â¤Â²Ã Â¥ÂÃ Â¤Â®Ã Â¥â€¡Ã Â¤â€š",
+    "series": "Ã Â¤Â¸Ã Â¥â‚¬Ã Â¤Â°Ã Â¥â‚¬Ã Â¤Å“Ã Â¤Â¼",
+    "favorites": "Ã Â¤ÂªÃ Â¤Â¸Ã Â¤â€šÃ Â¤Â¦Ã Â¥â‚¬Ã Â¤Â¦Ã Â¤Â¾",
+    "continueWatching": "Ã Â¤Â¦Ã Â¥â€¡Ã Â¤â€“Ã Â¤Â¨Ã Â¤Â¾ Ã Â¤Å“Ã Â¤Â¾Ã Â¤Â°Ã Â¥â‚¬ Ã Â¤Â°Ã Â¤â€“Ã Â¥â€¡Ã Â¤â€š",
+    "tvGuide": "Ã Â¤Å¸Ã Â¥â‚¬Ã Â¤ÂµÃ Â¥â‚¬ Ã Â¤â€”Ã Â¤Â¾Ã Â¤â€¡Ã Â¤Â¡",
+    "globalSearch": "Ã Â¤ÂµÃ Â¥Ë†Ã Â¤Â¶Ã Â¥ÂÃ Â¤ÂµÃ Â¤Â¿Ã Â¤â€¢ Ã Â¤â€“Ã Â¥â€¹Ã Â¤Å“",
+    "directPlay": "Ã Â¤Â¡Ã Â¤Â¾Ã Â¤Â¯Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Å¸ Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â²Ã Â¥â€¡",
+    "watch": "Ã Â¤Â¦Ã Â¥â€¡Ã Â¤â€“Ã Â¥â€¡Ã Â¤â€š",
+    "tools": "Ã Â¤â€°Ã Â¤ÂªÃ Â¤â€¢Ã Â¤Â°Ã Â¤Â£",
+    "savedConns": "Ã Â¤Â¸Ã Â¤Â¹Ã Â¥â€¡Ã Â¤Å“Ã Â¥â€¡ Ã Â¤â€”Ã Â¤Â Ã Â¤â€¢Ã Â¤Â¨Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Â¶Ã Â¤Â¨",
+    "orAddNew": "Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤Â¨Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤Å“Ã Â¥â€¹Ã Â¤Â¡Ã Â¤Â¼Ã Â¥â€¡Ã Â¤â€š",
+    "connect": "Ã Â¤â€¢Ã Â¤Â¨Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Å¸",
+    "connectArrow": "Ã Â¤â€¢Ã Â¤Â¨Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Å¸ Ã¢â€ â€™",
+    "disconnect": "Ã Â¤Â¡Ã Â¤Â¿Ã Â¤Â¸Ã Â¥ÂÃ Â¤â€¢Ã Â¤Â¨Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Å¸",
+    "feedback": "Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â°Ã Â¤Â¤Ã Â¤Â¿Ã Â¤â€¢Ã Â¥ÂÃ Â¤Â°Ã Â¤Â¿Ã Â¤Â¯Ã Â¤Â¾",
+    "send": "Ã Â¤Â­Ã Â¥â€¡Ã Â¤Å“Ã Â¥â€¡Ã Â¤â€š",
+    "cancel": "Ã Â¤Â°Ã Â¤Â¦Ã Â¥ÂÃ Â¤Â¦ Ã Â¤â€¢Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€š",
+    "close": "Ã Â¤Â¬Ã Â¤â€šÃ Â¤Â¦ Ã Â¤â€¢Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€š",
+    "refresh": "Ã Â¤Â°Ã Â¥â‚¬Ã Â¤Â«Ã Â¤Â¼Ã Â¥ÂÃ Â¤Â°Ã Â¥â€¡Ã Â¤Â¶",
+    "search": "Ã Â¤â€“Ã Â¥â€¹Ã Â¤Å“Ã Â¥â€¡Ã Â¤â€š",
+    "prev": "Ã Â¤ÂªÃ Â¤Â¿Ã Â¤â€ºÃ Â¤Â²Ã Â¤Â¾",
+    "next": "Ã Â¤â€¦Ã Â¤â€”Ã Â¤Â²Ã Â¤Â¾",
+    "fav": "Ã Â¤ÂªÃ Â¤Â¸Ã Â¤â€šÃ Â¤Â¦",
     "pip": "PiP",
-    "play": "चलाएँ",
-    "go": "जाएँ",
-    "playPause": "चलाएँ/रोकें",
-    "fullscreen": "फ़ुलस्क्रीन",
-    "mute": "म्यूट",
-    "channels": "चैनल",
-    "volume": "ध्वनि",
-    "portalURL": "पोर्टल URL",
-    "macAddress": "MAC पता",
-    "serverURL": "सर्वर URL",
-    "username": "उपयोगकर्ता",
-    "password": "पासवर्ड",
-    "playlistURL": "प्लेलिस्ट URL",
-    "connFailed": "कनेक्शन विफल",
-    "connecting": "कनेक्ट हो रहा है…",
-    "import": "आयात",
+    "play": "Ã Â¤Å¡Ã Â¤Â²Ã Â¤Â¾Ã Â¤ÂÃ Â¤Â",
+    "go": "Ã Â¤Å“Ã Â¤Â¾Ã Â¤ÂÃ Â¤Â",
+    "playPause": "Ã Â¤Å¡Ã Â¤Â²Ã Â¤Â¾Ã Â¤ÂÃ Â¤Â/Ã Â¤Â°Ã Â¥â€¹Ã Â¤â€¢Ã Â¥â€¡Ã Â¤â€š",
+    "fullscreen": "Ã Â¤Â«Ã Â¤Â¼Ã Â¥ÂÃ Â¤Â²Ã Â¤Â¸Ã Â¥ÂÃ Â¤â€¢Ã Â¥ÂÃ Â¤Â°Ã Â¥â‚¬Ã Â¤Â¨",
+    "mute": "Ã Â¤Â®Ã Â¥ÂÃ Â¤Â¯Ã Â¥â€šÃ Â¤Å¸",
+    "channels": "Ã Â¤Å¡Ã Â¥Ë†Ã Â¤Â¨Ã Â¤Â²",
+    "volume": "Ã Â¤Â§Ã Â¥ÂÃ Â¤ÂµÃ Â¤Â¨Ã Â¤Â¿",
+    "portalURL": "Ã Â¤ÂªÃ Â¥â€¹Ã Â¤Â°Ã Â¥ÂÃ Â¤Å¸Ã Â¤Â² URL",
+    "macAddress": "MAC Ã Â¤ÂªÃ Â¤Â¤Ã Â¤Â¾",
+    "serverURL": "Ã Â¤Â¸Ã Â¤Â°Ã Â¥ÂÃ Â¤ÂµÃ Â¤Â° URL",
+    "username": "Ã Â¤â€°Ã Â¤ÂªÃ Â¤Â¯Ã Â¥â€¹Ã Â¤â€”Ã Â¤â€¢Ã Â¤Â°Ã Â¥ÂÃ Â¤Â¤Ã Â¤Â¾",
+    "password": "Ã Â¤ÂªÃ Â¤Â¾Ã Â¤Â¸Ã Â¤ÂµÃ Â¤Â°Ã Â¥ÂÃ Â¤Â¡",
+    "playlistURL": "Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â²Ã Â¥â€¡Ã Â¤Â²Ã Â¤Â¿Ã Â¤Â¸Ã Â¥ÂÃ Â¤Å¸ URL",
+    "connFailed": "Ã Â¤â€¢Ã Â¤Â¨Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Â¶Ã Â¤Â¨ Ã Â¤ÂµÃ Â¤Â¿Ã Â¤Â«Ã Â¤Â²",
+    "connecting": "Ã Â¤â€¢Ã Â¤Â¨Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Å¸ Ã Â¤Â¹Ã Â¥â€¹ Ã Â¤Â°Ã Â¤Â¹Ã Â¤Â¾ Ã Â¤Â¹Ã Â¥Ë†Ã¢â‚¬Â¦",
+    "import": "Ã Â¤â€ Ã Â¤Â¯Ã Â¤Â¾Ã Â¤Â¤",
     "xtreamCodes": "Xtream Codes",
-    "m3uPlaylist": "M3U प्लेलिस्ट",
-    "stalkerPortal": "Stalker पोर्टल",
-    "directHLS": "डायरेक्ट HLS",
-    "noChannels": "कोई चैनल नहीं मिला",
-    "loading": "लोड हो रहा है…",
-    "loadingSection": "{0} लोड हो रहा है…",
-    "playbackErr": "प्लेबैक त्रुटि",
-    "networkErr": "नेटवर्क त्रुटि",
-    "streamNotFound": "स्ट्रीम नहीं मिली",
-    "accessDenied": "पहुँच अस्वीकृत",
-    "serverErr": "सर्वर त्रुटि",
-    "noContent": "कोई सामग्री नहीं मिली",
-    "selectCategory": "एक श्रेणी चुनें",
-    "fetchingItems": "पोर्टल से आइटम प्राप्त हो रहे हैं।",
-    "tryDifferent": "कोई अन्य श्रेणी आज़माएँ या खोज साफ़ करें।",
-    "now": "अभी",
-    "loadEPG": "EPG लोड करें",
-    "noChannelsLoaded": "कोई चैनल लोड नहीं हुआ",
-    "noEPGData": "कोई EPG डेटा नहीं",
-    "filterChannels": "चैनल फ़िल्टर करें…",
-    "sendFeedback": "प्रतिक्रिया भेजें",
-    "thankYou": "धन्यवाद!",
-    "feedbackReceived": "आपकी प्रतिक्रिया प्राप्त हो गई है।",
-    "feedbackHint": "बग रिपोर्ट, फ़ीचर अनुरोध, या सामान्य टिप्पणियाँ",
-    "feedbackPlaceholder": "आपके मन में क्या है?",
-    "sending": "भेजा जा रहा है...",
-    "noFavsYet": "अभी तक कोई पसंदीदा नहीं",
-    "favHint": "किसी भी चैनल या फ़िल्म पर ♡ आइकन पर क्लिक करें।",
-    "liveTV": "लाइव टीवी",
-    "nothingStarted": "अभी तक कुछ शुरू नहीं हुआ",
-    "resumeHint": "कुछ सामग्री देखें और वह यहाँ दिखाई देगी।",
-    "resumeWatching": "फिर से देखें",
-    "recentlyWatched": "हाल ही में देखा गया",
-    "searchEverything": "सब कुछ खोजें",
-    "searchHint": "फ़िल्में, सीरीज़ या चैनल",
-    "settings": "सेटिंग्स"
+    "m3uPlaylist": "M3U Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â²Ã Â¥â€¡Ã Â¤Â²Ã Â¤Â¿Ã Â¤Â¸Ã Â¥ÂÃ Â¤Å¸",
+    "stalkerPortal": "Stalker Ã Â¤ÂªÃ Â¥â€¹Ã Â¤Â°Ã Â¥ÂÃ Â¤Å¸Ã Â¤Â²",
+    "directHLS": "Ã Â¤Â¡Ã Â¤Â¾Ã Â¤Â¯Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€¢Ã Â¥ÂÃ Â¤Å¸ HLS",
+    "noChannels": "Ã Â¤â€¢Ã Â¥â€¹Ã Â¤Ë† Ã Â¤Å¡Ã Â¥Ë†Ã Â¤Â¨Ã Â¤Â² Ã Â¤Â¨Ã Â¤Â¹Ã Â¥â‚¬Ã Â¤â€š Ã Â¤Â®Ã Â¤Â¿Ã Â¤Â²Ã Â¤Â¾",
+    "loading": "Ã Â¤Â²Ã Â¥â€¹Ã Â¤Â¡ Ã Â¤Â¹Ã Â¥â€¹ Ã Â¤Â°Ã Â¤Â¹Ã Â¤Â¾ Ã Â¤Â¹Ã Â¥Ë†Ã¢â‚¬Â¦",
+    "loadingSection": "{0} Ã Â¤Â²Ã Â¥â€¹Ã Â¤Â¡ Ã Â¤Â¹Ã Â¥â€¹ Ã Â¤Â°Ã Â¤Â¹Ã Â¤Â¾ Ã Â¤Â¹Ã Â¥Ë†Ã¢â‚¬Â¦",
+    "playbackErr": "Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â²Ã Â¥â€¡Ã Â¤Â¬Ã Â¥Ë†Ã Â¤â€¢ Ã Â¤Â¤Ã Â¥ÂÃ Â¤Â°Ã Â¥ÂÃ Â¤Å¸Ã Â¤Â¿",
+    "networkErr": "Ã Â¤Â¨Ã Â¥â€¡Ã Â¤Å¸Ã Â¤ÂµÃ Â¤Â°Ã Â¥ÂÃ Â¤â€¢ Ã Â¤Â¤Ã Â¥ÂÃ Â¤Â°Ã Â¥ÂÃ Â¤Å¸Ã Â¤Â¿",
+    "streamNotFound": "Ã Â¤Â¸Ã Â¥ÂÃ Â¤Å¸Ã Â¥ÂÃ Â¤Â°Ã Â¥â‚¬Ã Â¤Â® Ã Â¤Â¨Ã Â¤Â¹Ã Â¥â‚¬Ã Â¤â€š Ã Â¤Â®Ã Â¤Â¿Ã Â¤Â²Ã Â¥â‚¬",
+    "accessDenied": "Ã Â¤ÂªÃ Â¤Â¹Ã Â¥ÂÃ Â¤ÂÃ Â¤Å¡ Ã Â¤â€¦Ã Â¤Â¸Ã Â¥ÂÃ Â¤ÂµÃ Â¥â‚¬Ã Â¤â€¢Ã Â¥Æ’Ã Â¤Â¤",
+    "serverErr": "Ã Â¤Â¸Ã Â¤Â°Ã Â¥ÂÃ Â¤ÂµÃ Â¤Â° Ã Â¤Â¤Ã Â¥ÂÃ Â¤Â°Ã Â¥ÂÃ Â¤Å¸Ã Â¤Â¿",
+    "noContent": "Ã Â¤â€¢Ã Â¥â€¹Ã Â¤Ë† Ã Â¤Â¸Ã Â¤Â¾Ã Â¤Â®Ã Â¤â€”Ã Â¥ÂÃ Â¤Â°Ã Â¥â‚¬ Ã Â¤Â¨Ã Â¤Â¹Ã Â¥â‚¬Ã Â¤â€š Ã Â¤Â®Ã Â¤Â¿Ã Â¤Â²Ã Â¥â‚¬",
+    "selectCategory": "Ã Â¤ÂÃ Â¤â€¢ Ã Â¤Â¶Ã Â¥ÂÃ Â¤Â°Ã Â¥â€¡Ã Â¤Â£Ã Â¥â‚¬ Ã Â¤Å¡Ã Â¥ÂÃ Â¤Â¨Ã Â¥â€¡Ã Â¤â€š",
+    "fetchingItems": "Ã Â¤ÂªÃ Â¥â€¹Ã Â¤Â°Ã Â¥ÂÃ Â¤Å¸Ã Â¤Â² Ã Â¤Â¸Ã Â¥â€¡ Ã Â¤â€ Ã Â¤â€¡Ã Â¤Å¸Ã Â¤Â® Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â°Ã Â¤Â¾Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â¤ Ã Â¤Â¹Ã Â¥â€¹ Ã Â¤Â°Ã Â¤Â¹Ã Â¥â€¡ Ã Â¤Â¹Ã Â¥Ë†Ã Â¤â€šÃ Â¥Â¤",
+    "tryDifferent": "Ã Â¤â€¢Ã Â¥â€¹Ã Â¤Ë† Ã Â¤â€¦Ã Â¤Â¨Ã Â¥ÂÃ Â¤Â¯ Ã Â¤Â¶Ã Â¥ÂÃ Â¤Â°Ã Â¥â€¡Ã Â¤Â£Ã Â¥â‚¬ Ã Â¤â€ Ã Â¤Å“Ã Â¤Â¼Ã Â¤Â®Ã Â¤Â¾Ã Â¤ÂÃ Â¤Â Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤â€“Ã Â¥â€¹Ã Â¤Å“ Ã Â¤Â¸Ã Â¤Â¾Ã Â¤Â«Ã Â¤Â¼ Ã Â¤â€¢Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€šÃ Â¥Â¤",
+    "now": "Ã Â¤â€¦Ã Â¤Â­Ã Â¥â‚¬",
+    "loadEPG": "EPG Ã Â¤Â²Ã Â¥â€¹Ã Â¤Â¡ Ã Â¤â€¢Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€š",
+    "noChannelsLoaded": "Ã Â¤â€¢Ã Â¥â€¹Ã Â¤Ë† Ã Â¤Å¡Ã Â¥Ë†Ã Â¤Â¨Ã Â¤Â² Ã Â¤Â²Ã Â¥â€¹Ã Â¤Â¡ Ã Â¤Â¨Ã Â¤Â¹Ã Â¥â‚¬Ã Â¤â€š Ã Â¤Â¹Ã Â¥ÂÃ Â¤â€ ",
+    "noEPGData": "Ã Â¤â€¢Ã Â¥â€¹Ã Â¤Ë† EPG Ã Â¤Â¡Ã Â¥â€¡Ã Â¤Å¸Ã Â¤Â¾ Ã Â¤Â¨Ã Â¤Â¹Ã Â¥â‚¬Ã Â¤â€š",
+    "filterChannels": "Ã Â¤Å¡Ã Â¥Ë†Ã Â¤Â¨Ã Â¤Â² Ã Â¤Â«Ã Â¤Â¼Ã Â¤Â¿Ã Â¤Â²Ã Â¥ÂÃ Â¤Å¸Ã Â¤Â° Ã Â¤â€¢Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€šÃ¢â‚¬Â¦",
+    "sendFeedback": "Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â°Ã Â¤Â¤Ã Â¤Â¿Ã Â¤â€¢Ã Â¥ÂÃ Â¤Â°Ã Â¤Â¿Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤Â­Ã Â¥â€¡Ã Â¤Å“Ã Â¥â€¡Ã Â¤â€š",
+    "thankYou": "Ã Â¤Â§Ã Â¤Â¨Ã Â¥ÂÃ Â¤Â¯Ã Â¤ÂµÃ Â¤Â¾Ã Â¤Â¦!",
+    "feedbackReceived": "Ã Â¤â€ Ã Â¤ÂªÃ Â¤â€¢Ã Â¥â‚¬ Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â°Ã Â¤Â¤Ã Â¤Â¿Ã Â¤â€¢Ã Â¥ÂÃ Â¤Â°Ã Â¤Â¿Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â°Ã Â¤Â¾Ã Â¤ÂªÃ Â¥ÂÃ Â¤Â¤ Ã Â¤Â¹Ã Â¥â€¹ Ã Â¤â€”Ã Â¤Ë† Ã Â¤Â¹Ã Â¥Ë†Ã Â¥Â¤",
+    "feedbackHint": "Ã Â¤Â¬Ã Â¤â€” Ã Â¤Â°Ã Â¤Â¿Ã Â¤ÂªÃ Â¥â€¹Ã Â¤Â°Ã Â¥ÂÃ Â¤Å¸, Ã Â¤Â«Ã Â¤Â¼Ã Â¥â‚¬Ã Â¤Å¡Ã Â¤Â° Ã Â¤â€¦Ã Â¤Â¨Ã Â¥ÂÃ Â¤Â°Ã Â¥â€¹Ã Â¤Â§, Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤Â¸Ã Â¤Â¾Ã Â¤Â®Ã Â¤Â¾Ã Â¤Â¨Ã Â¥ÂÃ Â¤Â¯ Ã Â¤Å¸Ã Â¤Â¿Ã Â¤ÂªÃ Â¥ÂÃ Â¤ÂªÃ Â¤Â£Ã Â¤Â¿Ã Â¤Â¯Ã Â¤Â¾Ã Â¤Â",
+    "feedbackPlaceholder": "Ã Â¤â€ Ã Â¤ÂªÃ Â¤â€¢Ã Â¥â€¡ Ã Â¤Â®Ã Â¤Â¨ Ã Â¤Â®Ã Â¥â€¡Ã Â¤â€š Ã Â¤â€¢Ã Â¥ÂÃ Â¤Â¯Ã Â¤Â¾ Ã Â¤Â¹Ã Â¥Ë†?",
+    "sending": "Ã Â¤Â­Ã Â¥â€¡Ã Â¤Å“Ã Â¤Â¾ Ã Â¤Å“Ã Â¤Â¾ Ã Â¤Â°Ã Â¤Â¹Ã Â¤Â¾ Ã Â¤Â¹Ã Â¥Ë†...",
+    "noFavsYet": "Ã Â¤â€¦Ã Â¤Â­Ã Â¥â‚¬ Ã Â¤Â¤Ã Â¤â€¢ Ã Â¤â€¢Ã Â¥â€¹Ã Â¤Ë† Ã Â¤ÂªÃ Â¤Â¸Ã Â¤â€šÃ Â¤Â¦Ã Â¥â‚¬Ã Â¤Â¦Ã Â¤Â¾ Ã Â¤Â¨Ã Â¤Â¹Ã Â¥â‚¬Ã Â¤â€š",
+    "favHint": "Ã Â¤â€¢Ã Â¤Â¿Ã Â¤Â¸Ã Â¥â‚¬ Ã Â¤Â­Ã Â¥â‚¬ Ã Â¤Å¡Ã Â¥Ë†Ã Â¤Â¨Ã Â¤Â² Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤Â«Ã Â¤Â¼Ã Â¤Â¿Ã Â¤Â²Ã Â¥ÂÃ Â¤Â® Ã Â¤ÂªÃ Â¤Â° Ã¢â„¢Â¡ Ã Â¤â€ Ã Â¤â€¡Ã Â¤â€¢Ã Â¤Â¨ Ã Â¤ÂªÃ Â¤Â° Ã Â¤â€¢Ã Â¥ÂÃ Â¤Â²Ã Â¤Â¿Ã Â¤â€¢ Ã Â¤â€¢Ã Â¤Â°Ã Â¥â€¡Ã Â¤â€šÃ Â¥Â¤",
+    "liveTV": "Ã Â¤Â²Ã Â¤Â¾Ã Â¤â€¡Ã Â¤Âµ Ã Â¤Å¸Ã Â¥â‚¬Ã Â¤ÂµÃ Â¥â‚¬",
+    "nothingStarted": "Ã Â¤â€¦Ã Â¤Â­Ã Â¥â‚¬ Ã Â¤Â¤Ã Â¤â€¢ Ã Â¤â€¢Ã Â¥ÂÃ Â¤â€º Ã Â¤Â¶Ã Â¥ÂÃ Â¤Â°Ã Â¥â€š Ã Â¤Â¨Ã Â¤Â¹Ã Â¥â‚¬Ã Â¤â€š Ã Â¤Â¹Ã Â¥ÂÃ Â¤â€ ",
+    "resumeHint": "Ã Â¤â€¢Ã Â¥ÂÃ Â¤â€º Ã Â¤Â¸Ã Â¤Â¾Ã Â¤Â®Ã Â¤â€”Ã Â¥ÂÃ Â¤Â°Ã Â¥â‚¬ Ã Â¤Â¦Ã Â¥â€¡Ã Â¤â€“Ã Â¥â€¡Ã Â¤â€š Ã Â¤â€Ã Â¤Â° Ã Â¤ÂµÃ Â¤Â¹ Ã Â¤Â¯Ã Â¤Â¹Ã Â¤Â¾Ã Â¤Â Ã Â¤Â¦Ã Â¤Â¿Ã Â¤â€“Ã Â¤Â¾Ã Â¤Ë† Ã Â¤Â¦Ã Â¥â€¡Ã Â¤â€”Ã Â¥â‚¬Ã Â¥Â¤",
+    "resumeWatching": "Ã Â¤Â«Ã Â¤Â¿Ã Â¤Â° Ã Â¤Â¸Ã Â¥â€¡ Ã Â¤Â¦Ã Â¥â€¡Ã Â¤â€“Ã Â¥â€¡Ã Â¤â€š",
+    "recentlyWatched": "Ã Â¤Â¹Ã Â¤Â¾Ã Â¤Â² Ã Â¤Â¹Ã Â¥â‚¬ Ã Â¤Â®Ã Â¥â€¡Ã Â¤â€š Ã Â¤Â¦Ã Â¥â€¡Ã Â¤â€“Ã Â¤Â¾ Ã Â¤â€”Ã Â¤Â¯Ã Â¤Â¾",
+    "searchEverything": "Ã Â¤Â¸Ã Â¤Â¬ Ã Â¤â€¢Ã Â¥ÂÃ Â¤â€º Ã Â¤â€“Ã Â¥â€¹Ã Â¤Å“Ã Â¥â€¡Ã Â¤â€š",
+    "searchHint": "Ã Â¤Â«Ã Â¤Â¼Ã Â¤Â¿Ã Â¤Â²Ã Â¥ÂÃ Â¤Â®Ã Â¥â€¡Ã Â¤â€š, Ã Â¤Â¸Ã Â¥â‚¬Ã Â¤Â°Ã Â¥â‚¬Ã Â¤Å“Ã Â¤Â¼ Ã Â¤Â¯Ã Â¤Â¾ Ã Â¤Å¡Ã Â¥Ë†Ã Â¤Â¨Ã Â¤Â²",
+    "settings": "Ã Â¤Â¸Ã Â¥â€¡Ã Â¤Å¸Ã Â¤Â¿Ã Â¤â€šÃ Â¤â€”Ã Â¥ÂÃ Â¤Â¸"
   },
   "ur": {
-    "discover": "دریافت کریں",
-    "live": "لائیو ٹی وی",
-    "movies": "فلمیں",
-    "series": "سیریز",
-    "favorites": "پسندیدہ",
-    "continueWatching": "دیکھنا جاری رکھیں",
-    "tvGuide": "ٹی وی گائیڈ",
-    "globalSearch": "عالمی تلاش",
-    "directPlay": "براہ راست چلائیں",
-    "watch": "دیکھیں",
-    "tools": "ٹولز",
-    "savedConns": "محفوظ کنکشنز",
-    "orAddNew": "یا نیا شامل کریں",
-    "connect": "جوڑیں",
-    "connectArrow": "← جوڑیں",
-    "disconnect": "منقطع کریں",
-    "feedback": "رائے",
-    "send": "بھیجیں",
-    "cancel": "منسوخ",
-    "close": "بند کریں",
-    "refresh": "تازہ کریں",
-    "search": "تلاش",
-    "prev": "پچھلا",
-    "next": "اگلا",
-    "fav": "پسند",
+    "discover": "Ã˜Â¯Ã˜Â±Ã›Å’Ã˜Â§Ã™ÂÃ˜Âª ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "live": "Ã™â€žÃ˜Â§Ã˜Â¦Ã›Å’Ã™Ë† Ã™Â¹Ã›Å’ Ã™Ë†Ã›Å’",
+    "movies": "Ã™ÂÃ™â€žÃ™â€¦Ã›Å’ÃšÂº",
+    "series": "Ã˜Â³Ã›Å’Ã˜Â±Ã›Å’Ã˜Â²",
+    "favorites": "Ã™Â¾Ã˜Â³Ã™â€ Ã˜Â¯Ã›Å’Ã˜Â¯Ã›Â",
+    "continueWatching": "Ã˜Â¯Ã›Å’ÃšÂ©ÃšÂ¾Ã™â€ Ã˜Â§ Ã˜Â¬Ã˜Â§Ã˜Â±Ã›Å’ Ã˜Â±ÃšÂ©ÃšÂ¾Ã›Å’ÃšÂº",
+    "tvGuide": "Ã™Â¹Ã›Å’ Ã™Ë†Ã›Å’ ÃšÂ¯Ã˜Â§Ã˜Â¦Ã›Å’ÃšË†",
+    "globalSearch": "Ã˜Â¹Ã˜Â§Ã™â€žÃ™â€¦Ã›Å’ Ã˜ÂªÃ™â€žÃ˜Â§Ã˜Â´",
+    "directPlay": "Ã˜Â¨Ã˜Â±Ã˜Â§Ã›Â Ã˜Â±Ã˜Â§Ã˜Â³Ã˜Âª Ãšâ€ Ã™â€žÃ˜Â§Ã˜Â¦Ã›Å’ÃšÂº",
+    "watch": "Ã˜Â¯Ã›Å’ÃšÂ©ÃšÂ¾Ã›Å’ÃšÂº",
+    "tools": "Ã™Â¹Ã™Ë†Ã™â€žÃ˜Â²",
+    "savedConns": "Ã™â€¦Ã˜Â­Ã™ÂÃ™Ë†Ã˜Â¸ ÃšÂ©Ã™â€ ÃšÂ©Ã˜Â´Ã™â€ Ã˜Â²",
+    "orAddNew": "Ã›Å’Ã˜Â§ Ã™â€ Ã›Å’Ã˜Â§ Ã˜Â´Ã˜Â§Ã™â€¦Ã™â€ž ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "connect": "Ã˜Â¬Ã™Ë†Ãšâ€˜Ã›Å’ÃšÂº",
+    "connectArrow": "Ã¢â€ Â Ã˜Â¬Ã™Ë†Ãšâ€˜Ã›Å’ÃšÂº",
+    "disconnect": "Ã™â€¦Ã™â€ Ã™â€šÃ˜Â·Ã˜Â¹ ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "feedback": "Ã˜Â±Ã˜Â§Ã˜Â¦Ã›â€™",
+    "send": "Ã˜Â¨ÃšÂ¾Ã›Å’Ã˜Â¬Ã›Å’ÃšÂº",
+    "cancel": "Ã™â€¦Ã™â€ Ã˜Â³Ã™Ë†Ã˜Â®",
+    "close": "Ã˜Â¨Ã™â€ Ã˜Â¯ ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "refresh": "Ã˜ÂªÃ˜Â§Ã˜Â²Ã›Â ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "search": "Ã˜ÂªÃ™â€žÃ˜Â§Ã˜Â´",
+    "prev": "Ã™Â¾Ãšâ€ ÃšÂ¾Ã™â€žÃ˜Â§",
+    "next": "Ã˜Â§ÃšÂ¯Ã™â€žÃ˜Â§",
+    "fav": "Ã™Â¾Ã˜Â³Ã™â€ Ã˜Â¯",
     "pip": "PiP",
-    "play": "چلائیں",
-    "go": "جائیں",
-    "playPause": "چلائیں/روکیں",
-    "fullscreen": "فل سکرین",
-    "mute": "خاموش",
-    "channels": "چینلز",
-    "volume": "آواز",
-    "portalURL": "پورٹل URL",
-    "macAddress": "MAC ایڈریس",
-    "serverURL": "سرور URL",
-    "username": "صارف نام",
-    "password": "پاسورڈ",
-    "playlistURL": "پلے لسٹ URL",
-    "connFailed": "کنکشن ناکام",
-    "connecting": "جوڑ رہے ہیں…",
-    "import": "درآمد",
+    "play": "Ãšâ€ Ã™â€žÃ˜Â§Ã˜Â¦Ã›Å’ÃšÂº",
+    "go": "Ã˜Â¬Ã˜Â§Ã˜Â¦Ã›Å’ÃšÂº",
+    "playPause": "Ãšâ€ Ã™â€žÃ˜Â§Ã˜Â¦Ã›Å’ÃšÂº/Ã˜Â±Ã™Ë†ÃšÂ©Ã›Å’ÃšÂº",
+    "fullscreen": "Ã™ÂÃ™â€ž Ã˜Â³ÃšÂ©Ã˜Â±Ã›Å’Ã™â€ ",
+    "mute": "Ã˜Â®Ã˜Â§Ã™â€¦Ã™Ë†Ã˜Â´",
+    "channels": "Ãšâ€ Ã›Å’Ã™â€ Ã™â€žÃ˜Â²",
+    "volume": "Ã˜Â¢Ã™Ë†Ã˜Â§Ã˜Â²",
+    "portalURL": "Ã™Â¾Ã™Ë†Ã˜Â±Ã™Â¹Ã™â€ž URL",
+    "macAddress": "MAC Ã˜Â§Ã›Å’ÃšË†Ã˜Â±Ã›Å’Ã˜Â³",
+    "serverURL": "Ã˜Â³Ã˜Â±Ã™Ë†Ã˜Â± URL",
+    "username": "Ã˜ÂµÃ˜Â§Ã˜Â±Ã™Â Ã™â€ Ã˜Â§Ã™â€¦",
+    "password": "Ã™Â¾Ã˜Â§Ã˜Â³Ã™Ë†Ã˜Â±ÃšË†",
+    "playlistURL": "Ã™Â¾Ã™â€žÃ›â€™ Ã™â€žÃ˜Â³Ã™Â¹ URL",
+    "connFailed": "ÃšÂ©Ã™â€ ÃšÂ©Ã˜Â´Ã™â€  Ã™â€ Ã˜Â§ÃšÂ©Ã˜Â§Ã™â€¦",
+    "connecting": "Ã˜Â¬Ã™Ë†Ãšâ€˜ Ã˜Â±Ã›ÂÃ›â€™ Ã›ÂÃ›Å’ÃšÂºÃ¢â‚¬Â¦",
+    "import": "Ã˜Â¯Ã˜Â±Ã˜Â¢Ã™â€¦Ã˜Â¯",
     "xtreamCodes": "Xtream Codes",
-    "m3uPlaylist": "M3U پلے لسٹ",
-    "stalkerPortal": "Stalker پورٹل",
-    "directHLS": "براہ راست HLS",
-    "noChannels": "کوئی چینل نہیں ملا",
-    "loading": "لوڈ ہو رہا ہے…",
-    "loadingSection": "{0} لوڈ ہو رہا ہے…",
-    "playbackErr": "پلے بیک خرابی",
-    "networkErr": "نیٹ ورک خرابی",
-    "streamNotFound": "سٹریم نہیں ملی",
-    "accessDenied": "رسائی سے انکار",
-    "serverErr": "سرور خرابی",
-    "noContent": "کوئی مواد نہیں ملا",
-    "selectCategory": "زمرہ منتخب کریں",
-    "fetchingItems": "پورٹل سے آئٹمز حاصل ہو رہے ہیں۔",
-    "tryDifferent": "دوسرا زمرہ آزمائیں یا تلاش صاف کریں۔",
-    "now": "ابھی",
-    "loadEPG": "EPG لوڈ کریں",
-    "noChannelsLoaded": "کوئی چینل لوڈ نہیں ہوا",
-    "noEPGData": "کوئی EPG ڈیٹا نہیں",
-    "filterChannels": "چینلز فلٹر کریں…",
-    "sendFeedback": "رائے بھیجیں",
-    "thankYou": "شکریہ!",
-    "feedbackReceived": "آپ کی رائے موصول ہو گئی ہے۔",
-    "feedbackHint": "بگ رپورٹس، فیچر درخواستیں، یا عمومی تبصرے",
-    "feedbackPlaceholder": "آپ کے ذہن میں کیا ہے؟",
-    "sending": "بھیج رہے ہیں...",
-    "noFavsYet": "ابھی تک کوئی پسندیدہ نہیں",
-    "favHint": "کسی भी چینل یا فلم پر ♡ آئیکن پر کلك کریں۔",
-    "liveTV": "لائیو ٹی وی",
-    "nothingStarted": "ابھی تک کچھ شروع نہیں ہوا",
-    "resumeHint": "کچھ مواد دیکھیں اور یہ یہاں دکھائی دے گا۔",
-    "resumeWatching": "دوبارہ دیکھیں",
-    "recentlyWatched": "حال ہی میں دیکھا گیا",
-    "searchEverything": "سب تلاش کریں",
-    "searchHint": "فلمیں، سیریز یا چینلز",
-    "settings": "ترتیبات"
+    "m3uPlaylist": "M3U Ã™Â¾Ã™â€žÃ›â€™ Ã™â€žÃ˜Â³Ã™Â¹",
+    "stalkerPortal": "Stalker Ã™Â¾Ã™Ë†Ã˜Â±Ã™Â¹Ã™â€ž",
+    "directHLS": "Ã˜Â¨Ã˜Â±Ã˜Â§Ã›Â Ã˜Â±Ã˜Â§Ã˜Â³Ã˜Âª HLS",
+    "noChannels": "ÃšÂ©Ã™Ë†Ã˜Â¦Ã›Å’ Ãšâ€ Ã›Å’Ã™â€ Ã™â€ž Ã™â€ Ã›ÂÃ›Å’ÃšÂº Ã™â€¦Ã™â€žÃ˜Â§",
+    "loading": "Ã™â€žÃ™Ë†ÃšË† Ã›ÂÃ™Ë† Ã˜Â±Ã›ÂÃ˜Â§ Ã›ÂÃ›â€™Ã¢â‚¬Â¦",
+    "loadingSection": "{0} Ã™â€žÃ™Ë†ÃšË† Ã›ÂÃ™Ë† Ã˜Â±Ã›ÂÃ˜Â§ Ã›ÂÃ›â€™Ã¢â‚¬Â¦",
+    "playbackErr": "Ã™Â¾Ã™â€žÃ›â€™ Ã˜Â¨Ã›Å’ÃšÂ© Ã˜Â®Ã˜Â±Ã˜Â§Ã˜Â¨Ã›Å’",
+    "networkErr": "Ã™â€ Ã›Å’Ã™Â¹ Ã™Ë†Ã˜Â±ÃšÂ© Ã˜Â®Ã˜Â±Ã˜Â§Ã˜Â¨Ã›Å’",
+    "streamNotFound": "Ã˜Â³Ã™Â¹Ã˜Â±Ã›Å’Ã™â€¦ Ã™â€ Ã›ÂÃ›Å’ÃšÂº Ã™â€¦Ã™â€žÃ›Å’",
+    "accessDenied": "Ã˜Â±Ã˜Â³Ã˜Â§Ã˜Â¦Ã›Å’ Ã˜Â³Ã›â€™ Ã˜Â§Ã™â€ ÃšÂ©Ã˜Â§Ã˜Â±",
+    "serverErr": "Ã˜Â³Ã˜Â±Ã™Ë†Ã˜Â± Ã˜Â®Ã˜Â±Ã˜Â§Ã˜Â¨Ã›Å’",
+    "noContent": "ÃšÂ©Ã™Ë†Ã˜Â¦Ã›Å’ Ã™â€¦Ã™Ë†Ã˜Â§Ã˜Â¯ Ã™â€ Ã›ÂÃ›Å’ÃšÂº Ã™â€¦Ã™â€žÃ˜Â§",
+    "selectCategory": "Ã˜Â²Ã™â€¦Ã˜Â±Ã›Â Ã™â€¦Ã™â€ Ã˜ÂªÃ˜Â®Ã˜Â¨ ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "fetchingItems": "Ã™Â¾Ã™Ë†Ã˜Â±Ã™Â¹Ã™â€ž Ã˜Â³Ã›â€™ Ã˜Â¢Ã˜Â¦Ã™Â¹Ã™â€¦Ã˜Â² Ã˜Â­Ã˜Â§Ã˜ÂµÃ™â€ž Ã›ÂÃ™Ë† Ã˜Â±Ã›ÂÃ›â€™ Ã›ÂÃ›Å’ÃšÂºÃ›â€",
+    "tryDifferent": "Ã˜Â¯Ã™Ë†Ã˜Â³Ã˜Â±Ã˜Â§ Ã˜Â²Ã™â€¦Ã˜Â±Ã›Â Ã˜Â¢Ã˜Â²Ã™â€¦Ã˜Â§Ã˜Â¦Ã›Å’ÃšÂº Ã›Å’Ã˜Â§ Ã˜ÂªÃ™â€žÃ˜Â§Ã˜Â´ Ã˜ÂµÃ˜Â§Ã™Â ÃšÂ©Ã˜Â±Ã›Å’ÃšÂºÃ›â€",
+    "now": "Ã˜Â§Ã˜Â¨ÃšÂ¾Ã›Å’",
+    "loadEPG": "EPG Ã™â€žÃ™Ë†ÃšË† ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "noChannelsLoaded": "ÃšÂ©Ã™Ë†Ã˜Â¦Ã›Å’ Ãšâ€ Ã›Å’Ã™â€ Ã™â€ž Ã™â€žÃ™Ë†ÃšË† Ã™â€ Ã›ÂÃ›Å’ÃšÂº Ã›ÂÃ™Ë†Ã˜Â§",
+    "noEPGData": "ÃšÂ©Ã™Ë†Ã˜Â¦Ã›Å’ EPG ÃšË†Ã›Å’Ã™Â¹Ã˜Â§ Ã™â€ Ã›ÂÃ›Å’ÃšÂº",
+    "filterChannels": "Ãšâ€ Ã›Å’Ã™â€ Ã™â€žÃ˜Â² Ã™ÂÃ™â€žÃ™Â¹Ã˜Â± ÃšÂ©Ã˜Â±Ã›Å’ÃšÂºÃ¢â‚¬Â¦",
+    "sendFeedback": "Ã˜Â±Ã˜Â§Ã˜Â¦Ã›â€™ Ã˜Â¨ÃšÂ¾Ã›Å’Ã˜Â¬Ã›Å’ÃšÂº",
+    "thankYou": "Ã˜Â´ÃšÂ©Ã˜Â±Ã›Å’Ã›Â!",
+    "feedbackReceived": "Ã˜Â¢Ã™Â¾ ÃšÂ©Ã›Å’ Ã˜Â±Ã˜Â§Ã˜Â¦Ã›â€™ Ã™â€¦Ã™Ë†Ã˜ÂµÃ™Ë†Ã™â€ž Ã›ÂÃ™Ë† ÃšÂ¯Ã˜Â¦Ã›Å’ Ã›ÂÃ›â€™Ã›â€",
+    "feedbackHint": "Ã˜Â¨ÃšÂ¯ Ã˜Â±Ã™Â¾Ã™Ë†Ã˜Â±Ã™Â¹Ã˜Â³Ã˜Å’ Ã™ÂÃ›Å’Ãšâ€ Ã˜Â± Ã˜Â¯Ã˜Â±Ã˜Â®Ã™Ë†Ã˜Â§Ã˜Â³Ã˜ÂªÃ›Å’ÃšÂºÃ˜Å’ Ã›Å’Ã˜Â§ Ã˜Â¹Ã™â€¦Ã™Ë†Ã™â€¦Ã›Å’ Ã˜ÂªÃ˜Â¨Ã˜ÂµÃ˜Â±Ã›â€™",
+    "feedbackPlaceholder": "Ã˜Â¢Ã™Â¾ ÃšÂ©Ã›â€™ Ã˜Â°Ã›ÂÃ™â€  Ã™â€¦Ã›Å’ÃšÂº ÃšÂ©Ã›Å’Ã˜Â§ Ã›ÂÃ›â€™Ã˜Å¸",
+    "sending": "Ã˜Â¨ÃšÂ¾Ã›Å’Ã˜Â¬ Ã˜Â±Ã›ÂÃ›â€™ Ã›ÂÃ›Å’ÃšÂº...",
+    "noFavsYet": "Ã˜Â§Ã˜Â¨ÃšÂ¾Ã›Å’ Ã˜ÂªÃšÂ© ÃšÂ©Ã™Ë†Ã˜Â¦Ã›Å’ Ã™Â¾Ã˜Â³Ã™â€ Ã˜Â¯Ã›Å’Ã˜Â¯Ã›Â Ã™â€ Ã›ÂÃ›Å’ÃšÂº",
+    "favHint": "ÃšÂ©Ã˜Â³Ã›Å’ Ã Â¤Â­Ã Â¥â‚¬ Ãšâ€ Ã›Å’Ã™â€ Ã™â€ž Ã›Å’Ã˜Â§ Ã™ÂÃ™â€žÃ™â€¦ Ã™Â¾Ã˜Â± Ã¢â„¢Â¡ Ã˜Â¢Ã˜Â¦Ã›Å’ÃšÂ©Ã™â€  Ã™Â¾Ã˜Â± ÃšÂ©Ã™â€žÃ™Æ’ ÃšÂ©Ã˜Â±Ã›Å’ÃšÂºÃ›â€",
+    "liveTV": "Ã™â€žÃ˜Â§Ã˜Â¦Ã›Å’Ã™Ë† Ã™Â¹Ã›Å’ Ã™Ë†Ã›Å’",
+    "nothingStarted": "Ã˜Â§Ã˜Â¨ÃšÂ¾Ã›Å’ Ã˜ÂªÃšÂ© ÃšÂ©Ãšâ€ ÃšÂ¾ Ã˜Â´Ã˜Â±Ã™Ë†Ã˜Â¹ Ã™â€ Ã›ÂÃ›Å’ÃšÂº Ã›ÂÃ™Ë†Ã˜Â§",
+    "resumeHint": "ÃšÂ©Ãšâ€ ÃšÂ¾ Ã™â€¦Ã™Ë†Ã˜Â§Ã˜Â¯ Ã˜Â¯Ã›Å’ÃšÂ©ÃšÂ¾Ã›Å’ÃšÂº Ã˜Â§Ã™Ë†Ã˜Â± Ã›Å’Ã›Â Ã›Å’Ã›ÂÃ˜Â§ÃšÂº Ã˜Â¯ÃšÂ©ÃšÂ¾Ã˜Â§Ã˜Â¦Ã›Å’ Ã˜Â¯Ã›â€™ ÃšÂ¯Ã˜Â§Ã›â€",
+    "resumeWatching": "Ã˜Â¯Ã™Ë†Ã˜Â¨Ã˜Â§Ã˜Â±Ã›Â Ã˜Â¯Ã›Å’ÃšÂ©ÃšÂ¾Ã›Å’ÃšÂº",
+    "recentlyWatched": "Ã˜Â­Ã˜Â§Ã™â€ž Ã›ÂÃ›Å’ Ã™â€¦Ã›Å’ÃšÂº Ã˜Â¯Ã›Å’ÃšÂ©ÃšÂ¾Ã˜Â§ ÃšÂ¯Ã›Å’Ã˜Â§",
+    "searchEverything": "Ã˜Â³Ã˜Â¨ Ã˜ÂªÃ™â€žÃ˜Â§Ã˜Â´ ÃšÂ©Ã˜Â±Ã›Å’ÃšÂº",
+    "searchHint": "Ã™ÂÃ™â€žÃ™â€¦Ã›Å’ÃšÂºÃ˜Å’ Ã˜Â³Ã›Å’Ã˜Â±Ã›Å’Ã˜Â² Ã›Å’Ã˜Â§ Ãšâ€ Ã›Å’Ã™â€ Ã™â€žÃ˜Â²",
+    "settings": "Ã˜ÂªÃ˜Â±Ã˜ÂªÃ›Å’Ã˜Â¨Ã˜Â§Ã˜Âª"
   }
 };
 function _t(lang, key, ...args) { const s = LANGS[lang]?.[key] ?? LANGS.en[key] ?? key; return args.length ? s.replace(/\{(\d+)\}/g, (_, i) => args[i] ?? "") : s; }
@@ -845,7 +848,7 @@ setEncKeySource(GUEST_ID);
 
 // VAST functions are now in vast.js
 
-// ── Adsterra Social Bar ──
+// Ã¢â€â‚¬Ã¢â€â‚¬ Adsterra Social Bar Ã¢â€â‚¬Ã¢â€â‚¬
 const ADSTERRA_COOLDOWN_MS = 3 * 60 * 1000;
 const ADSTERRA_STORAGE_KEY = "sv-adsterra-closed-at";
 
@@ -853,7 +856,7 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
     if (!ENABLE_ADSTERRA || !onAllowedPage || !isAdEligible) return;
 
-    // ✅ Check cooldown BEFORE doing anything
+    // Ã¢Å“â€¦ Check cooldown BEFORE doing anything
     const closedAt = localStorage.getItem(ADSTERRA_STORAGE_KEY);
     if (closedAt && (Date.now() - parseInt(closedAt)) < ADSTERRA_COOLDOWN_MS) return;
 
@@ -875,7 +878,7 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
             if (isAdBar) {
               localStorage.setItem(ADSTERRA_STORAGE_KEY, Date.now().toString());
               observer.disconnect();
-              // ✅ No setTicket — don't re-trigger the effect at all
+              // Ã¢Å“â€¦ No setTicket Ã¢â‚¬â€ don't re-trigger the effect at all
             }
           }
         }
@@ -890,12 +893,12 @@ function AdsterraSocialBar({ onAllowedPage, isAdEligible }) {
         document.head.removeChild(script);
       }
     };
-  }, [onAllowedPage, isAdEligible]); // ✅ Only re-evaluate if the page eligibility changes
+  }, [onAllowedPage, isAdEligible]); // Ã¢Å“â€¦ Only re-evaluate if the page eligibility changes
 
   return null;
 }
 
-// ── HilltopAds In-App Push ──
+// Ã¢â€â‚¬Ã¢â€â‚¬ HilltopAds In-App Push Ã¢â€â‚¬Ã¢â€â‚¬
 function HilltopPushAd({ onAllowedPage, isAdEligible }) {
   useEffect(() => {
     if (!ENABLE_HILLTOP || !onAllowedPage || !isAdEligible) return;
@@ -925,7 +928,7 @@ function HilltopPushAd({ onAllowedPage, isAdEligible }) {
   return null;
 }
 
-// ── Reset Password Modal ──
+// Ã¢â€â‚¬Ã¢â€â‚¬ Reset Password Modal Ã¢â€â‚¬Ã¢â€â‚¬
 function ResetPasswordModal({ token, onClose }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -963,7 +966,7 @@ function ResetPasswordModal({ token, onClose }) {
           </div>
         ) : (
           <form onSubmit={submit}>
-            {err && <div className="err" style={{marginBottom:".8rem"}}>⚠ {err}</div>}
+            {err && <div className="err" style={{marginBottom:".8rem"}}>Ã¢Å¡Â  {err}</div>}
             <div className="fg">
               <label className="fl">New Password</label>
               <input className="fi" type="password" placeholder="New Password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
@@ -985,7 +988,7 @@ function ResetPasswordModal({ token, onClose }) {
 
 
 
-// Server sync — fire-and-forget with debounce (uses auth token if logged in)
+// Server sync Ã¢â‚¬â€ fire-and-forget with debounce (uses auth token if logged in)
 const _syncTimers = {};
 function syncToServer(type, connId, data) {
   const key = `${type}:${connId}`;
@@ -1031,9 +1034,9 @@ async function migrateGuestData() {
   } catch (e) { console.warn("Guest data migration failed:", e.message); }
 }
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // THEMES (OTT Navigator style multi-theme)
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 const THEMES = {
   Dark:   { bg:"#07070f", s1:"#0f0f1c", s2:"#16162a", s3:"#1d1d35", accent:"#00d4ff", accent2:"#7c3aed", t1:"#dde0f5", t2:"#8080aa", t3:"#44445a" },
   Navy:   { bg:"#030b1a", s1:"#061228", s2:"#0d1f3c", s3:"#152850", accent:"#4da6ff", accent2:"#6c63ff", t1:"#d0e8ff", t2:"#6090b8", t3:"#304560" },
@@ -1100,7 +1103,7 @@ async function migrateOldCache() {
         } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     }
-    // Migrate old stalker channel caches (stored via db.set → localStorage)
+    // Migrate old stalker channel caches (stored via db.set Ã¢â€ â€™ localStorage)
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key?.startsWith("sv-stalker-channels-")) {
@@ -1118,12 +1121,12 @@ async function migrateOldCache() {
 }
 migrateOldCache();
 
-// Cloud restore disabled — D1 catalog API handles persistence per-connection
+// Cloud restore disabled Ã¢â‚¬â€ D1 catalog API handles persistence per-connection
 // Future: restore connections list from D1 on first load
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // UTILS
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // parseM3U is now imported from utils.js
 
 function parseXMLTV(xml) {
@@ -1159,17 +1162,17 @@ function transformStalkerItem(item) {
   return { ...item, _stalkerCmd: item.url, url: isDirect ? raw : null };
 }
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // CSS GENERATOR
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // genCSS is now imported from utils.js
 
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 // CONNECTION MANAGER MODAL
-// ══════════════════════════════════════════════════════════════════
-const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+const CONN_ICONS = { xtream:"Ã°Å¸â€œÂ¡", stalker:"Ã°Å¸â€œÂº", m3u:"Ã°Å¸â€œâ€¹", hls:"Ã°Å¸â€â€”" };
 
 const ConnectionManager = memo(function ConnectionManager({ connections, activeConnId, onSwitch, onRemove, onAddNew, onClose, authUser, isGuest, onLogout, t: ct }) {
   const t = ct || ((k) => k);
@@ -1227,7 +1230,7 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
                 {authUser ? authUser.username : "Guest"}
               </div>
               <div style={{fontSize:".6rem",color:"var(--t3)",textTransform:"capitalize"}}>
-                {authUser ? `${authUser.role} · ${connections.length}/${authUser.maxConnections || authUser.limits?.maxConnections || "?"} connections` : "Guest mode · No sync"}
+                {authUser ? `${authUser.role} Ã‚Â· ${connections.length}/${authUser.maxConnections || authUser.limits?.maxConnections || "?"} connections` : "Guest mode Ã‚Â· No sync"}
               </div>
             </div>
             {authUser && (
@@ -1251,7 +1254,7 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
                 borderRadius:"8px",transition:"all .2s"}}>
                 <div style={{display:"flex",alignItems:"center",gap:".6rem",cursor:"pointer"}}
                   onClick={() => { if (c.id !== activeConnId) onSwitch(c.id); }}>
-                  <span style={{fontSize:"1rem"}}>{CONN_ICONS[c.type] || "📡"}</span>
+                  <span style={{fontSize:"1rem"}}>{CONN_ICONS[c.type] || "Ã°Å¸â€œÂ¡"}</span>
                   <div style={{flex:1,overflow:"hidden"}}>
                     <div style={{fontSize:".8rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.label}</div>
                     <div style={{fontSize:".65rem",color:"var(--t3)",textTransform:"capitalize"}}>{c.type}</div>
@@ -1260,19 +1263,19 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
                   <button style={{background:"none",border:"1px solid var(--b2)",borderRadius:4,cursor:"pointer",fontSize:".65rem",color:"var(--t2)",padding:".15rem .4rem"}}
                     title="Diagnose connection"
                     onClick={e => { e.stopPropagation(); diagnose(c); }}>
-                    {loading ? "..." : "🩺"}
+                    {loading ? "..." : "Ã°Å¸Â©Âº"}
                   </button>
                   {c.id !== activeConnId && (
                     <button onClick={e => { e.stopPropagation(); if(confirm(`Delete "${c.label}"?`)) onRemove(c.id); }}
                       style={{background:"none",border:"none",color:"var(--danger)",cursor:"pointer",fontSize:".75rem",padding:".2rem .3rem",
                         borderRadius:"4px",lineHeight:1,flexShrink:0}}
-                      title={t("removeConn")}>✕</button>
+                      title={t("removeConn")}>Ã¢Å“â€¢</button>
                   )}
                 </div>
                 {diag && (
                   <div style={{marginTop:".4rem",padding:".35rem .5rem",background:"var(--s1)",borderRadius:6,fontSize:".65rem",lineHeight:1.6,fontFamily:"monospace"}}>
                     <span style={{color: diag.reachable ? "#4caf50" : "#f44336",fontWeight:700}}>
-                      {diag.reachable ? "● Reachable" : "● Unreachable"}
+                      {diag.reachable ? "Ã¢â€”Â Reachable" : "Ã¢â€”Â Unreachable"}
                     </span>
                     {diag.latency != null && <span style={{color:"var(--t2)",marginLeft:".5rem"}}>{diag.latency}ms</span>}
                     {Object.entries(diag.details || {}).map(([k, v]) => (
@@ -1296,9 +1299,9 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
   );
 });
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // EDIT CONNECTION MODAL
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
   const [type, setType] = useState(conn.type);
   const [label, setLabel] = useState(conn.label);
@@ -1402,7 +1405,7 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
     <div className="modal-ov" onClick={e => e.target === e.currentTarget && !loading && onClose()}>
       <div className="modal" style={{ maxWidth: "440px" }}>
         <div className="modal-title">{t("editConnection")}</div>
-        {err && <div className="err" style={{ marginBottom: "1rem" }}>⚠ {err}</div>}
+        {err && <div className="err" style={{ marginBottom: "1rem" }}>Ã¢Å¡Â  {err}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginBottom: "1rem", opacity: loading ? 0.6 : 1, pointerEvents: loading ? "none" : "auto" }}>
           <div>
             <label style={{ fontSize: ".7rem", color: "var(--t3)", display: "block", marginBottom: ".3rem" }}>{t("connectionName")}</label>
@@ -1607,7 +1610,7 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
                     }}
                     title={showPassword ? "Hide password" : "Show password"}
                   >
-                    {showPassword ? "🙈" : "👁"}
+                    {showPassword ? "Ã°Å¸â„¢Ë†" : "Ã°Å¸â€˜Â"}
                   </button>
                 </div>
               </div>
@@ -1643,37 +1646,37 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
   );
 };
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // CARD HELPERS
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 function FavBtn({ on, onClick, style={} }) {
   return (
     <button className={`fav-btn ${on?"on":""}`} style={style} title={on?"Remove from favorites":"Add to favorites"}
       onClick={e => { e.stopPropagation(); onClick(); }}>
-      {on ? "♥" : "♡"}
+      {on ? "Ã¢â„¢Â¥" : "Ã¢â„¢Â¡"}
     </button>
   );
 }
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // MAIN APP
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 const NAV = [
-  { key:"discover",  icon:"✨", tKey:"discover",          sKey:"watch" },
-  { key:"live",      icon:"📺", tKey:"live",              sKey:"watch" },
-  { key:"vod",       icon:"🎬", tKey:"movies",            sKey:"watch" },
-  { key:"series",    icon:"📽", tKey:"series",            sKey:"watch" },
-  { key:"favs",      icon:"♥",  tKey:"favorites",         sKey:"watch" },
-  { key:"continue",  icon:"⏯",  tKey:"continueWatching",  sKey:"watch" },
-  { key:"epg",       icon:"📋", tKey:"tvGuide",           sKey:"tools" },
-  { key:"search",    icon:"🔍", tKey:"globalSearch",      sKey:"tools" },
-  { key:"hls",       icon:"▶",  tKey:"directPlay",        sKey:"tools" },
-  { key:"settings",  icon:"⚙",  tKey:"settings",          sKey:"tools" },
+  { key:"discover",  icon:"Ã¢Å“Â¨", tKey:"discover",          sKey:"watch" },
+  { key:"live",      icon:"Ã°Å¸â€œÂº", tKey:"live",              sKey:"watch" },
+  { key:"vod",       icon:"Ã°Å¸Å½Â¬", tKey:"movies",            sKey:"watch" },
+  { key:"series",    icon:"Ã°Å¸â€œÂ½", tKey:"series",            sKey:"watch" },
+  { key:"favs",      icon:"Ã¢â„¢Â¥",  tKey:"favorites",         sKey:"watch" },
+  { key:"continue",  icon:"Ã¢ÂÂ¯",  tKey:"continueWatching",  sKey:"watch" },
+  { key:"epg",       icon:"Ã°Å¸â€œâ€¹", tKey:"tvGuide",           sKey:"tools" },
+  { key:"search",    icon:"Ã°Å¸â€Â", tKey:"globalSearch",      sKey:"tools" },
+  { key:"hls",       icon:"Ã¢â€“Â¶",  tKey:"directPlay",        sKey:"tools" },
+  { key:"settings",  icon:"Ã¢Å¡â„¢",  tKey:"settings",          sKey:"tools" },
 ];
 
-// ── MAIN APP ──
+// Ã¢â€â‚¬Ã¢â€â‚¬ MAIN APP Ã¢â€â‚¬Ã¢â€â‚¬
 export default function App() {
-  // ── auth state
+  // Ã¢â€â‚¬Ã¢â€â‚¬ auth state
   const [authUser, setAuthUser] = useState(null); // { id, username, role, limits }
   const [authLoading, setAuthLoading] = useState(true);
   const [isGuest, setIsGuest] = useState(false);
@@ -1752,7 +1755,7 @@ export default function App() {
     if (serverConns?.length) {
       setConnections(serverConns);
     } else if (guestConns.length > 0) {
-      // No server data, but we had guest connections — import them to the new account!
+      // No server data, but we had guest connections Ã¢â‚¬â€ import them to the new account!
       setConnections(guestConns);
     } else {
       setConnections([]);
@@ -1770,6 +1773,8 @@ export default function App() {
   async function handleLogout() {
     await authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
     localStorage.removeItem("sv-guest-mode");
+    clearContentSessionToken();
+    setEphemeralConnection(null);
     // Clear current user's connections from local state
     setConnections([]);
     setActiveConnId(null);
@@ -1799,7 +1804,7 @@ export default function App() {
     }
   }, [authLoading, userRole]);
 
-  // ── connection & data
+  // Ã¢â€â‚¬Ã¢â€â‚¬ connection & data
   const [conn, setConn]       = useState(null);
   const [channels, setChannels] = useState([]);
   const [vod, setVod]         = useState([]);
@@ -1808,18 +1813,18 @@ export default function App() {
   const [vodSyncing, setVodSyncing] = useState(false);
   const [seriesSyncing, setSeriesSyncing] = useState(false);
 
-  // ── series detail modal
+  // Ã¢â€â‚¬Ã¢â€â‚¬ series detail modal
   const [seriesDetail, setSeriesDetail] = useState(null); // {item, seasons, activeSeason}
   const [seriesLoading, setSeriesLoading] = useState(false);
 
-  // ── upgrade prompt for free/guest users
+  // Ã¢â€â‚¬Ã¢â€â‚¬ upgrade prompt for free/guest users
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
   const [episodeLoading, setEpisodeLoading] = useState(null); // episode number being loaded
   const [expandedItem, setExpandedItem] = useState(null); // inline detail expansion for vod/series card
   const [tmdbData, setTmdbData] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
 
-  // ── ui state
+  // Ã¢â€â‚¬Ã¢â€â‚¬ ui state
   const [section, setSection] = useState(() => {
     try { return localStorage.getItem("sv-lastSection") ? JSON.parse(localStorage.getItem("sv-lastSection")) : "live"; } catch { return "live"; }
   });
@@ -1838,22 +1843,24 @@ export default function App() {
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
   const [showCatEditor, setShowCatEditor] = useState(null); // section name or null
 
-  // ── theme
+  // Ã¢â€â‚¬Ã¢â€â‚¬ theme
   const [themeName, setThemeName] = useState("Dark");
 
-  // ── language (i18n)
+  // Ã¢â€â‚¬Ã¢â€â‚¬ language (i18n)
   const [lang, setLang] = useState(() => {
     try { return localStorage.getItem("sv-lang") || "en"; } catch { return "en"; }
   });
   const t = useCallback((key, ...args) => _t(lang, key, ...args), [lang]);
   const isRTL = RTL_LANGS.includes(lang);
+  const httpContentMode = isHttpContentMode();
 
   const { state: sv, actions: svActions } = useStreamVault({
     db, syncToServer, syncConnectionsToServer: async (conns) => {
       const encrypted = await encryptConnections(conns);
       syncToServer("connections", "_all", encrypted);
     },
-    authUser, isGuest
+    authUser, isGuest,
+    persistActiveConnId: !httpContentMode
   });
 
   const connections = sv.connections;
@@ -1864,6 +1871,8 @@ export default function App() {
   const setFavs = svActions.setFavorites;
   const history = sv.history;
   const historyRef = useRef(history);
+  const lastHistoryLocalWriteRef = useRef(0);
+  const lastHistoryServerSyncRef = useRef(0);
   useEffect(() => { historyRef.current = history; }, [history]);
   const setHistory = svActions.setHistory;
 
@@ -1871,9 +1880,12 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [editingConn, setEditingConn] = useState(null);
   const [contentSessionError, setContentSessionError] = useState("");
-  const [httpContentMode] = useState(() => isHttpContentMode());
+  const [contentSessionLoading, setContentSessionLoading] = useState(httpContentMode);
+  const [contentSessionRetryKey, setContentSessionRetryKey] = useState(0);
+  const [contentSessionOpening, setContentSessionOpening] = useState(false);
+  const [ephemeralConnection, setEphemeralConnection] = useState(null);
 
-  // ── hidden cats per section
+  // Ã¢â€â‚¬Ã¢â€â‚¬ hidden cats per section
   const [hiddenCats, setHiddenCats] = useState({live:[], vod:[], series:[]});
 
   // If current category becomes hidden, switch back to All
@@ -1885,14 +1897,26 @@ export default function App() {
   }, [hiddenCats, section, cat, isCatHidden]);
 
   useEffect(() => {
-    if (!httpContentMode) return;
+    if (!httpContentMode) {
+      setEphemeralConnection(null);
+      setContentSessionError("");
+      setContentSessionLoading(false);
+      return;
+    }
 
     let cancelled = false;
+    setContentSessionError("");
+    setContentSessionLoading(true);
 
     (async () => {
       try {
         const token = contentSessionToken();
         if (!token) throw new Error("Missing content session token");
+
+        persistContentSessionToken(token);
+        if (window.location.search) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
 
         const session = await validateContentSession(token);
         if (cancelled) return;
@@ -1912,7 +1936,7 @@ export default function App() {
         };
 
         setContentSessionError("");
-        setConnections([normalizedConnection]);
+        setEphemeralConnection(normalizedConnection);
         setConn(normalizedConnection.config);
         setActiveConnId(normalizedConnection.id);
         setSection("live");
@@ -1927,15 +1951,25 @@ export default function App() {
         setCat("All");
         setSearch("");
         setGlobalQ("");
+        setContentSessionLoading(false);
       } catch (e) {
-        if (!cancelled) setContentSessionError(e?.message || "Content session expired or invalid");
+        if (!cancelled) {
+          const code = e?.code || e?.status;
+          if (code === "unauthorized" || code === "invalid" || code === 401 || code === 403 || (!e?.code && /Missing content session token/.test(e?.message || ""))) {
+            clearContentSessionToken();
+          }
+          setEphemeralConnection(null);
+          setConn(null);
+          setContentSessionError(e?.message || "Content session expired or invalid");
+          setContentSessionLoading(false);
+        }
       }
     })();
 
     return () => { cancelled = true; };
-  }, [httpContentMode, setActiveConnId, setConnections]);
+  }, [httpContentMode, contentSessionRetryKey, setActiveConnId]);
 
-  // ── EPG
+  // Ã¢â€â‚¬Ã¢â€â‚¬ EPG
   const [epgURL, setEpgURL]   = useState("");
   const [epgSources, setEpgSources] = useState([]); // Array of { id, label, data }
   const [activeEpgSource, setActiveEpgSource] = useState("all");
@@ -2008,22 +2042,22 @@ export default function App() {
     setActiveEpgSource("all");
   }, [activeConnId]);
 
-  // ── Stalker lazy-load
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Stalker lazy-load
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
   const [stalkerSeriesCats, setStalkerSeriesCats] = useState([]); // [{id,title,count}]
   const [catLoading,        setCatLoading]        = useState(false);
   const fetchingCatRef = useRef(new Set());
   const [prefetchProgress, setPrefetchProgress] = useState(null); // {done,total} or null
 
-  // ── last synced timestamps
+  // Ã¢â€â‚¬Ã¢â€â‚¬ last synced timestamps
   const [lastSynced, setLastSynced] = useState({}); // {live: timestamp, vod: timestamp, series: timestamp}
   const [autoConnected, setAutoConnected] = useState(false); // true if loaded from IDB cache
   const [connError, setConnError] = useState(""); // Xtream auth or fetch error
 
-  // ── TMDB
+  // Ã¢â€â‚¬Ã¢â€â‚¬ TMDB
   const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "server");
 
-  // ── Feedback widget
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Feedback widget
   const [fbOpen, setFbOpen] = useState(false);
   const [fbMsg, setFbMsg] = useState("");
   const [fbSending, setFbSending] = useState(false);
@@ -2052,13 +2086,13 @@ export default function App() {
     setTimeout(() => { setFbDone(false); setFbOpen(false); }, 1800);
   }, [fbMsg, fbSending, section]);
 
-  // ── CSS injection
+  // Ã¢â€â‚¬Ã¢â€â‚¬ CSS injection
   useEffect(() => {
     const el = document.getElementById("sv-css") || (() => { const s = document.createElement("style"); s.id="sv-css"; document.head.appendChild(s); return s; })();
     el.textContent = genCSS(THEMES[themeName]);
   }, [themeName]);
 
-  // ── Debounced Search for Analytics
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Debounced Search for Analytics
   const debouncedSearch = useMemo(() => debounce((term, type) => {
     const queryLength = term.trim().length;
     if (queryLength > 0) trackAnalytics("search", {
@@ -2078,7 +2112,7 @@ export default function App() {
     debouncedSearch(term, "global");
   }
 
-  // ── TMDB enrichment for detail modal
+  // Ã¢â€â‚¬Ã¢â€â‚¬ TMDB enrichment for detail modal
   useEffect(() => {
     if (!expandedItem || !tmdbKey) { setTmdbData(null); setShowTrailer(false); return; }
 
@@ -2136,7 +2170,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [expandedItem, tmdbKey]);
 
-  // ── load persisted data + auto-connect from IDB
+  // Ã¢â€â‚¬Ã¢â€â‚¬ load persisted data + auto-connect from IDB
   useEffect(() => {
     (async () => {
       // Migrate old profile/lastConn data to new connection system
@@ -2160,7 +2194,7 @@ export default function App() {
           if (connObj) {
             const cached = await loadFromCache(activeConnId, connObj);
             if (!cached) {
-              // No cache, but active connection exists — set conn so app screen loads
+              // No cache, but active connection exists Ã¢â‚¬â€ set conn so app screen loads
               setConn(connObj.config);
             }
           }
@@ -2169,12 +2203,12 @@ export default function App() {
     })();
   }, [activeConnId, connections]); // re-run when hook populates these from IDB
 
-  // ── restore from server when local favs/history are empty (fires after useStreamVault loads from db)
+  // Ã¢â€â‚¬Ã¢â€â‚¬ restore from server when local favs/history are empty (fires after useStreamVault loads from db)
   useEffect(() => {
     if (!activeConnId) return;
     let cancelled = false;
     (async () => {
-      // Check if local favs/history are empty — if so, restore from server
+      // Check if local favs/history are empty Ã¢â‚¬â€ if so, restore from server
       const favsEmpty = !sv.favorites
         || (Object.keys(sv.favorites.live||{}).length === 0
           && Object.keys(sv.favorites.vod||{}).length === 0
@@ -2194,7 +2228,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeConnId, sv.favorites, sv.history]);
 
-  // ── load cached content from IDB for a connection
+  // Ã¢â€â‚¬Ã¢â€â‚¬ load cached content from IDB for a connection
   async function loadFromCache(id, connObj) {
     const cachedChannels = await idbCache.get(`content:${id}:live`);
     if (Array.isArray(cachedChannels) && cachedChannels.length) {
@@ -2222,7 +2256,7 @@ export default function App() {
     return false;
   }
 
-  // ── migrate old profile/lastConn data to connection system
+  // Ã¢â€â‚¬Ã¢â€â‚¬ migrate old profile/lastConn data to connection system
   async function migrateToConnections() {
     try {
       if (localStorage.getItem("sv-connections")) return; // already migrated
@@ -2232,9 +2266,9 @@ export default function App() {
       const cId = connId(lastConn);
       if (!cId) return;
       const color = PROFILE_COLORS[0];
-      const label = lastConn.type === "xtream" ? `${lastConn.user} · Xtream`
-        : lastConn.type === "stalker" ? `Stalker · ${(lastConn.mac||"").slice(-5)}`
-        : lastConn.type === "m3u" ? `M3U · ${(lastConn.url||"").split("/").pop()?.slice(0,20)||"playlist"}`
+      const label = lastConn.type === "xtream" ? `${lastConn.user} Ã‚Â· Xtream`
+        : lastConn.type === "stalker" ? `Stalker Ã‚Â· ${(lastConn.mac||"").slice(-5)}`
+        : lastConn.type === "m3u" ? `M3U Ã‚Â· ${(lastConn.url||"").split("/").pop()?.slice(0,20)||"playlist"}`
         : "Direct HLS";
       const connObj = { id: cId, type: lastConn.type, label, color, config: lastConn };
       setConnections([connObj]);
@@ -2260,12 +2294,12 @@ export default function App() {
     } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   }
 
-  // ── save theme
+  // Ã¢â€â‚¬Ã¢â€â‚¬ save theme
   useEffect(() => {
     db.set("sv-theme", themeName);
   }, [themeName]);
 
-  // ── save language
+  // Ã¢â€â‚¬Ã¢â€â‚¬ save language
   useEffect(() => {
     localStorage.setItem("sv-lang", lang);
   }, [lang]);
@@ -2274,12 +2308,12 @@ export default function App() {
     localStorage.setItem("sv-autoLoadMore", JSON.stringify(autoLoadMore));
   }, [autoLoadMore]);
 
-  // ── persist section to localStorage
+  // Ã¢â€â‚¬Ã¢â€â‚¬ persist section to localStorage
   useEffect(() => {
     localStorage.setItem("sv-lastSection", JSON.stringify(section));
   }, [section]);
 
-  // ── connection
+  // Ã¢â€â‚¬Ã¢â€â‚¬ connection
   useEffect(() => {
     if (!conn) return;
     // If auto-connected from IDB cache, skip fetching from provider
@@ -2455,7 +2489,7 @@ export default function App() {
     finally { setLoading(false); }
   }
 
-  // ── Load category list for Stalker VOD / Series (permanent IDB cache, no TTL)
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Load category list for Stalker VOD / Series (permanent IDB cache, no TTL)
   // background=true: don't touch setCat/setLoading (used for pre-fetching on connect)
   async function loadStalkerCats(sec, force = false, background = false) {
     const cId = connId(conn);
@@ -2489,7 +2523,7 @@ export default function App() {
     }
   }
 
-  // ── Load items for one Stalker category (permanent IndexedDB cache, no TTL)
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Load items for one Stalker category (permanent IndexedDB cache, no TTL)
   async function loadStalkerCatItems(sec, catId, catTitle, silent = false, force = false) {
     const refKey = `${sec}-${catId}`;
     if (fetchingCatRef.current.has(refKey)) return;
@@ -2505,7 +2539,7 @@ export default function App() {
     if (!force) {
       try {
         const cached = await idbCache.get(CACHE_KEY);
-        // No TTL — permanent cache
+        // No TTL Ã¢â‚¬â€ permanent cache
         if (cached) {
           const items = cached.items || cached;
           if (items.length) { applyItems(items); fetchingCatRef.current.delete(refKey); return; }
@@ -2525,7 +2559,7 @@ export default function App() {
     finally { if (!silent) setCatLoading(false); fetchingCatRef.current.delete(refKey); }
   }
 
-  // ── Option F: background prefetch remaining categories sequentially
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Option F: background prefetch remaining categories sequentially
   async function prefetchRemainingStalkerCats(sec, cats, force = false) {
     setPrefetchProgress({ done: 0, total: cats.length });
     let done = 0;
@@ -2538,7 +2572,7 @@ export default function App() {
     // Full dataset save is handled by the debounced contentSaveEffect below
   }
 
-  // ── Debounced save: persist vod/series to IDB + D1 when data stabilizes
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Debounced save: persist vod/series to IDB + D1 when data stabilizes
   const contentSaveTimer = useRef(null);
   useEffect(() => {
     if (!conn) return;
@@ -2576,7 +2610,7 @@ export default function App() {
   function resolveStalkerStream(item) {
     const contentType = item.type || "live";
     const cmd = item._stalkerCmd;
-    // Use play endpoint directly — it does create_link + stream pipe in one request.
+    // Use play endpoint directly Ã¢â‚¬â€ it does create_link + stream pipe in one request.
     // This preserves IP-bound and time-limited portal tokens.
     return stalkerPlayUrl(cmd, contentType);
   }
@@ -2608,7 +2642,7 @@ export default function App() {
     finally { if (token === epgLoadToken.current) setEpgLoading(false); }
   }
 
-  // ── load EPG when connection is active
+  // Ã¢â€â‚¬Ã¢â€â‚¬ load EPG when connection is active
   useEffect(() => {
     if (conn?.type === "stalker") loadStalkerEPG();
   }, [activeConnId]);
@@ -2632,7 +2666,7 @@ export default function App() {
       if (token !== epgLoadToken.current) return; // Stale, ignore
       if (data.programs) {
         const id = `stalker:${conn.server}:${conn.mac}`;
-        const label = `Stalker · ${conn.mac.slice(-5)}`;
+        const label = `Stalker Ã‚Â· ${conn.mac.slice(-5)}`;
         const newSource = { id, label, kind: "stalker", sourceKey: id, connectionId: activeConnId, data: data.programs };
         setEpgSources(prev => {
           if (token !== epgLoadToken.current) return prev; // Stale, don't update
@@ -2663,7 +2697,7 @@ export default function App() {
     }
   }
 
-  // ── favorites
+  // Ã¢â€â‚¬Ã¢â€â‚¬ favorites
   function toggleFav(item) {
     const type = item.type || "live";
     const newFavs = { ...favs, [type]: { ...favs[type] } };
@@ -2682,12 +2716,18 @@ export default function App() {
     return !!(item && favs[type]?.[item.id || item.url]);
   }
 
-  // ── history / continue watching
-  function persistHistory(newHistory) {
+  // Ã¢â€â‚¬Ã¢â€â‚¬ history / continue watching
+  function persistHistory(newHistory, flush = false) {
     historyRef.current = newHistory;
     setHistory(newHistory);
-    if (activeConnId) {
+    if (!activeConnId) return;
+    const now = Date.now();
+    if (flush || !lastHistoryLocalWriteRef.current || now - lastHistoryLocalWriteRef.current >= 20000) {
+      lastHistoryLocalWriteRef.current = now;
       db.set(`sv-history-${activeConnId}`, newHistory);
+    }
+    if (flush || !lastHistoryServerSyncRef.current || now - lastHistoryServerSyncRef.current >= 60000) {
+      lastHistoryServerSyncRef.current = now;
       syncToServer("history", activeConnId, newHistory);
     }
   }
@@ -2712,10 +2752,10 @@ export default function App() {
       position: item.type === "live" ? 0 : Number(previous?.position || item.position || 0),
       duration: Number(previous?.duration || item.duration || 0),
     };
-    persistHistory([entry, ...historyRef.current.filter(h => historyKey(h) !== historyKey(item))].slice(0, 60));
+    persistHistory([entry, ...historyRef.current.filter(h => historyKey(h) !== historyKey(item))].slice(0, 60), true);
   }
 
-  function updateHistoryProgress(item, { position = 0, duration = 0, completed = false } = {}) {
+  function updateHistoryProgress(item, { position = 0, duration = 0, completed = false, reason = 'interval' } = {}) {
     if (!item || item.type === "live") return;
     const key = historyKey(item);
     if (!key) return;
@@ -2729,7 +2769,8 @@ export default function App() {
         duration: duration || h.duration || item.duration || 0,
       };
     });
-    persistHistory(next);
+    const flush = reason === 'ended' || reason === 'close' || reason === 'pause' || reason === 'hidden';
+    persistHistory(next, flush);
   }
 
   async function playItem(item) {
@@ -2789,7 +2830,7 @@ export default function App() {
     }
   }
 
-  // ── catchup / timeshift playback for past EPG programs
+  // Ã¢â€â‚¬Ã¢â€â‚¬ catchup / timeshift playback for past EPG programs
   async function playCatchup(channel, program) {
     if (!program || !channel) return;
     const startUTC = Math.floor(program.start / 1000);
@@ -2859,7 +2900,7 @@ export default function App() {
     addHistory(catchupItem);
   }
 
-  // ── series detail (seasons/episodes)
+  // Ã¢â€â‚¬Ã¢â€â‚¬ series detail (seasons/episodes)
   async function openSeriesDetail(item) {
     if (!item || item.type !== "series") return;
     setSeriesLoading(true);
@@ -2901,7 +2942,7 @@ export default function App() {
     setEpisodeLoading(episodeNum);
     try {
       if (conn?.type === "stalker") {
-        // Resolve series episode stream — try CF Worker first, fall back to Koyeb
+        // Resolve series episode stream Ã¢â‚¬â€ try CF Worker first, fall back to Koyeb
         let resolvedUrl = null;
         try {
           const playUrl = stalkerPlayUrl(season.cmd, "series", episodeNum);
@@ -2946,11 +2987,11 @@ export default function App() {
     }
   }
 
-  // ── connection management
+  // Ã¢â€â‚¬Ã¢â€â‚¬ connection management
   function makeConnectionLabel(type, config) {
-    if (type === "xtream") return `${config.user} · Xtream`;
-    if (type === "stalker") { try { const host = new URL(config.server).hostname.replace(/^(www|portal)\./, ""); return `${host} · ${(config.mac||"").slice(-8)}`; } catch (e) { console.warn("IDB/localStorage error:", e.message); } return `Stalker · ${(config.mac||"").slice(-8)}`; }
-    if (type === "m3u") return `M3U · ${(config.url||"").split("/").pop()?.slice(0,20)||"playlist"}`;
+    if (type === "xtream") return `${config.user} Ã‚Â· Xtream`;
+    if (type === "stalker") { try { const host = new URL(config.server).hostname.replace(/^(www|portal)\./, ""); return `${host} Ã‚Â· ${(config.mac||"").slice(-8)}`; } catch (e) { console.warn("IDB/localStorage error:", e.message); } return `Stalker Ã‚Â· ${(config.mac||"").slice(-8)}`; }
+    if (type === "m3u") return `M3U Ã‚Â· ${(config.url||"").split("/").pop()?.slice(0,20)||"playlist"}`;
     return "Direct HLS";
   }
 
@@ -2959,7 +3000,7 @@ export default function App() {
     if (!cId) return "Invalid connection";
     const existing = connections.find(c => c.id === cId);
     if (existing) {
-      // Already saved — just activate
+      // Already saved Ã¢â‚¬â€ just activate
       setActiveConnId(cId);
       db.set("sv-activeConn", cId);
       return null;
@@ -2979,11 +3020,30 @@ export default function App() {
   }
 
   async function switchConnection(id) {
+    if (contentSessionOpening) return;
     if (id === activeConnId) { setShowConnManager(false); return; }
     const target = connections.find(c => c.id === id);
     if (!target) return;
-    if (!httpContentMode && await maybeOpenDirectContentSession(target, { location: window.location })) {
-      return;
+    if (!httpContentMode) {
+      setContentSessionOpening(true);
+      setConnError("");
+      try {
+        const opened = await maybeOpenDirectContentSession(target, { location: window.location });
+        if (opened) return;
+      } catch (e) {
+        const code = e?.code || e?.status;
+        if (code === 401 || code === 403 || /unauthorized|invalid/i.test(e?.message || "")) {
+          const homeUrl = getAppHomeUrl();
+          if (homeUrl && typeof window !== "undefined" && window.location) {
+            window.location.assign(homeUrl + "?reason=auth");
+          }
+          return;
+        }
+        setConnError(e?.message || "Failed to open direct content session");
+        return;
+      } finally {
+        setContentSessionOpening(false);
+      }
     }
     setShowConnManager(false);
     epgLoadToken.current++; // Invalidate any in-flight EPG loads
@@ -3033,7 +3093,7 @@ export default function App() {
     disconnect();
   }
 
-  // ── hidden cats
+  // Ã¢â€â‚¬Ã¢â€â‚¬ hidden cats
   function toggleHideCat(sec, catName) {
     const arr = hiddenCats[sec] || [];
     const newArr = arr.includes(catName) ? arr.filter(c=>c!==catName) : [...arr, catName];
@@ -3046,7 +3106,7 @@ export default function App() {
     return (hiddenCats[sec]||[]).includes(catName);
   }
 
-  // ── context menu close
+  // Ã¢â€â‚¬Ã¢â€â‚¬ context menu close
   useEffect(() => {
     const close = () => setCtx(null);
     window.addEventListener("click", close);
@@ -3106,6 +3166,9 @@ export default function App() {
 
   function disconnect() {
     if (httpContentMode) {
+      clearContentSessionToken();
+      setEphemeralConnection(null);
+      setContentSessionError("");
       navigateToAppHome({ location: window.location });
       return;
     }
@@ -3118,7 +3181,7 @@ export default function App() {
     db.set("sv-activeConn", null);
   }
 
-  // ── DERIVED DATA
+  // Ã¢â€â‚¬Ã¢â€â‚¬ DERIVED DATA
   const getItems = useCallback((sec) => sec==="live"?channels : sec==="vod"?vod : series, [channels, vod, series]);
 
   const curCatsAll = useMemo(() => {
@@ -3163,7 +3226,7 @@ export default function App() {
     return m;
   }, [history]);
 
-  // ── Smart recommendations: genre-based matching from watch history + favorites
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Smart recommendations: genre-based matching from watch history + favorites
   const recommendations = useMemo(() => {
     if (section !== "vod" && section !== "series") return [];
     const items = section === "vod" ? vod : series;
@@ -3195,7 +3258,7 @@ export default function App() {
     return candidates.slice(0, 20);
   }, [section, vod, series, history, favs]);
 
-  // ── global search
+  // Ã¢â€â‚¬Ã¢â€â‚¬ global search
   const searchResults = useMemo(() => {
     if (deferredGlobalQ.length <= 1) return [];
     const q = deferredGlobalQ.toLowerCase();
@@ -3208,7 +3271,9 @@ export default function App() {
 
   const onAllowedPage = (authUser || isGuest) && !!conn;
   const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
-  const activeConnection = connections.find(c => c.id === activeConnId);
+  const activeConnection = httpContentMode
+    ? ephemeralConnection
+    : connections.find(c => c.id === activeConnId);
   const channelCount = channels.length + vod.length + series.length;
   const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
   const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
@@ -3401,25 +3466,41 @@ export default function App() {
     </>
   );
 
-  if (httpContentMode && contentSessionError) {
-    return (
-      <div className="app" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "2rem", textAlign: "center" }}>
-        <div style={{ maxWidth: 520, width: "100%", background: "var(--s1, #111)", border: "1px solid var(--b1, rgba(255,255,255,0.08))", borderRadius: 16, padding: "1.5rem" }}>
-          <div style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: ".5rem" }}>Unable to open content session</div>
-          <div style={{ color: "var(--t2, #9aa)", fontSize: ".9rem" }}>{contentSessionError}</div>
-        </div>
-      </div>
-    );
-  }
-
-
-
-  if (httpContentMode && !conn) {
+  if (httpContentMode && contentSessionLoading && !conn && !contentSessionError) {
     return (
       <div className="app" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "2rem" }}>
         <div style={{ width: "100%", maxWidth: 360, textAlign: "center", background: "var(--s1, #111)", border: "1px solid var(--b1, rgba(255,255,255,0.08))", borderRadius: 16, padding: "2rem" }}>
           <div className="spinner" style={{ margin: "0 auto 1rem" }} />
           <div style={{ color: "var(--t2, #9aa)", fontSize: ".9rem" }}>Loading content session...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (httpContentMode && contentSessionError) {
+    return (
+      <div className="app" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "2rem", textAlign: "center" }}>
+        <div style={{ maxWidth: 520, width: "100%", background: "var(--s1, #111)", border: "1px solid var(--b1, rgba(255,255,255,0.08))", borderRadius: 16, padding: "1.5rem" }}>
+          <div style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: ".5rem" }}>Unable to open content session</div>
+          <div style={{ color: "var(--t2, #9aa)", fontSize: ".9rem", lineHeight: 1.6, marginBottom: "1rem" }}>{contentSessionError}</div>
+          <div style={{ display: "flex", gap: ".5rem", justifyContent: "center", flexWrap: "wrap" }}>
+            <button
+              className="btn-primary"
+              onClick={() => setContentSessionRetryKey(key => key + 1)}
+              style={{ minWidth: 140 }}
+            >
+              Try Again
+            </button>
+            <button
+              onClick={() => {
+                clearContentSessionToken();
+                navigateToAppHome({ location: window.location });
+              }}
+              style={{ minWidth: 180, background: "transparent", border: "1px solid var(--b2)", color: "var(--t1)" }}
+            >
+              Return to Secure Setup
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -3497,9 +3578,9 @@ export default function App() {
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
       <AdsterraSocialBar onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
       <HilltopPushAd onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
-      {/* ── MOBILE TOP BAR + DRAWER ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ MOBILE TOP BAR + DRAWER Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div className="mob-topbar">
-        <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>☰</button>
+        <button className="mob-hamburger" onClick={() => setMobileMenuOpen(true)}>Ã¢ËœÂ°</button>
         <span className="mob-topbar-title">Portal Heaven</span>
         <span className="mob-topbar-section">{LABEL[section]}</span>
       </div>
@@ -3510,7 +3591,7 @@ export default function App() {
           <div className="conn-card" style={{borderLeftColor: activeConnection.color}}
             onClick={() => { setShowConnManager(true); setMobileMenuOpen(false); }}>
             <div className="conn-card-row">
-              <span className="conn-card-icon">{CONN_ICONS[activeConnection.type] || "📡"}</span>
+              <span className="conn-card-icon">{CONN_ICONS[activeConnection.type] || "Ã°Å¸â€œÂ¡"}</span>
               <div className="conn-card-info">
                 <div className="conn-card-label">{activeConnection.label}</div>
                 <div className="conn-card-stats">{channelCount.toLocaleString()} items</div>
@@ -3542,24 +3623,24 @@ export default function App() {
         <div className="s-bottom">
           {authUser && (
             <div style={{fontSize:".72rem",color:"var(--t3)",padding:"0 0 .4rem",display:"flex",alignItems:"center",gap:".3rem"}}>
-              <span style={{color:"var(--accent)"}}>●</span> {authUser.username} <span style={{textTransform:"capitalize",opacity:.7}}>({authUser.role})</span>
+              <span style={{color:"var(--accent)"}}>Ã¢â€”Â</span> {authUser.username} <span style={{textTransform:"capitalize",opacity:.7}}>({authUser.role})</span>
             </div>
           )}
           <div className="s-row">
-            <button className="btn-sm" onClick={() => { setFbOpen(true); setMobileMenuOpen(false); }}>💬 {t("feedback")}</button>
-            <button className="btn-sm danger" onClick={() => { disconnect(); setMobileMenuOpen(false); }}>⏏ {t("disconnect")}</button>
+            <button className="btn-sm" onClick={() => { setFbOpen(true); setMobileMenuOpen(false); }}>Ã°Å¸â€™Â¬ {t("feedback")}</button>
+            <button className="btn-sm danger" onClick={() => { disconnect(); setMobileMenuOpen(false); }}>Ã¢ÂÂ {t("disconnect")}</button>
           </div>
           {(authUser || isGuest) && (
             <div style={{marginTop:".4rem"}}>
               <button className="btn-sm" style={{width:"100%",fontSize:".72rem"}} onClick={() => { handleLogout(); setMobileMenuOpen(false); }}>
-                {authUser ? "🚪 Logout" : "🔑 Login"}
+                {authUser ? "Ã°Å¸Å¡Âª Logout" : "Ã°Å¸â€â€˜ Login"}
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* ── SIDEBAR (desktop only) ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ SIDEBAR (desktop only) Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div className="sidebar">
         <div className="s-logo">Portal Heaven</div>
 
@@ -3568,20 +3649,20 @@ export default function App() {
           <div className="conn-card" style={{borderLeftColor: activeConnection.color}}
             onClick={() => setShowConnManager(true)} title="Switch connection">
             <div className="conn-card-row">
-              <span className="conn-card-icon">{CONN_ICONS[activeConnection.type] || "📡"}</span>
+              <span className="conn-card-icon">{CONN_ICONS[activeConnection.type] || "Ã°Å¸â€œÂ¡"}</span>
               <div className="conn-card-info">
                 <div className="conn-card-label">{activeConnection.label}</div>
                 <div className="conn-card-stats">{channelCount.toLocaleString()} items</div>
                 {activeConnection?.config?.accountInfo?.daysLeft !== null && activeConnection?.config?.accountInfo?.daysLeft !== undefined && (
                   <div style={{fontSize:".62rem", color: activeConnection.config.accountInfo.daysLeft <= 7 ? "var(--danger)" : "var(--t3)", marginTop:".15rem"}}>
                     {activeConnection.config.accountInfo.status === "active"
-                      ? `${activeConnection.config.accountInfo.daysLeft}d left${activeConnection.config.accountInfo.tariff ? ` · ${activeConnection.config.accountInfo.tariff}` : ""}`
+                      ? `${activeConnection.config.accountInfo.daysLeft}d left${activeConnection.config.accountInfo.tariff ? ` Ã‚Â· ${activeConnection.config.accountInfo.tariff}` : ""}`
                       : activeConnection.config.accountInfo.status}
                   </div>
                 )}
               </div>
             </div>
-            <div className="conn-card-switch">▼ {t("switchConn")}</div>
+            <div className="conn-card-switch">Ã¢â€“Â¼ {t("switchConn")}</div>
           </div>
         )}
 
@@ -3623,39 +3704,39 @@ export default function App() {
         <div className="s-bottom">
           {authUser && (
             <div style={{fontSize:".68rem",color:"var(--t3)",padding:"0 0 .4rem",display:"flex",alignItems:"center",gap:".3rem"}}>
-              <span style={{color:"var(--accent)"}}>●</span> {authUser.username} <span style={{textTransform:"capitalize",opacity:.7}}>({authUser.role})</span>
+              <span style={{color:"var(--accent)"}}>Ã¢â€”Â</span> {authUser.username} <span style={{textTransform:"capitalize",opacity:.7}}>({authUser.role})</span>
             </div>
           )}
           {isGuest && (
             <div style={{fontSize:".68rem",color:"var(--t3)",padding:"0 0 .4rem"}}>
-              <span style={{color:"var(--t3)"}}>●</span> Guest — <button onClick={() => { handleLogout(); }}
+              <span style={{color:"var(--t3)"}}>Ã¢â€”Â</span> Guest Ã¢â‚¬â€ <button onClick={() => { handleLogout(); }}
                 style={{background:"none",border:"none",color:"var(--accent)",cursor:"pointer",fontSize:".68rem",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>
                 Login for more features</button>
             </div>
           )}
           <div className="s-row">
-            <button className="btn-sm" onClick={() => setFbOpen(true)}>💬 {t("feedback")}</button>
-            <button className="btn-sm danger" onClick={disconnect}>⏏ {t("disconnect")}</button>
+            <button className="btn-sm" onClick={() => setFbOpen(true)}>Ã°Å¸â€™Â¬ {t("feedback")}</button>
+            <button className="btn-sm danger" onClick={disconnect}>Ã¢ÂÂ {t("disconnect")}</button>
           </div>
           {(authUser || isGuest) && (
             <div style={{marginTop:".4rem"}}>
               <button className="btn-sm" style={{width:"100%",fontSize:".68rem"}} onClick={() => { handleLogout(); }}>
-                {authUser ? "🚪 Logout" : "🔑 Login"}
+                {authUser ? "Ã°Å¸Å¡Âª Logout" : "Ã°Å¸â€â€˜ Login"}
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* ── CONTENT ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ CONTENT Ã¢â€â‚¬Ã¢â€â‚¬ */}
       <div className="content">
         {/* Error banner */}
         {connError && (
           <div style={{background:"var(--danger)",color:"#fff",padding:".5rem 1rem",fontSize:".78rem",
             display:"flex",alignItems:"center",gap:".5rem",margin:"0 0 .5rem",borderRadius:"6px"}}>
-            <span style={{flex:1}}>⚠️ {connError}</span>
+            <span style={{flex:1}}>Ã¢Å¡Â Ã¯Â¸Â {connError}</span>
             <button onClick={() => setConnError("")} style={{background:"none",border:"none",color:"#fff",
-              cursor:"pointer",fontSize:"1rem",padding:0,lineHeight:1}}>✕</button>
+              cursor:"pointer",fontSize:"1rem",padding:0,lineHeight:1}}>Ã¢Å“â€¢</button>
           </div>
         )}
         {/* Header */}
@@ -3688,10 +3769,10 @@ export default function App() {
                       setCat(null);
                       loadStalkerCats(section, true);
                     }
-                  }}>↺ {t("refresh")}</button>
+                  }}>Ã¢â€ Âº {t("refresh")}</button>
                   {prefetchProgress && (
                     <span style={{fontSize:".68rem",color:"var(--t3)",whiteSpace:"nowrap"}}>
-                      Loading {prefetchProgress.done}/{prefetchProgress.total} categories…
+                      Loading {prefetchProgress.done}/{prefetchProgress.total} categoriesÃ¢â‚¬Â¦
                     </span>
                   )}
                 </>
@@ -3701,7 +3782,7 @@ export default function App() {
                   if (section === "live") { setChannels([]); fetchLive(true); }
                   else if (section === "vod") { setVod([]); fetchVOD(true); }
                   else if (section === "series") { setSeries([]); fetchSeries(true); }
-                }}>↺ {t("refresh")}</button>
+                }}>Ã¢â€ Âº {t("refresh")}</button>
               )}
               {conn?.type === "m3u" && section === "live" && (
                 <button className="c-btn" title="Re-fetch M3U playlist" onClick={async () => {
@@ -3718,7 +3799,7 @@ export default function App() {
                     }
                   } catch(e) { console.error("M3U refresh error:", e); }
                   finally { setLoading(false); }
-                }}>↺ {t("refresh")}</button>
+                }}>Ã¢â€ Âº {t("refresh")}</button>
               )}
               {lastSynced[section] && (
                 <span style={{fontSize:".62rem",color:"var(--t3)",whiteSpace:"nowrap"}} title={new Date(lastSynced[section]).toLocaleString()}>
@@ -3733,15 +3814,15 @@ export default function App() {
                 </span>
               )}
               <div className="c-search-wrap">
-                <span className="c-search-icon">🔍</span>
-                <input className="c-search" placeholder={`${t("search")} ${LABEL[section]}…`}
+                <span className="c-search-icon">Ã°Å¸â€Â</span>
+                <input className="c-search" placeholder={`${t("search")} ${LABEL[section]}Ã¢â‚¬Â¦`}
                   value={search} onChange={e => handleSearch(e.target.value)} />
               </div>
             </>
           )}
           {section==="search" && (
             <div className="c-search-wrap" style={{flex:1}}>
-              <span className="c-search-icon">🔍</span>
+              <span className="c-search-icon">Ã°Å¸â€Â</span>
               <input className="c-search" style={{width:"100%"}} placeholder={t("searchEverything")}
                 autoFocus
                 value={globalQ} onChange={e => handleGlobalSearch(e.target.value)} />
@@ -3785,7 +3866,7 @@ export default function App() {
                   <input
                     className="fi"
                     style={{ width: "100%", padding: "0.4rem", fontSize: "0.75rem", borderRadius: "4px" }}
-                    placeholder="Filter categories…"
+                    placeholder="Filter categoriesÃ¢â‚¬Â¦"
                     value={catSearch}
                     onChange={e => setCatSearch(e.target.value)}
                   />
@@ -3820,20 +3901,20 @@ export default function App() {
 
             {cat === null && conn?.type === "stalker" && (section === "vod" || section === "series") ? (
               <div className="empty">
-                <div className="empty-icon">📂</div>
+                <div className="empty-icon">Ã°Å¸â€œâ€š</div>
                 <div className="empty-t">{t("selectCategory")}</div>
                 <div className="empty-s">{t("chooseCategory")}</div>
               </div>
             ) : catLoading && curItems.length === 0 ? (
               <div className="empty">
-                <div className="empty-icon" style={{animation:"spin 1s linear infinite"}}>⏳</div>
+                <div className="empty-icon" style={{animation:"spin 1s linear infinite"}}>Ã¢ÂÂ³</div>
                 <div className="empty-t">{t("loadingSection", cat)}</div>
                 <div className="empty-s">{t("fetchingItems")}</div>
               </div>
             ) : curItems.length === 0 ? (
               <div className="empty">
                 <div className="empty-icon">
-                  {section === "vod" && vodSyncing ? "🔄" : section === "series" && seriesSyncing ? "🔄" : section === "live" ? "📺" : section === "vod" ? "🎬" : "📽"}
+                  {section === "vod" && vodSyncing ? "Ã°Å¸â€â€ž" : section === "series" && seriesSyncing ? "Ã°Å¸â€â€ž" : section === "live" ? "Ã°Å¸â€œÂº" : section === "vod" ? "Ã°Å¸Å½Â¬" : "Ã°Å¸â€œÂ½"}
                 </div>
                 <div className="empty-t">
                   {section === "vod" && vodSyncing ? "Synchronizing VOD library..." : section === "series" && seriesSyncing ? "Synchronizing Series library..." : t("noContent")}
@@ -3893,7 +3974,7 @@ export default function App() {
                               <div key={item.id||i} style={{flexShrink:0,width:110,cursor:"pointer"}} onClick={() => playItem(item)}>
                                 {item.logo
                                   ? <img src={imgSrc(item.logo)} alt="" style={{width:110,aspectRatio:"2/3",objectFit:"cover",borderRadius:8,background:"var(--s2)",display:"block"}} onError={e=>e.target.style.display="none"} />
-                                  : <div style={{width:110,aspectRatio:"2/3",background:"var(--s2)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem"}}>{section==="series"?"📽":"🎬"}</div>}
+                                  : <div style={{width:110,aspectRatio:"2/3",background:"var(--s2)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem"}}>{section==="series"?"Ã°Å¸â€œÂ½":"Ã°Å¸Å½Â¬"}</div>}
                                 <div style={{fontSize:".65rem",marginTop:".2rem",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"var(--t2)"}}>{item.name}</div>
                               </div>
                             ))}
@@ -3909,7 +3990,7 @@ export default function App() {
         )}
       </div>
 
-      {/* ── PLAYER ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ PLAYER Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {/* Detail popup modal */}
       {expandedItem && createPortal(
         <div style={{position:"fixed",inset:0,zIndex:99998,background:"rgba(0,0,0,0.65)",
@@ -3921,14 +4002,14 @@ export default function App() {
             <div className="detail-modal">
               {(tmdbData?.poster || expandedItem.logo)
                 ? <img className="detail-poster" loading="lazy" src={tmdbData?.poster || imgSrc(expandedItem.logo)} alt="" onError={e=>e.target.style.display="none"} />
-                : <div className="detail-poster-ph">{expandedItem.type==="series"?"📽":"🎬"}</div>}
+                : <div className="detail-poster-ph">{expandedItem.type==="series"?"Ã°Å¸â€œÂ½":"Ã°Å¸Å½Â¬"}</div>}
               <div className="detail-body">
                 <div className="detail-title">{expandedItem.name}</div>
                 <div className="detail-meta">
                   {expandedItem.year && <span>{expandedItem.year}</span>}
-                  {expandedItem.rating && <span>★ {parseFloat(expandedItem.rating||0).toFixed(1)}</span>}
-                  {tmdbData?.voteAverage && !expandedItem.rating && <span className="detail-tmdb-rating">★ {tmdbData.voteAverage.toFixed(1)}</span>}
-                  {tmdbData?.voteAverage && expandedItem.rating && <span className="detail-tmdb-rating">TMDB ★ {tmdbData.voteAverage.toFixed(1)}</span>}
+                  {expandedItem.rating && <span>Ã¢Ëœâ€¦ {parseFloat(expandedItem.rating||0).toFixed(1)}</span>}
+                  {tmdbData?.voteAverage && !expandedItem.rating && <span className="detail-tmdb-rating">Ã¢Ëœâ€¦ {tmdbData.voteAverage.toFixed(1)}</span>}
+                  {tmdbData?.voteAverage && expandedItem.rating && <span className="detail-tmdb-rating">TMDB Ã¢Ëœâ€¦ {tmdbData.voteAverage.toFixed(1)}</span>}
                   {expandedItem.duration && <span>{expandedItem.duration}</span>}
                   {!expandedItem.duration && tmdbData?.runtime && <span>{tmdbData.runtime} min</span>}
                   {expandedItem.age && <span>{expandedItem.age}</span>}
@@ -3949,7 +4030,7 @@ export default function App() {
                       <div className="detail-cast-item" key={i}>
                         {c.photo
                           ? <img className="detail-cast-photo" src={c.photo} alt={c.name} />
-                          : <div className="detail-cast-photo-ph">👤</div>}
+                          : <div className="detail-cast-photo-ph">Ã°Å¸â€˜Â¤</div>}
                         <div className="detail-cast-name">{c.name}</div>
                         {c.character && <div className="detail-cast-char">{c.character}</div>}
                       </div>
@@ -3958,14 +4039,14 @@ export default function App() {
                 )}
                 {!tmdbData && tmdbKey && <div className="detail-loading">Loading TMDB...</div>}
                 <div className="detail-actions">
-                  <button className="detail-play" onClick={()=>{setExpandedItem(null);setShowTrailer(false);playItem(expandedItem);}}>▶ Play</button>
+                  <button className="detail-play" onClick={()=>{setExpandedItem(null);setShowTrailer(false);playItem(expandedItem);}}>Ã¢â€“Â¶ Play</button>
                   <button className="detail-fav" onClick={()=>toggleFav(expandedItem)}>
-                    {isFav(expandedItem) ? "♥ Favorited" : "♡ Favorite"}
+                    {isFav(expandedItem) ? "Ã¢â„¢Â¥ Favorited" : "Ã¢â„¢Â¡ Favorite"}
                   </button>
                   {tmdbData?.trailer && (
                     <button className="detail-trailer-btn" style={{padding:".5rem 1rem",borderRadius:8,fontSize:".82rem",cursor:"pointer",transition:"all .15s"}}
                       onClick={() => setShowTrailer(v => !v)}>
-                      {showTrailer ? "✕ Close Trailer" : "▶ Trailer"}
+                      {showTrailer ? "Ã¢Å“â€¢ Close Trailer" : "Ã¢â€“Â¶ Trailer"}
                     </button>
                   )}
                 </div>
@@ -4017,13 +4098,13 @@ export default function App() {
           onClick={e => { if (e.target === e.currentTarget) setShowUpgradePrompt(false); }}>
           <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
             borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:420,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",position:"relative"}}>
-            <button onClick={() => setShowUpgradePrompt(false)} style={{position:"absolute",top:".5rem",right:".5rem",background:"none",border:"none",color:"var(--t2)",fontSize:"1.2rem",cursor:"pointer"}}>×</button>
-            <div style={{fontSize:"1.2rem",fontWeight:600,marginBottom:"1rem",color:"var(--accent)"}}>✨ Upgrade Your Account</div>
+            <button onClick={() => setShowUpgradePrompt(false)} style={{position:"absolute",top:".5rem",right:".5rem",background:"none",border:"none",color:"var(--t2)",fontSize:"1.2rem",cursor:"pointer"}}>Ãƒâ€”</button>
+            <div style={{fontSize:"1.2rem",fontWeight:600,marginBottom:"1rem",color:"var(--accent)"}}>Ã¢Å“Â¨ Upgrade Your Account</div>
             <div style={{fontSize:".85rem",color:"var(--t2)",marginBottom:"1.5rem"}}>
               Unlock premium features and enhance your streaming experience:
             </div>
             <ul style={{margin:0,paddingLeft:"1.2rem",color:"var(--t1)",fontSize:".85rem",lineHeight:1.6}}>
-              <li>No ads — enjoy uninterrupted streaming</li>
+              <li>No ads Ã¢â‚¬â€ enjoy uninterrupted streaming</li>
               <li>More simultaneous connections</li>
               <li>Unlimited VOD library access</li>
               <li>Sync across all your devices</li>
@@ -4059,30 +4140,30 @@ export default function App() {
         />
       )}
 
-      {/* ── CONTEXT MENU ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ CONTEXT MENU Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {ctx && (
         <div className="ctx-menu" style={{left:ctx.x, top:ctx.y}} onClick={e=>e.stopPropagation()}>
           {ctx.type === "container" ? (
              <div className="ctx-item" onClick={() => { setShowCatEditor(ctx.sec); setCtx(null); }}>
-               📝 {t("editCategories") || "Edit Categories"}
+               Ã°Å¸â€œÂ {t("editCategories") || "Edit Categories"}
              </div>
           ) : (
              <>
                <div className="ctx-item" onClick={() => {toggleHideCat(ctx.sec, ctx.catName);setCtx(null);}}>
-                 {isCatHidden(ctx.sec, ctx.catName) ? `👁 ${t("showCategory")}` : `🙈 ${t("hideCategory")}`}
+                 {isCatHidden(ctx.sec, ctx.catName) ? `Ã°Å¸â€˜Â ${t("showCategory")}` : `Ã°Å¸â„¢Ë† ${t("hideCategory")}`}
                </div>
                <div className="ctx-item" onClick={() => {setCat(ctx.catName);setCtx(null);}}>
-                 📌 {t("filterToThis")}
+                 Ã°Å¸â€œÅ’ {t("filterToThis")}
                </div>
                <div className="ctx-item" onClick={() => { setShowCatEditor(ctx.sec); setCtx(null); }}>
-                 📝 {t("editCategories") || "Edit Categories"}
+                 Ã°Å¸â€œÂ {t("editCategories") || "Edit Categories"}
                </div>
              </>
           )}
         </div>
       )}
 
-      {/* ── SERIES DETAIL MODAL ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ SERIES DETAIL MODAL Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {seriesDetail && (
         <div className="series-modal-ov" onClick={() => { if (!seriesLoading) setSeriesDetail(null); }}>
           <div className="series-modal" onClick={e => e.stopPropagation()}>
@@ -4090,18 +4171,18 @@ export default function App() {
             <div className="series-modal-header">
               {seriesDetail.item.logo
                 ? <img className="series-modal-poster" loading="lazy" src={imgSrc(seriesDetail.item.logo)} alt="" onError={e => e.target.style.display="none"} />
-                : <div className="series-modal-poster-ph">📽</div>}
+                : <div className="series-modal-poster-ph">Ã°Å¸â€œÂ½</div>}
               <div className="series-modal-info">
                 <div className="series-modal-title">{seriesDetail.item.name}</div>
                 <div className="series-modal-meta">
-                  {[seriesDetail.item.year, seriesDetail.item.rating && `★${parseFloat(seriesDetail.item.rating||0).toFixed(1)}`].filter(Boolean).join(" · ")}
-                  {seriesDetail.seasons.length > 0 && ` · ${seriesDetail.seasons.length} Season${seriesDetail.seasons.length > 1 ? "s" : ""}`}
+                  {[seriesDetail.item.year, seriesDetail.item.rating && `Ã¢Ëœâ€¦${parseFloat(seriesDetail.item.rating||0).toFixed(1)}`].filter(Boolean).join(" Ã‚Â· ")}
+                  {seriesDetail.seasons.length > 0 && ` Ã‚Â· ${seriesDetail.seasons.length} Season${seriesDetail.seasons.length > 1 ? "s" : ""}`}
                 </div>
                 {seriesDetail.item.description && (
                   <div className="series-modal-desc">{seriesDetail.item.description}</div>
                 )}
               </div>
-              <button className="series-modal-close" onClick={() => setSeriesDetail(null)} title="Close">✕</button>
+              <button className="series-modal-close" onClick={() => setSeriesDetail(null)} title="Close">Ã¢Å“â€¢</button>
             </div>
             {/* Body */}
             <div className="series-modal-body">
@@ -4130,7 +4211,7 @@ export default function App() {
                   )}
                   {seriesDetail.seasons.length === 1 && (
                     <div style={{fontSize:".8rem",fontWeight:600,color:"var(--t2)",marginBottom:".7rem"}}>
-                      {seriesDetail.seasons[0].name || "Season 1"} — {seriesDetail.seasons[0].episodes.length} episode{seriesDetail.seasons[0].episodes.length !== 1 ? "s" : ""}
+                      {seriesDetail.seasons[0].name || "Season 1"} Ã¢â‚¬â€ {seriesDetail.seasons[0].episodes.length} episode{seriesDetail.seasons[0].episodes.length !== 1 ? "s" : ""}
                     </div>
                   )}
                   {/* Episode list */}
@@ -4149,7 +4230,7 @@ export default function App() {
                           <div className="series-ep-name">{ep.label}</div>
                           {episodeLoading === ep.num
                             ? <div className="spinner" style={{width:16,height:16,borderWidth:2}} />
-                            : <span className="series-ep-play">▶</span>}
+                            : <span className="series-ep-play">Ã¢â€“Â¶</span>}
                         </div>
                       ));
                     })()}
@@ -4161,7 +4242,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ── CONNECTION MANAGER ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ CONNECTION MANAGER Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {showConnManager && (
         <ConnectionManager
           connections={connections}
@@ -4187,7 +4268,7 @@ export default function App() {
         />
       )}
 
-      {/* ── CATEGORY EDITOR MODAL ── */}
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ CATEGORY EDITOR MODAL Ã¢â€â‚¬Ã¢â€â‚¬ */}
       {showCatEditor && (() => {
         const editSec = showCatEditor;
         const editCats = editSec === "live" ? (["All", ...new Set(channels.map(i=>i.group).filter(Boolean))]) 
@@ -4222,14 +4303,14 @@ export default function App() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 // SUB-VIEWS
-// ══════════════════════════════════════════════════════════════════
+// Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, t }) {
   const all = [...favItems.live, ...favItems.vod, ...favItems.series];
   if (!all.length) return (
     <div className="empty">
-      <div className="empty-icon">♡</div>
+      <div className="empty-icon">Ã¢â„¢Â¡</div>
       <div className="empty-t">{t("noFavsYet")}</div>
       <div className="empty-s">{t("favHint")}</div>
     </div>
@@ -4243,15 +4324,15 @@ const FavsView = memo(function FavsView({ favItems, onPlay, toggleFav, t }) {
           <div className={label==="Live TV" ? "ch-grid" : "vod-grid"}>
             {items.map((item,i) => label==="Live TV" ? (
               <div key={item.id||i} className="ch-card" onClick={() => onPlay(item)}>
-                {item.logo ? <img className="ch-logo" loading="lazy" src={imgSrc(item.logo)} alt="" /> : <div className="ch-logo-ph">📺</div>}
+                {item.logo ? <img className="ch-logo" loading="lazy" src={imgSrc(item.logo)} alt="" /> : <div className="ch-logo-ph">Ã°Å¸â€œÂº</div>}
                 <div className="ch-name">{item.name}</div>
                 <FavBtn on={true} onClick={() => toggleFav(item)} />
               </div>
             ) : (
               <div key={item.id||i} className="vod-card" onClick={() => onPlay(item)}>
-                {item.logo ? <img className="vod-poster" loading="lazy" src={imgSrc(item.logo)} alt="" /> : <div className="vod-ph">🎬</div>}
+                {item.logo ? <img className="vod-poster" loading="lazy" src={imgSrc(item.logo)} alt="" /> : <div className="vod-ph">Ã°Å¸Å½Â¬</div>}
                 <div className="vod-info"><div className="vod-title">{item.name}</div></div>
-                <button className="vod-fav on" onClick={e=>{e.stopPropagation();toggleFav(item);}}>♥</button>
+                <button className="vod-fav on" onClick={e=>{e.stopPropagation();toggleFav(item);}}>Ã¢â„¢Â¥</button>
               </div>
             ))}
           </div>
@@ -4265,7 +4346,7 @@ const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
   const recent = history.slice(0, 20);
   if (!recent.length) return (
     <div className="empty">
-      <div className="empty-icon">⏯</div>
+      <div className="empty-icon">Ã¢ÂÂ¯</div>
       <div className="empty-t">{t("nothingStarted")}</div>
       <div className="empty-s">{t("resumeHint")}</div>
     </div>
@@ -4280,7 +4361,7 @@ const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
               const pct = item.duration ? Math.min(100,(item.position/item.duration)*100) : 0;
               return (
                 <div key={item.id||i} className="cw-item" onClick={()=>onPlay(item)}>
-                  {item.logo ? <img className="cw-poster" loading="lazy" src={imgSrc(item.logo)} alt="" style={{width:"100%",aspectRatio:"16/9",objectFit:"cover"}} /> : <div className="cw-poster">🎬</div>}
+                  {item.logo ? <img className="cw-poster" loading="lazy" src={imgSrc(item.logo)} alt="" style={{width:"100%",aspectRatio:"16/9",objectFit:"cover"}} /> : <div className="cw-poster">Ã°Å¸Å½Â¬</div>}
                   <div className="cw-prog-bar"><div className="cw-prog-fill" style={{width:`${pct}%`}} /></div>
                   <div className="cw-info">
                     <div className="cw-name">{item.name}</div>
@@ -4301,10 +4382,10 @@ const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
               onClick={()=>onPlay(item)}
               onMouseEnter={e=>e.currentTarget.style.borderColor="var(--b2)"}
               onMouseLeave={e=>e.currentTarget.style.borderColor="var(--b1)"}>
-              {item.logo ? <img loading="lazy" style={{width:"30px",height:"30px",objectFit:"contain",borderRadius:"4px",background:"var(--s2)",flexShrink:0}} src={imgSrc(item.logo)} alt="" /> : <div style={{width:"30px",height:"30px",background:"var(--s2)",borderRadius:"4px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:".75rem",flexShrink:0}}>{item.type==="live"?"📺":"🎬"}</div>}
+              {item.logo ? <img loading="lazy" style={{width:"30px",height:"30px",objectFit:"contain",borderRadius:"4px",background:"var(--s2)",flexShrink:0}} src={imgSrc(item.logo)} alt="" /> : <div style={{width:"30px",height:"30px",background:"var(--s2)",borderRadius:"4px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:".75rem",flexShrink:0}}>{item.type==="live"?"Ã°Å¸â€œÂº":"Ã°Å¸Å½Â¬"}</div>}
               <div style={{flex:1,overflow:"hidden"}}>
                 <div style={{fontSize:".8rem",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
-                <div style={{fontSize:".65rem",color:"var(--t3)"}}>{item.group} · {new Date(item.timestamp).toLocaleDateString()}</div>
+                <div style={{fontSize:".65rem",color:"var(--t3)"}}>{item.group} Ã‚Â· {new Date(item.timestamp).toLocaleDateString()}</div>
               </div>
               <div style={{fontSize:".65rem",color:"var(--t3)",textTransform:"capitalize",flexShrink:0}}>{item.type}</div>
             </div>
@@ -4318,16 +4399,16 @@ const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
 const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggleFav, isFav, t }) {
   if (!query || query.length < 2) return (
     <div className="empty">
-      <div className="empty-icon">🔍</div>
+      <div className="empty-icon">Ã°Å¸â€Â</div>
       <div className="empty-t">{t("searchEverything")}</div>
       <div className="empty-s">{t("searchHint")}</div>
     </div>
   );
   if (!results.length) return (
-    <div className="empty"><div className="empty-icon">🔍</div><div className="empty-t">{t("noResults", query)}</div></div>
+    <div className="empty"><div className="empty-icon">Ã°Å¸â€Â</div><div className="empty-t">{t("noResults", query)}</div></div>
   );
   const byType = { live:results.filter(r=>r.type==="live"), vod:results.filter(r=>r.type==="vod"), series:results.filter(r=>r.type==="series") };
-  const ICONS = {live:"📺",vod:"🎬",series:"📽"};
+  const ICONS = {live:"Ã°Å¸â€œÂº",vod:"Ã°Å¸Å½Â¬",series:"Ã°Å¸â€œÂ½"};
   const LABELS = {live:t("liveTV"),vod:t("movies"),series:t("series")};
   return (
     <div className="gsearch">
@@ -4341,7 +4422,7 @@ const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggle
               <div className="gsearch-group">{item.group}</div>
               <button style={{background:"none",border:"none",cursor:"pointer",fontSize:".9rem",color:isFav(item)?"var(--accent)":"var(--t3)",padding:".1rem .2rem",transition:"color .2s"}}
                 onClick={e=>{e.stopPropagation();toggleFav(item);}}>
-                {isFav(item)?"♥":"♡"}
+                {isFav(item)?"Ã¢â„¢Â¥":"Ã¢â„¢Â¡"}
               </button>
             </div>
           ))}
@@ -4428,12 +4509,12 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 
       {/* Empty states */}
       {!channels.length ? (
-        <div className="empty"><div className="empty-icon">📋</div><div className="empty-t">No channels loaded</div><div className="empty-s">Connect via Xtream Codes or M3U to populate TV Guide.</div></div>
+        <div className="empty"><div className="empty-icon">Ã°Å¸â€œâ€¹</div><div className="empty-t">No channels loaded</div><div className="empty-s">Connect via Xtream Codes or M3U to populate TV Guide.</div></div>
       ) : !epgData ? (
         <div className="empty">
-          <div className="empty-icon">📅</div>
+          <div className="empty-icon">Ã°Å¸â€œâ€¦</div>
           <div className="empty-t">No EPG data</div>
-          <div className="empty-s">Paste your XMLTV EPG URL above and click Load EPG.<br/>Your provider may supply one — check their portal or dashboard.</div>
+          <div className="empty-s">Paste your XMLTV EPG URL above and click Load EPG.<br/>Your provider may supply one Ã¢â‚¬â€ check their portal or dashboard.</div>
         </div>
       ) : (
         <>
@@ -4461,4 +4542,3 @@ const EPGView = memo(function EPGView({ channels, epgData, epgURL, epgSources, a
 
 // DirectHLSView moved to src/components/DirectHLSView.jsx
 // DiscoverView moved to src/components/DiscoverView.jsx
-

@@ -11,13 +11,15 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const adPlayedRef = useRef(false);
   const adSessionRef = useRef(0);
   const adFinishRef = useRef(null);
+  const playbackPhaseRef = useRef("idle");
+  const resumeRetryRef = useRef(false);
   const osdTimer   = useRef(null);
   const resumeAppliedRef = useRef(null);
   const [osd, setOsd]         = useState(true);
   const [showQCH, setShowQCH] = useState(false);
   const qchTimer = useRef(null);
   
-  // ── Reactive Time State for OSD ──
+  // Ã¢â€â‚¬Ã¢â€â‚¬ Reactive Time State for OSD Ã¢â€â‚¬Ã¢â€â‚¬
   const [nowMs, setNowMs] = useState(Date.now());
   useEffect(() => {
     if (!osd) return;
@@ -38,6 +40,13 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const [activeSub, setActiveSub] = useState(-1);
   const [showTracksMenu, setShowTracksMenu] = useState(false);
   const [showCatchupMenu, setShowCatchupMenu] = useState(false);
+
+  const contentIdentity = `${current.type || "unknown"}:${current.id || current.url || current.epgId || ""}`;
+
+  useEffect(() => {
+    resumeAppliedRef.current = null;
+    resumeRetryRef.current = false;
+  }, [contentIdentity]);
 
   const audioTrackLabel = (track, index) =>
     track?.name || track?.lang || track?.language || `Audio ${index + 1}`;
@@ -64,6 +73,24 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     setSubTracks([]);
     setActiveSub(-1);
     setShowTracksMenu(false);
+  }
+
+  function clampResumePosition(video, resumePosition) {
+    let target = Math.max(0, Number(resumePosition) || 0);
+    const duration = Number.isFinite(video?.duration) ? Number(video.duration) : 0;
+    if (duration > 0) {
+      target = Math.min(target, Math.max(0, duration - 1));
+    }
+    const seekable = video?.seekable;
+    if (seekable && seekable.length > 0) {
+      try {
+        const start = seekable.start(0);
+        const end = seekable.end(seekable.length - 1);
+        if (Number.isFinite(start)) target = Math.max(target, start);
+        if (Number.isFinite(end)) target = Math.min(target, Math.max(start, end - 0.25));
+      } catch {}
+    }
+    return Math.max(0, target);
   }
 
   const showOSD = useCallback(() => {
@@ -98,6 +125,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       let impressionSent = false;
       const wasMuted = video.muted;
       const wasControls = video.controls;
+      playbackPhaseRef.current = "ad";
 
       const cleanup = () => {
         video.removeEventListener("ended", onEnded);
@@ -204,7 +232,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       const v = videoRef.current;
       if (!v) return;
       const s = {};
-      s.resolution = v.videoWidth && v.videoHeight ? `${v.videoWidth}×${v.videoHeight}` : "—";
+      s.resolution = v.videoWidth && v.videoHeight ? `${v.videoWidth}Ãƒâ€”${v.videoHeight}` : "Ã¢â‚¬â€";
       s.currentTime = v.currentTime?.toFixed(1) || "0";
       s.duration = v.duration && isFinite(v.duration) ? v.duration.toFixed(1) : "Live";
       s.readyState = ["NOTHING","METADATA","CURRENT","FUTURE","ENOUGH"][v.readyState] || v.readyState;
@@ -221,17 +249,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (q) {
         s.droppedFrames = `${q.droppedVideoFrames}/${q.totalVideoFrames}`;
         s.fps = q.totalVideoFrames > 0 && v.currentTime > 1
-          ? (q.totalVideoFrames / v.currentTime).toFixed(1) : "—";
+          ? (q.totalVideoFrames / v.currentTime).toFixed(1) : "Ã¢â‚¬â€";
       }
       // HLS.js stats
       const hls = hlsRef.current;
       if (hls?.levels?.[hls.currentLevel]) {
         const lvl = hls.levels[hls.currentLevel];
-        s.bitrate = lvl.bitrate ? `${(lvl.bitrate / 1000).toFixed(0)} kbps` : "—";
-        s.codec = [lvl.videoCodec, lvl.audioCodec].filter(Boolean).join(", ") || "—";
+        s.bitrate = lvl.bitrate ? `${(lvl.bitrate / 1000).toFixed(0)} kbps` : "Ã¢â‚¬â€";
+        s.codec = [lvl.videoCodec, lvl.audioCodec].filter(Boolean).join(", ") || "Ã¢â‚¬â€";
         s.hlsLevel = `${hls.currentLevel + 1}/${hls.levels.length}`;
       }
-      s.url = current.url?.slice(0, 80) + (current.url?.length > 80 ? "…" : "");
+      s.url = current.url?.slice(0, 80) + (current.url?.length > 80 ? "Ã¢â‚¬Â¦" : "");
       setStats(s);
     }
     collect();
@@ -258,8 +286,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
       if (hlsRef.current || mpegtsRef.current) return;
       const e = video.error;
-      const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
-      const errorPayload = { icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
+      const msgs = { 1: "Playback aborted", 2: "Network error Ã¢â‚¬â€ could not load stream", 3: "Decode error Ã¢â‚¬â€ stream format not supported", 4: "Source not supported Ã¢â‚¬â€ the stream format or URL is invalid" };
+      const errorPayload = { icon: "Ã¢Å¡Â Ã¯Â¸Â", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
       setStreamErr(errorPayload);
       trackAnalytics("playback_error", {
         error_type: "native_video_error",
@@ -332,7 +360,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           } else {
             body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
           }
-          setStreamErr({ icon: "⚠️", title, body });
+          setStreamErr({ icon: "Ã¢Å¡Â Ã¯Â¸Â", title, body });
           trackAnalytics("playback_error", {
             error_type: `hls_${data.type}`,
             error_code: String(code || data.details || "unknown"),
@@ -393,7 +421,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         } else {
           body = `${errType}: ${errDetail || "Unknown error"}${code ? ` (HTTP ${code})` : ""}`;
         }
-        setStreamErr({ icon: "⚠️", title, body });
+        setStreamErr({ icon: "Ã¢Å¡Â Ã¯Â¸Â", title, body });
         destroyPlayers();
       });
       player.attachMediaElement(video);
@@ -415,7 +443,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       document.head.appendChild(s);
     }
 
-    // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS
+    // Direct video files (MP4, MKV, AVI, etc.) Ã¢â‚¬â€ play natively, not via mpegts/HLS
     const fileExt = url.split(/[?#]/)[0].split(".").pop()?.toLowerCase();
     if (["mp4", "mkv", "avi", "mov", "webm", "mp3", "aac"].includes(fileExt)) {
       video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
@@ -477,34 +505,40 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     let lastHeartbeatTime = 0;
     let lastProgressTime = 0;
 
-    const reportProgress = (completed = false) => {
-      if (!onProgress || current.type === "live") return;
+    const reportProgress = (completed = false, reason = 'interval') => {
+      if (!onProgress || current.type === "live" || playbackPhaseRef.current !== "content") return;
       const position = Math.floor(video.currentTime || 0);
       const duration = Math.floor(video.duration || 0);
-      onProgress(current, { position, duration, completed });
+      onProgress(current, { position, duration, completed, reason });
     };
 
     const handleLoadedMetadata = () => {
-      const resumeKey = current.id || current.url;
+      if (playbackPhaseRef.current !== "content" || current.type === "live") return false;
+      const resumeKey = contentIdentity;
       const resumePosition = Number(current.position || 0);
+      if (resumePosition <= 5) return false;
+      if (resumeAppliedRef.current === resumeKey) return true;
       const duration = Number.isFinite(video.duration) ? video.duration : 0;
-      if (
-        current.type !== "live" &&
-        resumePosition > 5 &&
-        resumeAppliedRef.current !== resumeKey &&
-        (!duration || resumePosition < duration - 10)
-      ) {
-        try {
-          video.currentTime = resumePosition;
-          resumeAppliedRef.current = resumeKey;
-        } catch {}
+      if (duration > 0 && resumePosition >= duration - 30) {
+        resumeAppliedRef.current = resumeKey;
+        return true;
+      }
+      const target = clampResumePosition(video, resumePosition);
+      try {
+        video.currentTime = target;
+        resumeAppliedRef.current = resumeKey;
+        resumeRetryRef.current = false;
+        return true;
+      } catch {
+        resumeRetryRef.current = true;
+        return false;
       }
     };
 
     const handleTimeUpdate = () => {
       if (Date.now() - lastProgressTime < 5000) return;
       lastProgressTime = Date.now();
-      reportProgress(false);
+      reportProgress(false, 'interval');
     };
 
     const sendHeartbeat = (completed = false, useBeacon = false) => {
@@ -555,8 +589,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         if (isTracking) {
           isTracking = false;
           clearInterval(heartbeatTimer);
-          sendHeartbeat(); // log the position where they paused
-          reportProgress(false);
+          sendHeartbeat();
+          reportProgress(false, 'pause');
         }
       }, 1500);
     };
@@ -566,22 +600,38 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       isTracking = false;
       clearInterval(heartbeatTimer);
       sendHeartbeat(true);
-      reportProgress(true);
+      reportProgress(true, 'ended');
     };
 
     const handleUnload = () => {
       if (isTracking) {
         sendHeartbeat(false, true);
-        reportProgress(false);
+        reportProgress(false, 'close');
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden && isTracking) {
+        reportProgress(false, 'hidden');
+      }
+    };
+
+    const handleResumeRetry = () => {
+      if (!resumeRetryRef.current) return;
+      if (handleLoadedMetadata()) {
+        resumeRetryRef.current = false;
       }
     };
 
     video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("canplay", handleResumeRetry);
+    video.addEventListener("durationchange", handleResumeRetry);
     video.addEventListener("timeupdate", handleTimeUpdate);
     video.addEventListener("playing", handlePlay);
     video.addEventListener("pause", handlePauseOrWait);
     video.addEventListener("ended", handleEnd);
     window.addEventListener("beforeunload", handleUnload);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     async function start() {
       setStreamErr(null);
@@ -591,6 +641,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (ENABLE_VAST && VAST_URL && isAdEligible && !adPlayedRef.current) {
         adPlayedRef.current = true;
         try {
+          playbackPhaseRef.current = "ad";
           const ad = await fetchVastAd(VAST_URL, video);
           if (cancelled || sessionId !== adSessionRef.current) return;
           if (ad?.mediaUrl) {
@@ -605,6 +656,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
 
       if (cancelled || sessionId !== adSessionRef.current) return;
+      playbackPhaseRef.current = "content";
       initPlayer(current.url);
       showOSD();
     }
@@ -615,7 +667,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       adSessionRef.current += 1;
       adFinishRef.current = null;
       setAdState(null);
-      reportProgress(false);
+      reportProgress(false, 'close');
+      resumeRetryRef.current = false;
+      playbackPhaseRef.current = "idle";
       destroyPlayers();
       clearTimeout(osdTimer.current);
       clearTimeout(qchTimer.current);
@@ -625,14 +679,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       clearInterval(heartbeatTimer);
       if (video) {
         video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        video.removeEventListener("canplay", handleResumeRetry);
+        video.removeEventListener("durationchange", handleResumeRetry);
         video.removeEventListener("timeupdate", handleTimeUpdate);
         video.removeEventListener("playing", handlePlay);
         video.removeEventListener("pause", handlePauseOrWait);
         video.removeEventListener("ended", handleEnd);
       }
       window.removeEventListener("beforeunload", handleUnload);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [current.url]);
+  }, [current.url, contentIdentity]);
 
   // Keyboard shortcuts (TiviMate + SFVIP style)
   useEffect(() => {
@@ -765,13 +822,13 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             <div className="osd" onClick={showOSD}>
               {current.logo
                 ? <img className="osd-logo" src={imgSrc(current.logo)} alt="" onError={e => e.target.style.display="none"} />
-                : <div className="osd-logo-ph">{current.type==="live"?"📺":"🎬"}</div>}
+                : <div className="osd-logo-ph">{current.type==="live"?"Ã°Å¸â€œÂº":"Ã°Å¸Å½Â¬"}</div>}
               <div>
                 {current.num && <div className="osd-num">CH {current.num}</div>}
                 <div className="osd-name">{current.name}</div>
                 {epgNow && (
                   <div className="osd-epg">
-                    ▶ {epgNow.title}
+                    Ã¢â€“Â¶ {epgNow.title}
                     {epgNow.stop && (
                       <span className="osd-epg-left">
                         {Math.max(0, Math.ceil((epgNow.stop - nowMs)/60000))}m left
@@ -802,7 +859,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                   <div key={ch.id||i} className={`qch-item ${isActive?"active":""}`}>
                     {ch.logo
                       ? <img className="qch-thumb" src={imgSrc(ch.logo)} alt="" onError={e => e.target.style.display="none"} />
-                      : <div className="qch-thumb-ph">📺</div>}
+                      : <div className="qch-thumb-ph">Ã°Å¸â€œÂº</div>}
                     <div className="qch-n">{ch.name}</div>
                     {ch.num && <div className="qch-num">{ch.num}</div>}
                   </div>
@@ -852,30 +909,30 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
               {current.name}
               {current.group && <span className="badge">{current.group}</span>}
             </div>
-            {epgNow && <div className="player-epg">▶ {epgNow.title}</div>}
+            {epgNow && <div className="player-epg">Ã¢â€“Â¶ {epgNow.title}</div>}
           </div>
           {channelList && current.type === "live" && (
             <>
-              <button className="player-ctrl" onClick={prevChannel}>◀ {t("prev")}</button>
-              <button className="player-ctrl" onClick={nextChannel}>{t("next")} ▶</button>
+              <button className="player-ctrl" onClick={prevChannel}>Ã¢â€”â‚¬ {t("prev")}</button>
+              <button className="player-ctrl" onClick={nextChannel}>{t("next")} Ã¢â€“Â¶</button>
             </>
           )}
-          <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ {t("pip")}</button>
-          <button className={`player-ctrl${showStats?" on":""}`} onClick={() => setShowStats(s=>!s)} title="Stream Stats">📊</button>
+          <button className="player-ctrl" onClick={pip} title="Picture in Picture">Ã¢Â§â€° {t("pip")}</button>
+          <button className={`player-ctrl${showStats?" on":""}`} onClick={() => setShowStats(s=>!s)} title="Stream Stats">Ã°Å¸â€œÅ </button>
           {(audioTracks.length > 1 || subTracks.length > 0) && (
             <button className={`player-ctrl${showTracksMenu?" on":""}`} onClick={() => { setShowTracksMenu(s=>!s); setShowCatchupMenu(false); }} title="Audio & Subtitles">
-              💬
+              Ã°Å¸â€™Â¬
             </button>
           )}
           {connType === "stalker" && current.type === "live" && epgData?.[current.epgId] && (
             <button className={`player-ctrl${showCatchupMenu?" on":""}`} onClick={() => { setShowCatchupMenu(s=>!s); setShowTracksMenu(false); }} title="Catch-up TV">
-              ↩️
+              Ã¢â€ Â©Ã¯Â¸Â
             </button>
           )}
           <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title={t("fav")}>
-            {isFav?.(current) ? `♥ ${t("fav")}` : `♡ ${t("fav")}`}
+            {isFav?.(current) ? `Ã¢â„¢Â¥ ${t("fav")}` : `Ã¢â„¢Â¡ ${t("fav")}`}
           </button>
-          <button className="player-close" onClick={onClose}>✕ {t("close")}</button>
+          <button className="player-close" onClick={onClose}>Ã¢Å“â€¢ {t("close")}</button>
         </div>
         {showTracksMenu && (
           <div className="player-track-menu" onClick={e => e.stopPropagation()}>
@@ -889,7 +946,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                     onClick={() => selectAudioTrack(index)}
                   >
                     <span>{audioTrackLabel(track, index)}</span>
-                    {activeAudio === index && <span className="player-track-check">✓</span>}
+                    {activeAudio === index && <span className="player-track-check">Ã¢Å“â€œ</span>}
                   </button>
                 ))}
               </div>
@@ -902,7 +959,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                   onClick={() => selectSubtitleTrack(-1)}
                 >
                   <span>Off</span>
-                  {activeSub === -1 && <span className="player-track-check">✓</span>}
+                  {activeSub === -1 && <span className="player-track-check">Ã¢Å“â€œ</span>}
                 </button>
                 {subTracks.map((track, index) => (
                   <button
@@ -911,7 +968,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                     onClick={() => selectSubtitleTrack(index)}
                   >
                     <span>{subtitleTrackLabel(track, index)}</span>
-                    {activeSub === index && <span className="player-track-check">✓</span>}
+                    {activeSub === index && <span className="player-track-check">Ã¢Å“â€œ</span>}
                   </button>
                 ))}
               </div>
@@ -922,8 +979,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           <span><span className="kbd">Space</span>{t("playPause")}</span>
           <span><span className="kbd">F</span>{t("fullscreen")}</span>
           <span><span className="kbd">M</span>{t("mute")}</span>
-          <span><span className="kbd">←→</span>{current.type==="live"?t("channels"):"±10s"}</span>
-          <span><span className="kbd">↑↓</span>{current.type==="live"?t("channels"):t("volume")}</span>
+          <span><span className="kbd">Ã¢â€ ÂÃ¢â€ â€™</span>{current.type==="live"?t("channels"):"Ã‚Â±10s"}</span>
+          <span><span className="kbd">Ã¢â€ â€˜Ã¢â€ â€œ</span>{current.type==="live"?t("channels"):t("volume")}</span>
           <span><span className="kbd">P</span>{t("pip")}</span>
           <span><span className="kbd">S</span>Stats</span>
           <span><span className="kbd">Esc</span>Close</span>
@@ -934,4 +991,3 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 }
 
 export default memo(Player);
-

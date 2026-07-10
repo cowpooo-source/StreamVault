@@ -94,6 +94,7 @@ describe('Integration Tests - Routes', () => {
       auth: mockAuth, 
       cache: mockCache, 
       fetch: mockFetch, // shared fetch mock for player routes
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
       system: {
         getNetworkStats: vi.fn().mockReturnValue({ rx_bytes: 0, tx_bytes: 0, rx_gb: 0, tx_gb: 0 }),
         getDiskUsage: vi.fn().mockReturnValue({ total_gb: 100, used_gb: 50, percent: 50 }),

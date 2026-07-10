@@ -128,7 +128,7 @@ function createApp(deps) {
   const { createPlayerRouter } = require("./routes/player");
   const { stripe, handleWebhook } = require("./stripe.js");
 
-  const routerDeps = { cache, auth, fetch, system, email, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
+  const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
 
   app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));
@@ -144,7 +144,7 @@ function createApp(deps) {
   // -- TOKEN-GATED PLAYER PAGE --
   app.get("/player", (req, res) => {
     res.set("Content-Type", "text/html; charset=utf-8");
-    // Permissive CSP — stream URLs are HTTP, hls.js uses blob: for MSE
+    // Permissive CSP â€” stream URLs are HTTP, hls.js uses blob: for MSE
     res.set("Content-Security-Policy", "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'self'");
     res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -163,7 +163,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 </style>
 </head>
 <body>
-<div id="loading">Loading player…</div>
+<div id="loading">Loading playerâ€¦</div>
 <div id="error"></div>
 <video id="player" autoplay controls playsinline></video>
 <script>
@@ -398,7 +398,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
               if (t.startsWith("http")) {
                 abs = t;
               } else if (t.startsWith("/")) {
-                // Absolute path — resolve against server root, not M3U8 directory
+                // Absolute path â€” resolve against server root, not M3U8 directory
                 abs = serverRoot + t.replace(/^\//, "");
               } else {
                 abs = baseDir + t;

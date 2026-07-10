@@ -10,6 +10,8 @@ import { ConnectionManagerList } from './setup/ConnectionManagerList.jsx';
 import { ConnectionList } from './setup/ConnectionList.jsx';
 import { detectFromText } from './setup/setup-utils.js';
 import { JellyfinConnectStep } from './setup/JellyfinConnectStep.jsx';
+import { JellyfinAdapter } from '../adapters/jellyfin-adapter.js';
+import { PlexAdapter } from '../adapters/plex-adapter.js';
 
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
@@ -114,6 +116,35 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         trackAnalytics("portal_connect", { provider_type: "m3u", success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onReconnect(conn.id);
         return;
+      }
+
+      if (conn.type === "jellyfin") {
+        const cfg = conn.config || {};
+        const baseUrl = (cfg.baseUrl || cfg.server || "").trim().replace(/\/$/, "");
+        const username = cfg.user || "";
+        const password = cfg.pass || "";
+        if (!baseUrl || !username || !password) throw new Error("Server URL, username, and password required");
+        const { userId } = await JellyfinAdapter.authenticate(baseUrl, username, password);
+        if (!userId) throw new Error("Jellyfin authentication failed");
+        trackAnalytics("portal_connect", { provider_type: "jellyfin", success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        onReconnect(conn.id);
+        return;
+      }
+
+      if (conn.type === "plex") {
+        trackAnalytics("portal_connect", { provider_type: "plex", success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        onReconnect(conn.id);
+        return;
+      }
+
+      if (conn.type === "hls") {
+        trackAnalytics("portal_connect", { provider_type: "hls", success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        onReconnect(conn.id);
+        return;
+      }
+
+      if (conn.type !== "stalker") {
+        throw new Error(`Unsupported connection type: ${conn.type || "unknown"}`);
       }
 
       const cfg = conn.config || {};
@@ -252,9 +283,22 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
             accountInfo: { status: v.status, expiry: v.expiry, daysLeft: v.daysLeft, tariff: v.tariff, maxConnections: v.maxConnections }
           });
         }
-      } else {
+      } else if (type === "jellyfin") {
+        const baseUrl = (f.server || "").trim().replace(/\/$/, "");
+        const username = f.user || "";
+        const password = f.pass || "";
+        if (!baseUrl || !username || !password) throw new Error("Server URL, username, and password required");
+        const { userId, accessToken } = await JellyfinAdapter.authenticate(baseUrl, username, password);
+        if (!userId) throw new Error("Jellyfin authentication failed");
+        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        onConnect({ type, server: baseUrl, user: username, token: accessToken, userId });
+      } else if (type === "plex") {
+        throw new Error("Plex connection requires PIN pairing. Use the Plex setup screen.");
+      } else if (type === "hls") {
         trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type:"hls" });
+      } else {
+        throw new Error(`Unsupported connection type: ${type || "unknown"}`);
       }
     } catch(e) {
       setErr(e.message||"Connection failed");

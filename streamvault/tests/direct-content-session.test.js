@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  clearContentSessionToken,
   contentSessionPayload,
   contentSessionToken,
   getAppHomeUrl,
@@ -62,6 +63,14 @@ describe("direct-content-session helpers", () => {
     expect(contentSessionToken({ pathname: "/content/", search: "?token=abc123" })).toBe("abc123");
     expect(isHttpContentMode({ pathname: "/app", search: "?token=abc123" })).toBe(false);
     expect(contentSessionToken({ pathname: "/app", search: "?token=abc123" })).toBe(null);
+  });
+
+  it("stores and restores the content session token from sessionStorage", () => {
+    sessionStorage.setItem("sv-content-session-token", "persisted-token");
+
+    expect(contentSessionToken({ pathname: "/content", search: "" })).toBe("persisted-token");
+    clearContentSessionToken();
+    expect(contentSessionToken({ pathname: "/content", search: "" })).toBeNull();
   });
 
   it("builds the HTTPS app home URL for returning from direct content mode", () => {

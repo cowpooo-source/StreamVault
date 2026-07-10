@@ -1,4 +1,4 @@
-// useStreamVault — React hook that wires streamvault-store.js to persistence and side effects
+// useStreamVault â€” React hook that wires streamvault-store.js to persistence and side effects
 import { useReducer, useEffect, useCallback, useMemo, useRef } from "react";
 import { createInitialStoreState, streamvaultReducer, selectActiveConnection, selectFavItems } from "./streamvault-store.js";
 
@@ -12,7 +12,14 @@ function debouncedSync(type, connId, data, syncFn, delay = 2000) {
   }, delay);
 }
 
-export function useStreamVault({ db, syncToServer, syncConnectionsToServer, authUser, isGuest }) {
+export function useStreamVault({
+  db,
+  syncToServer,
+  syncConnectionsToServer,
+  authUser,
+  isGuest,
+  persistActiveConnId = true,
+}) {
   const [state, dispatch] = useReducer(streamvaultReducer, null, createInitialStoreState);
 
   // Refs to avoid stale closures when computing derived values for persistence
@@ -65,7 +72,7 @@ export function useStreamVault({ db, syncToServer, syncConnectionsToServer, auth
     return () => { cancelled = true; };
   }, [state.activeConnId]);
 
-  // ── actions ─────────────────────────────────────────────────────────────────
+  // â”€â”€ actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   const setConnections = useCallback((conns) => {
     dispatch({ type: "SET_CONNECTIONS", payload: conns });
@@ -75,8 +82,10 @@ export function useStreamVault({ db, syncToServer, syncConnectionsToServer, auth
 
   const setActiveConnId = useCallback((id) => {
     dispatch({ type: "SET_ACTIVE_CONN_ID", payload: id });
-    db.set("sv-activeConn", id);
-  }, []);
+    if (persistActiveConnId) {
+      db.set("sv-activeConn", id);
+    }
+  }, [persistActiveConnId]);
 
   const setFavorites = useCallback((favs) => {
     dispatch({ type: "SET_FAVORITES", payload: favs });
@@ -92,9 +101,11 @@ export function useStreamVault({ db, syncToServer, syncConnectionsToServer, auth
     const updatedConns = [...connectionsRef.current, conn];
     dispatch({ type: "ADD_CONNECTION", payload: conn });
     db.set("sv-connections", updatedConns);
-    db.set("sv-activeConn", conn.id);
+    if (persistActiveConnId) {
+      db.set("sv-activeConn", conn.id);
+    }
     if (authUser || isGuest) syncConnectionsToServer(updatedConns);
-  }, [authUser, isGuest]);
+  }, [authUser, isGuest, persistActiveConnId]);
 
   const removeConnection = useCallback((id) => {
     const updatedConns = connectionsRef.current.filter(c => c.id !== id);

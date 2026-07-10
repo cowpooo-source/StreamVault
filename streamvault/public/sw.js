@@ -66,5 +66,5 @@ self.addEventListener("fetch", e => {
       return res;
     })));
   }
-  // Everything else — let the browser handle normally
+  // Everything else â€” let the browser handle normally
 });

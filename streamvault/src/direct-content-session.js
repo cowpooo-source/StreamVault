@@ -18,6 +18,31 @@ function normalizeBaseUrl(baseUrl, fallback) {
 }
 
 const DEFAULT_APP_BASE_URL = "https://media.portalheaven.stream";
+const CONTENT_SESSION_STORAGE_KEY = "sv-content-session-token";
+
+function safeSessionStorageRead(key) {
+  try {
+    return typeof sessionStorage !== "undefined" ? sessionStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeSessionStorageWrite(key, value) {
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem(key, value);
+    }
+  } catch {}
+}
+
+function safeSessionStorageRemove(key) {
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(key);
+    }
+  } catch {}
+}
 
 export function isDirectContentConnection(connection) {
   return connection?.type === "xtream" || connection?.type === "m3u";
@@ -46,7 +71,18 @@ export function isHttpContentMode(locationObject = typeof window !== "undefined"
 
 export function contentSessionToken(locationObject = typeof window !== "undefined" ? window.location : { pathname: "", search: "" }) {
   const { search } = currentLocation(locationObject);
-  return isHttpContentMode(locationObject) ? new URLSearchParams(search).get("token") : null;
+  if (!isHttpContentMode(locationObject)) return null;
+  const fromUrl = new URLSearchParams(search).get("token");
+  return fromUrl || safeSessionStorageRead(CONTENT_SESSION_STORAGE_KEY);
+}
+
+export function persistContentSessionToken(token) {
+  if (!token) return;
+  safeSessionStorageWrite(CONTENT_SESSION_STORAGE_KEY, token);
+}
+
+export function clearContentSessionToken() {
+  safeSessionStorageRemove(CONTENT_SESSION_STORAGE_KEY);
 }
 
 export function getAppHomeUrl(options = {}) {
@@ -81,11 +117,18 @@ export async function validateContentSession(token) {
   const res = await fetch(`/api/content-session/validate?token=${encodeURIComponent(token)}`);
   if (!res.ok) {
     let message = "Content session expired or invalid";
+    let code = "invalid";
+    if (res.status === 401 || res.status === 403) code = "unauthorized";
+    else if (res.status === 429) code = "rate_limited";
+    else if (res.status >= 500) code = "server_error";
     try {
       const body = await res.json();
       if (body?.error) message = body.error;
     } catch {}
-    throw new Error(message);
+    const err = new Error(message);
+    err.code = code;
+    err.status = res.status;
+    throw err;
   }
 
   if (res.status === 204) return true;
@@ -109,11 +152,18 @@ export async function openDirectContentSession(connection, options = {}) {
 
   if (!res.ok) {
     let message = "Failed to open direct content session";
+    let code = "server_error";
+    if (res.status === 401 || res.status === 403) code = "unauthorized";
+    else if (res.status === 429) code = "rate_limited";
+    else if (res.status >= 400 && res.status < 500) code = "invalid";
     try {
       const body = await res.json();
       if (body?.error) message = body.error;
     } catch {}
-    throw new Error(message);
+    const err = new Error(message);
+    err.code = code;
+    err.status = res.status;
+    throw err;
   }
 
   const data = await res.json();

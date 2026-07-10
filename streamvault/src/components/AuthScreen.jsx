@@ -12,6 +12,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [forceLogin, setForceLogin] = useState(false);
+  const [turnstileState, setTurnstileState] = useState(siteKey ? "loading" : "unavailable");
   const formRef = useRef(null);
   const turnstileContainerRef = useRef(null);
   const turnstileWidgetIdRef = useRef(null);
@@ -37,41 +38,11 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
 
   useEffect(() => {
     let cancelled = false;
-    let retryTimer = null;
+    let timeoutTimer = null;
+    const scriptSelector = 'script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]';
+    const scriptEl = typeof document !== "undefined" ? document.querySelector(scriptSelector) : null;
 
-    function renderTurnstile() {
-      if (cancelled || !siteKey || !turnstileContainerRef.current) return;
-      if (!window.turnstile?.render) {
-        retryTimer = window.setTimeout(renderTurnstile, 100);
-        return;
-      }
-
-      const existingWidgetId = turnstileWidgetIdRef.current;
-      if (existingWidgetId !== null && existingWidgetId !== undefined && window.turnstile.remove) {
-        try {
-          window.turnstile.remove(existingWidgetId);
-        } catch (e) {
-          console.warn("Turnstile cleanup skipped:", e?.message || e);
-        }
-      }
-
-      turnstileContainerRef.current.innerHTML = "";
-      turnstileWidgetIdRef.current = null;
-
-      try {
-        turnstileWidgetIdRef.current = window.turnstile.render(turnstileContainerRef.current, {
-          sitekey: siteKey,
-          theme: "dark"
-        });
-      } catch (e) {
-        console.error("Turnstile render error", e);
-      }
-    }
-
-    renderTurnstile();
-    return () => {
-      cancelled = true;
-      if (retryTimer) window.clearTimeout(retryTimer);
+    const cleanupWidget = () => {
       const existingWidgetId = turnstileWidgetIdRef.current;
       if (existingWidgetId !== null && existingWidgetId !== undefined && window.turnstile?.remove) {
         try {
@@ -80,20 +51,90 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
           console.warn("Turnstile cleanup skipped:", e?.message || e);
         }
       }
+      if (turnstileContainerRef.current) {
+        turnstileContainerRef.current.innerHTML = "";
+      }
       turnstileWidgetIdRef.current = null;
+    };
+
+    const renderWidget = () => {
+      if (cancelled || !siteKey || !turnstileContainerRef.current) return false;
+      if (!window.turnstile?.render) return false;
+
+      cleanupWidget();
+      try {
+        turnstileWidgetIdRef.current = window.turnstile.render(turnstileContainerRef.current, {
+          sitekey: siteKey,
+          theme: "dark",
+        });
+        setTurnstileState("ready");
+        return true;
+      } catch (e) {
+        console.error("Turnstile render error", e);
+        setTurnstileState("unavailable");
+        return false;
+      }
+    };
+
+    const markUnavailable = () => {
+      if (!cancelled) setTurnstileState("unavailable");
+    };
+
+    if (!siteKey) {
+      setTurnstileState("unavailable");
+      cleanupWidget();
+      return () => {};
+    }
+
+    setTurnstileState("loading");
+    if (renderWidget()) {
+      return () => {
+        cancelled = true;
+        if (timeoutTimer) window.clearTimeout(timeoutTimer);
+        cleanupWidget();
+      };
+    }
+
+    const onLoad = () => {
+      if (!cancelled) renderWidget();
+    };
+    const onError = () => {
+      markUnavailable();
+    };
+
+    timeoutTimer = window.setTimeout(() => {
+      markUnavailable();
+    }, 5000);
+
+    if (scriptEl) {
+      scriptEl.addEventListener("load", onLoad, { once: true });
+      scriptEl.addEventListener("error", onError, { once: true });
+    } else if (window.turnstile?.render) {
+      renderWidget();
+    }
+
+    return () => {
+      cancelled = true;
+      if (timeoutTimer) window.clearTimeout(timeoutTimer);
+      if (scriptEl) {
+        scriptEl.removeEventListener("load", onLoad);
+        scriptEl.removeEventListener("error", onError);
+      }
+      cleanupWidget();
     };
   }, [mode, siteKey]);
 
   function resetTurnstile() {
-    if (!window.turnstile) return;
+    if (!window.turnstile?.reset) return;
+    const widgetId = turnstileWidgetIdRef.current;
+    if (widgetId === null || widgetId === undefined) return;
     try {
-      if (turnstileWidgetIdRef.current !== null && turnstileWidgetIdRef.current !== undefined) {
-        window.turnstile.reset(turnstileWidgetIdRef.current);
-      }
+      window.turnstile.reset(widgetId);
     } catch (e) {
       console.warn("Turnstile reset skipped:", e?.message || e);
     }
   }
+
   async function submit(e) {
     e?.preventDefault();
     setErr(""); setMsg(""); setLoading(true);
@@ -117,10 +158,12 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
         return;
       }
 
+      if (siteKey && turnstileState === "unavailable" && !turnstileResponse) {
+        throw new Error("CAPTCHA is temporarily unavailable. Please try again later.");
+      }
+
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
       const body = { username, password };
-      // Only send CAPTCHA token when Turnstile actually rendered a widget
-      // (legacy browsers skip module scripts, so window.turnstile is never set)
       if (turnstileResponse) body.cf_turnstile_response = turnstileResponse;
       if (mode === "register") body.email = emailInput;
       if (forceLogin) body.force = true;
@@ -131,7 +174,6 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
       });
       let data = await res.json();
 
-      // Check MAX_LOGINS_REACHED regardless of HTTP status
       if (data.code === 'MAX_LOGINS_REACHED') {
         resetTurnstile();
         if (window.confirm("Max login reached. Do you want to force login which will logout previous user? (You will need to re-verify CAPTCHA)")) {
@@ -165,11 +207,11 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
         body: JSON.stringify({}),
       });
       const data = await res.json();
-      
+
       if (!res.ok) {
         throw new Error(data.error || "Failed");
       }
-      
+
       onGuest();
     } catch (e) {
       setErr(e.message);
@@ -213,7 +255,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
                   <button type="button" onClick={() => setShowPassword(!showPassword)}
                     style={{ position: "absolute", right: "0.5rem", background: "none", border: "none", color: "var(--t2)", cursor: "pointer", padding: "0.2rem" }}
                     title={showPassword ? "Hide password" : "Show password"}>
-                    {showPassword ? "🙈" : "👁"}
+                    {showPassword ? "Hide" : "Show"}
                   </button>
                 </div>
               </div>
@@ -227,16 +269,25 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
                 </div>
               )}
               {siteKey && (
-                <div 
-                  ref={turnstileContainerRef}
-                  style={{ marginBottom: "1rem", display: "flex", justifyContent: "center" }}
-                ></div>
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <div
+                    ref={turnstileContainerRef}
+                    style={{ marginBottom: "0.25rem", display: "flex", justifyContent: "center" }}
+                  />
+                  {turnstileState === "loading" && (
+                    <div style={{ fontSize: ".72rem", color: "var(--t3)", textAlign: "center" }}>Loading verification...</div>
+                  )}
+                  {turnstileState === "unavailable" && (
+                    <div style={{ fontSize: ".72rem", color: "var(--danger)", textAlign: "center" }}>
+                      Verification is temporarily unavailable.
+                    </div>
+                  )}
+                </div>
               )}
               <button type="submit" className="btn-primary" disabled={loading} style={{width:"100%"}}>
                 {loading ? "..." : mode === "login" ? "Login" : "Create Account"}
               </button>
 
-              {/* SSO Buttons */}
               <div style={{ display: "flex", alignItems: "center", margin: "1.2rem 0" }}>
                 <div style={{ flex: 1, height: "1px", background: "rgba(255,255,255,0.1)" }} />
                 <div style={{ padding: "0 10px", fontSize: ".75rem", color: "var(--t3)", textTransform: "uppercase" }}>Or continue with</div>
@@ -247,14 +298,12 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
                   style={{ flex: 1, padding: ".6rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "var(--t1)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: ".5rem", fontSize: ".85rem", transition: "all .2s" }}
                   onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
                   onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}>
-                  <svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
                   Google
                 </button>
                 <button type="button" onClick={() => window.location.href = `${api}/api/auth/github`} disabled={loading}
                   style={{ flex: 1, padding: ".6rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "var(--t1)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: ".5rem", fontSize: ".85rem", transition: "all .2s" }}
                   onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
                   onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}>
-                  <svg viewBox="0 0 24 24" width="14" height="14" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.26.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.93 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                   GitHub
                 </button>
               </div>
@@ -288,7 +337,7 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
             onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.15)";e.currentTarget.style.color="var(--t2)"}}>
             {loading ? "..." : "Continue as Guest"}
           </button>
-          <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed — some features limited</div>
+          <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed - some features limited</div>
           {mode === "register" && (
             <div style={{fontSize:".65rem",color:"var(--accent)",marginTop:".5rem"}}>
               New accounts get Regular access (promo)

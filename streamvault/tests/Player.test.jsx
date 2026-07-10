@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import React from "react";
 
 // Mock HLS and mpegts
@@ -31,7 +31,6 @@ beforeEach(() => {
   }
 });
 
-// Mock fetchVastAd and parseVastDocument
 vi.mock("../src/vast.js", () => ({
   fetchVastAd: vi.fn(() => null),
   parseVastDocument: vi.fn(),
@@ -48,11 +47,13 @@ vi.mock("../src/utils.js", async () => {
   const actual = await vi.importActual("../src/utils.js");
   return {
     ...actual,
-    VAST_URL: null,
+    VAST_URL: "https://ads.example.com/vast.xml",
+    ENABLE_VAST: true,
   };
 });
 
-// Import the real Player component (not mocked)
+import { fetchVastAd } from "../src/vast.js";
+
 import Player from "../src/components/Player.jsx";
 
 describe("Player", () => {
@@ -79,6 +80,51 @@ describe("Player", () => {
   it("should render without crashing", () => {
     expect(() => render(<Player {...defaultProps} />)).not.toThrow();
   });
+  it("should not apply resume position while a preroll ad is playing", async () => {
+    vi.mocked(fetchVastAd).mockResolvedValueOnce({
+      mediaUrl: "http://ads.example.com/preroll.mp4",
+      mediaType: "video/mp4",
+      title: "Preroll",
+      duration: 5,
+      skipOffset: null,
+      trackers: {},
+    });
+
+    const props = {
+      ...defaultProps,
+      item: { ...defaultProps.item, type: "vod", position: 42 },
+      isAdEligible: true,
+    };
+
+    render(<Player {...props} />);
+    const video = document.querySelector("video");
+    Object.defineProperty(video, "currentTime", { value: 0, writable: true, configurable: true });
+
+    await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalled());
+    fireEvent(video, new Event("loadedmetadata"));
+    expect(video.currentTime).toBe(0);
+
+    fireEvent(video, new Event("ended"));
+  });
+  it("should skip resume when VOD is almost complete", () => {
+    const props = {
+      ...defaultProps,
+      item: { ...defaultProps.item, type: "vod", position: 95 },
+    };
+
+    render(<Player {...props} />);
+    const video = document.querySelector("video");
+    Object.defineProperty(video, "currentTime", { value: 0, writable: true, configurable: true });
+    Object.defineProperty(video, "duration", { value: 100, writable: true, configurable: true });
+    Object.defineProperty(video, "seekable", {
+      value: { length: 1, start: () => 0, end: () => 100 },
+      configurable: true,
+    });
+
+    fireEvent(video, new Event("loadedmetadata"));
+    expect(video.currentTime).toBe(0);
+  });
+
 
   it("should show OSD with channel name", () => {
     render(<Player {...defaultProps} />);
@@ -116,14 +162,14 @@ describe("Player", () => {
 
   it("should render close button and call onClose", () => {
     render(<Player {...defaultProps} />);
-    const closeBtn = screen.getByText("✕ close");
+    const closeBtn = screen.getByRole("button", { name: /close/i });
     fireEvent.click(closeBtn);
     expect(defaultProps.onClose).toHaveBeenCalled();
   });
 
   it("should call onFav when fav button is clicked", () => {
     render(<Player {...defaultProps} />);
-    const favBtn = screen.getByText(/♡ fav/i);
+    const favBtn = screen.getByRole("button", { name: /fav/i });
     fireEvent.click(favBtn);
     expect(defaultProps.onFav).toHaveBeenCalled();
   });
@@ -137,8 +183,8 @@ describe("Player", () => {
       ],
     };
     render(<Player {...props} />);
-    expect(screen.getByText("◀ prev")).toBeInTheDocument();
-    expect(screen.getByText("next ▶")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /prev/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeInTheDocument();
   });
 
   it("should call onPlayCatchup when a catch-up program is clicked", async () => {

@@ -1,5 +1,5 @@
-const CACHE = "sv-mrbgk1dm";
-const APP_SHELL = ['/', '/index.html', '/landing.html', '/dist/assets/app.css'];
+const CACHE = "sv-mrfk7rtb";
+const APP_SHELL = ['/', '/index.html', '/landing.html'];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)));
@@ -66,5 +66,5 @@ self.addEventListener("fetch", e => {
       return res;
     })));
   }
-  // Everything else — let the browser handle normally
+  // Everything else â€” let the browser handle normally
 });

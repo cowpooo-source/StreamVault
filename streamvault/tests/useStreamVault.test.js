@@ -119,6 +119,17 @@ describe("useStreamVault", () => {
     expect(mockDb.set).toHaveBeenCalledWith("sv-activeConn", "c1");
   });
 
+  it("setActiveConnId skips persistence when requested", async () => {
+    const transientOpts = () => ({ ...opts(), persistActiveConnId: false });
+    const { result } = renderHook(() => useStreamVault(transientOpts()));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    await act(async () => { result.current.actions.setActiveConnId("c1"); });
+
+    expect(result.current.state.activeConnId).toBe("c1");
+    expect(mockDb.set).not.toHaveBeenCalledWith("sv-activeConn", "c1");
+  });
+
   it("toggleFavorite persists and syncs to server for authed users", async () => {
     const { result } = renderHook(() => useStreamVault(authOpts()));
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
@@ -255,13 +266,13 @@ describe("useStreamVault", () => {
     expect(mockDb.set).toHaveBeenCalledWith("sv-history-c1", hist);
   });
 
-  // ── Stale closure tests ─────────────────────────────────────────────────────
+  // â”€â”€ Stale closure tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("addConnection uses latest state (not stale closure) on rapid successive calls", async () => {
     const { result } = renderHook(() => useStreamVault(opts()));
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
 
-    // Simulate rapid successive calls — each should see the result of the previous
+    // Simulate rapid successive calls â€” each should see the result of the previous
     await act(async () => {
       result.current.actions.addConnection({ id: "c1", type: "xtream", label: "C1", color: "#ff0000", config: {} });
     });
