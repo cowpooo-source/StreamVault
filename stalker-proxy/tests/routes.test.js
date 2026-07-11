@@ -14,6 +14,8 @@ describe('Integration Tests - Routes', () => {
     // 1. Set environment variables
     process.env.ADMIN_PASS = 'secret';
     process.env.JWT_SECRET = 'test-secret';
+    process.env.CONTENT_BASE_URL = 'http://40.233.113.76';
+    process.env.TOKEN_MASTER_KEY = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
 
     // 2. Define mocks
     mockAuth = {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   API,
   vastProxyUrl,
@@ -9,6 +9,7 @@ import {
   uid,
   fmtTime,
   parseM3U,
+  validateM3UChunk,
   genCSS,
   streamProxy,
 } from "../src/utils.js";
@@ -194,5 +195,98 @@ describe("genCSS", () => {
 
   it("should return empty string for null theme", () => {
     expect(genCSS(null)).toBe("");
+  });
+});
+
+// Helper to build a Response with a streaming body reader.
+function makeStreamResponse(text, { status = 200, byteChunkSize = 16 } = {}) {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  let offset = 0;
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (offset >= bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + byteChunkSize, bytes.length);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+    cancel() {
+      // Simulates cancelling the remaining stream after maxBytes read.
+    },
+  });
+  return new Response(stream, { status });
+}
+
+describe("validateM3UChunk", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("should accept a valid M3U chunk without downloading the full playlist", async () => {
+    // Deliberately short chunk (well under the 64KB default) still validates.
+    const chunk = "#EXTM3U\n#EXTINF:-1,Chan\nhttp://example.com/live/1";
+    fetch.mockResolvedValueOnce(makeStreamResponse(chunk));
+    const result = await validateM3UChunk("http://example.com/playlist.m3u");
+    expect(result.ok).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should reject a response that is not an M3U playlist", async () => {
+    fetch.mockResolvedValueOnce(makeStreamResponse("<html>not a playlist</html>"));
+    const result = await validateM3UChunk("http://example.com/bad");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("Not a valid M3U");
+  });
+
+  it("should reject a playlist with no channels", async () => {
+    fetch.mockResolvedValueOnce(makeStreamResponse("#EXTM3U\n#PLAYLIST:1\n#EXT-X-VERSION:3"));
+    const result = await validateM3UChunk("http://example.com/empty");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("no channels");
+  });
+
+  it("should report HTTP errors", async () => {
+    fetch.mockResolvedValueOnce(new Response("", { status: 404 }));
+    const result = await validateM3UChunk("http://example.com/missing");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("HTTP 404");
+  });
+
+  it("should abort on timeout and report a useful error", async () => {
+    const neverResolves = new Promise((_resolve, reject) => {
+      // Reject when the abort signal fires, simulating a real fetch abort.
+      const check = setInterval(() => {
+        if (fetch.mock.calls.length && fetch.mock.calls[0][1]?.signal?.aborted) {
+          clearInterval(check);
+          reject(new DOMException("Aborted", "AbortError"));
+        }
+      }, 5);
+    });
+    fetch.mockReturnValueOnce(neverResolves);
+    const result = await validateM3UChunk("http://example.com/slow", { timeoutMs: 50 });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("timed out");
+  });
+
+  it("should not inspect markers beyond the configured byte limit", async () => {
+    const delayedMarker = `#EXTM3U\n${"#".repeat(2048)}\n#EXTINF:-1,Too Late\nhttp://example.com/live/1`;
+    fetch.mockResolvedValueOnce(makeStreamResponse(delayedMarker, { byteChunkSize: 4096 }));
+    const result = await validateM3UChunk("http://example.com/large.m3u", { maxBytes: 1024 });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("no channels");
+  });
+
+  it("should distinguish caller cancellation from timeout", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    fetch.mockRejectedValueOnce(new DOMException("Aborted", "AbortError"));
+    const result = await validateM3UChunk("http://example.com/cancelled.m3u", { signal: controller.signal });
+    expect(result).toEqual({ ok: false, reason: "Playlist validation cancelled" });
   });
 });

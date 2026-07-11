@@ -25,9 +25,30 @@ function swVersionPlugin() {
   };
 }
 
+function directContentConfigPlugin() {
+  return {
+    name: 'direct-content-config',
+    configResolved(config) {
+      if (!config.isProduction) return;
+      const value = config.env.VITE_SECURE_APP_BASE_URL;
+      if (!value) throw new Error('VITE_SECURE_APP_BASE_URL is required for production builds');
+      let url;
+      try {
+        url = new URL(value);
+      } catch {
+        throw new Error('VITE_SECURE_APP_BASE_URL must be a valid URL');
+      }
+      if (url.protocol !== 'https:') {
+        throw new Error('VITE_SECURE_APP_BASE_URL must use HTTPS in production');
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react(),
+    directContentConfigPlugin(),
     swVersionPlugin(),
     legacy({
       targets: ['chrome >= 68', 'safari >= 13', 'ios >= 13', 'samsung >= 10'],

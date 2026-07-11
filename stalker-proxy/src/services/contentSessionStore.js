@@ -56,7 +56,49 @@ class PostgresContentSessionStore {
   }
 }
 
-function createContentSessionStore({ pool } = {}) {
-  return pool ? new PostgresContentSessionStore(pool) : new MemoryContentSessionStore();
+class SqliteContentSessionStore {
+  constructor(db) {
+    this.db = db;
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS content_sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        connection_payload TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS content_sessions_user_id_idx ON content_sessions (user_id);
+      CREATE INDEX IF NOT EXISTS content_sessions_expires_at_idx ON content_sessions (expires_at);
+    `);
+    this.insert = this.db.prepare('INSERT INTO content_sessions (token_hash, user_id, connection_payload, expires_at, created_at) VALUES (?, ?, ?, ?, ?)');
+    this.find = this.db.prepare('SELECT token_hash, user_id, connection_payload, expires_at, created_at FROM content_sessions WHERE token_hash = ?');
+    this.deleteOne = this.db.prepare('DELETE FROM content_sessions WHERE token_hash = ?');
+    this.deleteUser = this.db.prepare('DELETE FROM content_sessions WHERE user_id = ?');
+    this.deleteExpiredStatement = this.db.prepare('DELETE FROM content_sessions WHERE expires_at <= ?');
+    this.count = this.db.prepare('SELECT COUNT(*) AS count FROM content_sessions WHERE user_id = ? AND expires_at > ?');
+    this.oldest = this.db.prepare('SELECT token_hash FROM content_sessions WHERE user_id = ? ORDER BY created_at ASC LIMIT ?');
+  }
+  async create(value) { this.insert.run(value.tokenHash, value.userId, value.encryptedConnection, value.expiresAt, value.createdAt); }
+  async findByTokenHash(hash) {
+    const row = this.find.get(hash);
+    return row ? { tokenHash: row.token_hash, userId: row.user_id, encryptedConnection: row.connection_payload,
+      expiresAt: Number(row.expires_at), createdAt: Number(row.created_at) } : null;
+  }
+  async deleteByTokenHash(hash) { return this.deleteOne.run(hash).changes > 0; }
+  async deleteByUserId(userId) { this.deleteUser.run(userId); }
+  async deleteExpired(now = Date.now()) { this.deleteExpiredStatement.run(now); }
+  async countByUserId(userId, now = Date.now()) { return Number(this.count.get(userId, now)?.count || 0); }
+  async deleteOldestByUserId(userId, count) {
+    if (count <= 0) return;
+    const rows = this.oldest.all(userId, count);
+    const remove = this.db.transaction(tokens => tokens.forEach(row => this.deleteOne.run(row.token_hash)));
+    remove(rows);
+  }
 }
-module.exports = { MemoryContentSessionStore, PostgresContentSessionStore, createContentSessionStore };
+
+function createContentSessionStore({ pool, db } = {}) {
+  if (pool) return new PostgresContentSessionStore(pool);
+  if (db) return new SqliteContentSessionStore(db);
+  return new MemoryContentSessionStore();
+}
+module.exports = { MemoryContentSessionStore, PostgresContentSessionStore, SqliteContentSessionStore, createContentSessionStore };

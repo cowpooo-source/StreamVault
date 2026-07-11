@@ -14,8 +14,12 @@ import {
 } from "../src/direct-content-session.js";
 
 describe("direct-content-session helpers", () => {
+  const setSecureBase = (value) => { import.meta.env.VITE_SECURE_APP_BASE_URL = value; };
+  const clearSecureBase = () => { delete import.meta.env.VITE_SECURE_APP_BASE_URL; };
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    clearSecureBase();
   });
 
   it("detects direct content connections for xtream and m3u only", () => {
@@ -73,13 +77,24 @@ describe("direct-content-session helpers", () => {
     expect(contentSessionToken({ pathname: "/content", search: "" })).toBeNull();
   });
 
-  it("builds the HTTPS app home URL for returning from direct content mode", () => {
+  it("builds the HTTPS app home URL from the configured secure origin", () => {
+    setSecureBase("https://media.portalheaven.stream");
     expect(getAppHomeUrl()).toBe("https://media.portalheaven.stream/");
-    expect(getAppHomeUrl({ baseUrl: "https://media.portalheaven.stream/content?token=abc123" })).toBe("https://media.portalheaven.stream/");
     expect(getAppHomeUrl({ baseUrl: "https://portal.example/app/" })).toBe("https://portal.example/");
   });
 
+  it("rejects an invalid secure app origin", () => {
+    expect(() => getAppHomeUrl({ baseUrl: "javascript:alert(1)" })).toThrow("Secure app URL");
+  });
+
+  it("falls back to the current origin when no secure origin is configured", () => {
+    clearSecureBase();
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    expect(getAppHomeUrl()).toBe(`${origin}/`);
+  });
+
   it("navigates back to the HTTPS app home through a callback or window.location", () => {
+    setSecureBase("https://media.portalheaven.stream");
     const navigate = vi.fn();
     expect(navigateToAppHome({ navigate })).toBe("https://media.portalheaven.stream/");
     expect(navigate).toHaveBeenCalledWith("https://media.portalheaven.stream/");

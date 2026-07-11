@@ -14,9 +14,15 @@ const boundedInt = (value, fallback, min, max) => {
 
 function normalizeBaseUrl(value = process.env.CONTENT_BASE_URL || process.env.PLAYER_BASE) {
   const fallback = process.env.NODE_ENV === 'production' ? null : 'http://localhost:3201';
-  const url = new URL(value || fallback);
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('CONTENT_BASE_URL must use HTTP or HTTPS');
-  return url.origin;
+  const configured = value || fallback;
+  if (!configured) throw new Error('CONTENT_BASE_URL is required');
+  try {
+    const url = new URL(configured);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+    return url.origin;
+  } catch {
+    throw new Error('CONTENT_BASE_URL must be a valid HTTP or HTTPS origin');
+  }
 }
 
 function normalizeConnection(input) {
@@ -51,7 +57,8 @@ function authenticate(req, auth) {
 
 function createContentSessionRouter(deps) {
   const { auth, isUrlAllowed } = deps;
-  const store = deps.contentSessionStore || (deps.pool ? createContentSessionStore({ pool: deps.pool }) : fallbackStore);
+  const sqliteDb = deps.cache?.db && typeof deps.cache.db.exec === 'function' ? deps.cache.db : null;
+  const store = deps.contentSessionStore || (deps.pool ? createContentSessionStore({ pool: deps.pool }) : sqliteDb ? createContentSessionStore({ db: sqliteDb }) : fallbackStore);
   const ttlMs = boundedInt(process.env.CONTENT_SESSION_TTL_MINUTES, 30, 5, 120) * 60_000;
   const maxPerUser = boundedInt(process.env.CONTENT_SESSION_MAX_PER_USER, 5, 1, 50);
   const router = express.Router();

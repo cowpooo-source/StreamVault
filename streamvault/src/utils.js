@@ -105,7 +105,72 @@ export function fmtTime(sec) {
   return h > 0 ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}` : `${m}:${String(s).padStart(2,"0")}`;
 }
 
-// Parse M3U playlist text into array of {name, url} objects
+// Validate an M3U playlist with a bounded initial response (default 64 KB).
+// Returns { ok, reason } without downloading the full playlist.
+export async function validateM3UChunk(url, { signal, maxBytes = 64 * 1024, timeoutMs = 20000 } = {}) {
+  const controller = new AbortController();
+  const byteLimit = Math.min(256 * 1024, Math.max(1024, Number(maxBytes) || 64 * 1024));
+  let timedOut = false;
+  const timer = timeoutMs ? setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs) : null;
+  const abortSignal = controller.signal;
+  const forwardAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", forwardAbort, { once: true });
+  }
+
+  try {
+    const res = await fetch(`${API}/proxy?url=${encodeURIComponent(url)}`, {
+      method: "GET",
+      signal: abortSignal,
+    });
+
+    if (!res.ok) {
+      return { ok: false, reason: `HTTP ${res.status}` };
+    }
+
+    // Read at most maxBytes from the response body.
+    const reader = res.body?.getReader?.();
+    if (!reader) return { ok: false, reason: "Playlist response does not support bounded validation" };
+
+    let received = 0;
+    let chunk = "";
+    while (received < byteLimit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = byteLimit - received;
+      const boundedValue = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+      received += boundedValue.byteLength;
+      chunk += new TextDecoder().decode(boundedValue, { stream: true });
+    }
+    // Cancel the remaining stream to avoid downloading the rest.
+    try { await reader.cancel(); } catch { /* ignore */ }
+
+    return validateM3UText(chunk);
+  } catch (e) {
+    if (e.name === "AbortError" || abortSignal.aborted) {
+      return { ok: false, reason: timedOut ? "Playlist validation timed out" : "Playlist validation cancelled" };
+    }
+    return { ok: false, reason: e?.message || "Validation failed" };
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+}
+
+function validateM3UText(text) {
+  if (!text || !text.includes("#EXTM3U")) {
+    return { ok: false, reason: "Not a valid M3U playlist" };
+  }
+  if (!text.includes("#EXTINF")) {
+    return { ok: false, reason: "Playlist contains no channels" };
+  }
+  return { ok: true, reason: null };
+}
+
 export function parseM3U(text) {
   if (!text) return [];
   const lines = text.split("\n"); const out = [];
@@ -150,11 +215,11 @@ export function debounce(func, wait) {
 }
 
 export function trackAnalytics(eventName, payload) {
-  if (!GA_ID || typeof gtag !== 'function') return;
+  if (!GA_ID || typeof globalThis.gtag !== 'function') return;
 
   try {
     // Redundant event_name removed, gtag already takes eventName as 1st arg
-    gtag('event', eventName, payload);
+    globalThis.gtag('event', eventName, payload);
   } catch (e) {
     console.warn("Analytics event failed:", e.message);
   }

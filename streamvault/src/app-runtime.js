@@ -25,8 +25,8 @@ export const db = {
   },
 };
 
-export function proxyFetch(url) {
-  return fetch(`${API}/proxy?url=${encodeURIComponent(url)}`);
+export function proxyFetch(url, opts = {}) {
+  return fetch(`${API}/proxy?url=${encodeURIComponent(url)}`, opts);
 }
 
 export async function safeJsonFetch(res) {

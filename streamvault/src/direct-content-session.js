@@ -9,15 +9,24 @@ function trimTrailingSlash(pathname) {
   return pathname.replace(/\/+$/, "") || "/";
 }
 
-function normalizeBaseUrl(baseUrl, fallback) {
+function normalizeBaseUrl(baseUrl, fallback, name = "URL") {
   try {
-    return new URL(String(baseUrl || fallback)).origin;
+    const url = new URL(String(baseUrl || fallback));
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    return url.origin;
   } catch {
-    return fallback;
+    throw new Error(`${name} must be configured with an HTTP or HTTPS origin`);
   }
 }
 
-const DEFAULT_APP_BASE_URL = "https://media.portalheaven.stream";
+// Secure (HTTPS) app origin. Configured at build time via VITE_SECURE_APP_BASE_URL.
+// Falls back to the current origin in development so tests and local builds work.
+function secureAppBaseUrl() {
+  const fromEnv = import.meta.env?.VITE_SECURE_APP_BASE_URL;
+  if (fromEnv) return fromEnv;
+  if (import.meta.env?.DEV && typeof window !== "undefined" && window.location?.origin) return window.location.origin;
+  return "";
+}
 const CONTENT_SESSION_STORAGE_KEY = "sv-content-session-token";
 
 function safeSessionStorageRead(key) {
@@ -33,7 +42,7 @@ function safeSessionStorageWrite(key, value) {
     if (typeof sessionStorage !== "undefined") {
       sessionStorage.setItem(key, value);
     }
-  } catch {}
+  } catch { /* session storage may be unavailable */ }
 }
 
 function safeSessionStorageRemove(key) {
@@ -41,7 +50,7 @@ function safeSessionStorageRemove(key) {
     if (typeof sessionStorage !== "undefined") {
       sessionStorage.removeItem(key);
     }
-  } catch {}
+  } catch { /* session storage may be unavailable */ }
 }
 
 export function isDirectContentConnection(connection) {
@@ -86,7 +95,7 @@ export function clearContentSessionToken() {
 }
 
 export function getAppHomeUrl(options = {}) {
-  return `${normalizeBaseUrl(options.baseUrl, DEFAULT_APP_BASE_URL)}/`;
+  return `${normalizeBaseUrl(options.baseUrl, secureAppBaseUrl(), "Secure app URL")}/`;
 }
 
 export function navigateToAppHome(options = {}) {
@@ -124,7 +133,7 @@ export async function validateContentSession(token) {
     try {
       const body = await res.json();
       if (body?.error) message = body.error;
-    } catch {}
+    } catch { /* response body is optional */ }
     const err = new Error(message);
     err.code = code;
     err.status = res.status;
@@ -159,7 +168,7 @@ export async function openDirectContentSession(connection, options = {}) {
     try {
       const body = await res.json();
       if (body?.error) message = body.error;
-    } catch {}
+    } catch { /* response body is optional */ }
     const err = new Error(message);
     err.code = code;
     err.status = res.status;

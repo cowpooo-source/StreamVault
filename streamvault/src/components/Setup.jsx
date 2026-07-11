@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { API, parseM3U, trackAnalytics } from '../utils.js';
-import { proxyFetch, makeXtreamAPI, track, GUEST_ID } from '../app-runtime.js';
+import { API, validateM3UChunk, trackAnalytics } from '../utils.js';
+import { makeXtreamAPI, track, GUEST_ID } from '../app-runtime.js';
 import { XtreamForm } from './setup/XtreamForm.jsx';
 import { StalkerForm } from './setup/StalkerForm.jsx';
 import { M3UForm } from './setup/M3UForm.jsx';
@@ -107,12 +107,8 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         const cfg = conn.config || {};
         const url = (cfg.url || "").trim();
         if (!url) throw new Error("Playlist URL required");
-        const res = await proxyFetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
-        if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
-        const channels = parseM3U(text);
-        if (!channels.length) throw new Error("No channels found");
+        const validation = await validateM3UChunk(url);
+        if (!validation.ok) throw new Error(validation.reason || "Playlist validation failed");
         trackAnalytics("portal_connect", { provider_type: "m3u", success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onReconnect(conn.id);
         return;
@@ -227,15 +223,11 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         onConnect({ type, server, user:f.user, pass:f.pass, info:data?.user_info });
       } else if (type === "m3u") {
         if (!f.url) throw new Error("Playlist URL required");
-        const res = await proxyFetch(f.url.trim());
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
-        if (!text.includes("#EXTM3U")) throw new Error("Not a valid M3U playlist");
-        const channels = parseM3U(text);
-        if (!channels.length) throw new Error("No channels found");
+        const validation = await validateM3UChunk(f.url.trim());
+        if (!validation.ok) throw new Error(validation.reason || "Playlist validation failed");
 
         trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
-        onConnect({ type, url:f.url, channels, epgUrl: channels.epgUrl, epgUrls: channels.epgUrls });
+        onConnect({ type, url: f.url });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
         const server = f.server.trim().replace(/\/$/,"");

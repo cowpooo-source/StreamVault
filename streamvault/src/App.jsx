@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo, useDeferredValue } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { createPortal } from "react-dom";
 import "./app.css";
 import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics } from "./utils.js";
@@ -1009,12 +1008,6 @@ async function restoreFromServer(type, connId) {
     const { data } = await res.json();
     return data;
   } catch { return null; }
-}
-
-// Sync connections list to server (encrypted)
-async function syncConnectionsToServer(conns) {
-  const encrypted = await encryptConnections(conns);
-  syncToServer("connections", "_all", encrypted);
 }
 
 // Restore connections from server (decrypt)
@@ -2329,18 +2322,42 @@ export default function App() {
       else if (epgURL) loadEPG(epgURL);
       return;
     }
+    let cancelled = false;
+    const controller = new AbortController();
     if (conn.type === "m3u") {
-      setChannels(conn.channels ?? []);
-      // Save M3U channels to IDB for persistence
-      const cId = connId(conn);
-      if (cId && conn.channels?.length) {
-        idbCache.set(`content:${cId}:live`, conn.channels);
-        idbCache.set(`sync:${cId}`, { ...lastSynced, live: Date.now() });
-        setLastSynced(prev => ({ ...prev, live: Date.now() }));
-      }
-      if (conn.epgUrls?.length) conn.epgUrls.forEach(u => loadEPG(u));
-      else if (conn.epgUrl) loadEPG(conn.epgUrl);
-      else if (epgURL) loadEPG(epgURL);
+      // Activation does the single full download. The validation step only
+      // checked a bounded chunk, so channels are not present here yet.
+      (async () => {
+        const cId = connId(conn);
+        let cached = cId ? await idbCache.get(`content:${cId}:live`) : null;
+        if (!cached?.length && conn.url) {
+          try {
+            const res = await proxyFetch(conn.url, { signal: controller.signal });
+            if (!res.ok) throw new Error(`Playlist request failed (HTTP ${res.status})`);
+            const text = await res.text();
+            cached = parseM3U(text);
+            if (cancelled) return;
+            if (cId && cached?.length) {
+              idbCache.set(`content:${cId}:live`, cached);
+              const now = Date.now();
+              setLastSynced(prev => {
+                const next = { ...prev, live: now };
+                idbCache.set(`sync:${cId}`, next);
+                return next;
+              });
+            }
+          } catch (e) {
+            if (e?.name !== "AbortError") console.warn("M3U activation fetch failed:", e?.message || e);
+          }
+        }
+        if (cancelled) return;
+        const channels = conn.channels?.length ? conn.channels : (cached || []);
+        setChannels(channels);
+        const epgUrls = conn.epgUrls || (cached?.epgUrls ?? []) || (channels?.epgUrls ?? []);
+        if (epgUrls?.length) epgUrls.forEach(u => loadEPG(u));
+        else if (conn.epgUrl) loadEPG(conn.epgUrl);
+        else if (epgURL) loadEPG(epgURL);
+      })();
     } else if (conn.type === "xtream") {
       fetchLive();
       // Load large VOD and series catalogs on demand when the user opens them.
@@ -2354,11 +2371,10 @@ export default function App() {
       loadStalkerCats("series", false, true);
       loadStalkerEPG();
     }
-    // Save connection to D1
-    const cId = connId(conn);
-    if (cId) {
-      // Intentionally empty, perhaps for future logic or a placeholder that was removed
-    }
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [conn]);
 
   async function fetchLive(force = false) {
