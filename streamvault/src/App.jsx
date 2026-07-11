@@ -2343,9 +2343,8 @@ export default function App() {
       else if (epgURL) loadEPG(epgURL);
     } else if (conn.type === "xtream") {
       fetchLive();
-      // Pre-fetch VOD + series in background so they're ready when user switches tabs
-      fetchVOD(false, true);
-      fetchSeries(false, true);
+      // Load large VOD and series catalogs on demand when the user opens them.
+      // Some providers return tens of megabytes for a full catalog.
       const xtreamEpgUrl = `${conn.server}/xmltv.php?username=${conn.user}&password=${conn.pass}`;
       loadEPG(xtreamEpgUrl);
     } else if (conn.type === "stalker") {
