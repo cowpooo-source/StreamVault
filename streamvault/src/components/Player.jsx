@@ -19,7 +19,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const [showQCH, setShowQCH] = useState(false);
   const qchTimer = useRef(null);
   
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Reactive Time State for OSD Ã¢â€â‚¬Ã¢â€â‚¬
+  // ── Reactive Time State for OSD ──
   const [nowMs, setNowMs] = useState(Date.now());
   useEffect(() => {
     if (!osd) return;
@@ -232,7 +232,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       const v = videoRef.current;
       if (!v) return;
       const s = {};
-      s.resolution = v.videoWidth && v.videoHeight ? `${v.videoWidth}Ãƒâ€”${v.videoHeight}` : "Ã¢â‚¬â€";
+      s.resolution = v.videoWidth && v.videoHeight ? `${v.videoWidth}×${v.videoHeight}` : "—";
       s.currentTime = v.currentTime?.toFixed(1) || "0";
       s.duration = v.duration && isFinite(v.duration) ? v.duration.toFixed(1) : "Live";
       s.readyState = ["NOTHING","METADATA","CURRENT","FUTURE","ENOUGH"][v.readyState] || v.readyState;
@@ -249,17 +249,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (q) {
         s.droppedFrames = `${q.droppedVideoFrames}/${q.totalVideoFrames}`;
         s.fps = q.totalVideoFrames > 0 && v.currentTime > 1
-          ? (q.totalVideoFrames / v.currentTime).toFixed(1) : "Ã¢â‚¬â€";
+          ? (q.totalVideoFrames / v.currentTime).toFixed(1) : "—";
       }
       // HLS.js stats
       const hls = hlsRef.current;
       if (hls?.levels?.[hls.currentLevel]) {
         const lvl = hls.levels[hls.currentLevel];
-        s.bitrate = lvl.bitrate ? `${(lvl.bitrate / 1000).toFixed(0)} kbps` : "Ã¢â‚¬â€";
-        s.codec = [lvl.videoCodec, lvl.audioCodec].filter(Boolean).join(", ") || "Ã¢â‚¬â€";
+        s.bitrate = lvl.bitrate ? `${(lvl.bitrate / 1000).toFixed(0)} kbps` : "—";
+        s.codec = [lvl.videoCodec, lvl.audioCodec].filter(Boolean).join(", ") || "—";
         s.hlsLevel = `${hls.currentLevel + 1}/${hls.levels.length}`;
       }
-      s.url = current.url?.slice(0, 80) + (current.url?.length > 80 ? "Ã¢â‚¬Â¦" : "");
+      s.url = current.url?.slice(0, 80) + (current.url?.length > 80 ? "…" : "");
       setStats(s);
     }
     collect();
@@ -286,8 +286,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
       if (hlsRef.current || mpegtsRef.current) return;
       const e = video.error;
-      const msgs = { 1: "Playback aborted", 2: "Network error Ã¢â‚¬â€ could not load stream", 3: "Decode error Ã¢â‚¬â€ stream format not supported", 4: "Source not supported Ã¢â‚¬â€ the stream format or URL is invalid" };
-      const errorPayload = { icon: "Ã¢Å¡Â Ã¯Â¸Â", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
+      const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
+      const errorPayload = { icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
       setStreamErr(errorPayload);
       trackAnalytics("playback_error", {
         error_type: "native_video_error",
@@ -360,7 +360,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           } else {
             body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
           }
-          setStreamErr({ icon: "Ã¢Å¡Â Ã¯Â¸Â", title, body });
+          setStreamErr({ icon: "⚠️", title, body });
           trackAnalytics("playback_error", {
             error_type: `hls_${data.type}`,
             error_code: String(code || data.details || "unknown"),
@@ -421,7 +421,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         } else {
           body = `${errType}: ${errDetail || "Unknown error"}${code ? ` (HTTP ${code})` : ""}`;
         }
-        setStreamErr({ icon: "Ã¢Å¡Â Ã¯Â¸Â", title, body });
+        setStreamErr({ icon: "⚠️", title, body });
         destroyPlayers();
       });
       player.attachMediaElement(video);
@@ -443,7 +443,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       document.head.appendChild(s);
     }
 
-    // Direct video files (MP4, MKV, AVI, etc.) Ã¢â‚¬â€ play natively, not via mpegts/HLS
+    // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS
     const fileExt = url.split(/[?#]/)[0].split(".").pop()?.toLowerCase();
     if (["mp4", "mkv", "avi", "mov", "webm", "mp3", "aac"].includes(fileExt)) {
       video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
@@ -822,13 +822,13 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             <div className="osd" onClick={showOSD}>
               {current.logo
                 ? <img className="osd-logo" src={imgSrc(current.logo)} alt="" onError={e => e.target.style.display="none"} />
-                : <div className="osd-logo-ph">{current.type==="live"?"Ã°Å¸â€œÂº":"Ã°Å¸Å½Â¬"}</div>}
+                : <div className="osd-logo-ph">{current.type==="live"?"📺":"🎬"}</div>}
               <div>
                 {current.num && <div className="osd-num">CH {current.num}</div>}
                 <div className="osd-name">{current.name}</div>
                 {epgNow && (
                   <div className="osd-epg">
-                    Ã¢â€“Â¶ {epgNow.title}
+                    ▶ {epgNow.title}
                     {epgNow.stop && (
                       <span className="osd-epg-left">
                         {Math.max(0, Math.ceil((epgNow.stop - nowMs)/60000))}m left
@@ -859,7 +859,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                   <div key={ch.id||i} className={`qch-item ${isActive?"active":""}`}>
                     {ch.logo
                       ? <img className="qch-thumb" src={imgSrc(ch.logo)} alt="" onError={e => e.target.style.display="none"} />
-                      : <div className="qch-thumb-ph">Ã°Å¸â€œÂº</div>}
+                      : <div className="qch-thumb-ph">📺</div>}
                     <div className="qch-n">{ch.name}</div>
                     {ch.num && <div className="qch-num">{ch.num}</div>}
                   </div>
@@ -909,30 +909,30 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
               {current.name}
               {current.group && <span className="badge">{current.group}</span>}
             </div>
-            {epgNow && <div className="player-epg">Ã¢â€“Â¶ {epgNow.title}</div>}
+            {epgNow && <div className="player-epg">▶ {epgNow.title}</div>}
           </div>
           {channelList && current.type === "live" && (
             <>
-              <button className="player-ctrl" onClick={prevChannel}>Ã¢â€”â‚¬ {t("prev")}</button>
-              <button className="player-ctrl" onClick={nextChannel}>{t("next")} Ã¢â€“Â¶</button>
+              <button className="player-ctrl" onClick={prevChannel}>◀ {t("prev")}</button>
+              <button className="player-ctrl" onClick={nextChannel}>{t("next")} ▶</button>
             </>
           )}
-          <button className="player-ctrl" onClick={pip} title="Picture in Picture">Ã¢Â§â€° {t("pip")}</button>
-          <button className={`player-ctrl${showStats?" on":""}`} onClick={() => setShowStats(s=>!s)} title="Stream Stats">Ã°Å¸â€œÅ </button>
+          <button className="player-ctrl" onClick={pip} title="Picture in Picture">⧉ {t("pip")}</button>
+          <button className={`player-ctrl${showStats?" on":""}`} onClick={() => setShowStats(s=>!s)} title="Stream Stats">📊</button>
           {(audioTracks.length > 1 || subTracks.length > 0) && (
             <button className={`player-ctrl${showTracksMenu?" on":""}`} onClick={() => { setShowTracksMenu(s=>!s); setShowCatchupMenu(false); }} title="Audio & Subtitles">
-              Ã°Å¸â€™Â¬
+              💬
             </button>
           )}
           {connType === "stalker" && current.type === "live" && epgData?.[current.epgId] && (
             <button className={`player-ctrl${showCatchupMenu?" on":""}`} onClick={() => { setShowCatchupMenu(s=>!s); setShowTracksMenu(false); }} title="Catch-up TV">
-              Ã¢â€ Â©Ã¯Â¸Â
+              ↩️
             </button>
           )}
           <button className="player-ctrl" onClick={() => { onFav?.(current); showOSD(); }} title={t("fav")}>
-            {isFav?.(current) ? `Ã¢â„¢Â¥ ${t("fav")}` : `Ã¢â„¢Â¡ ${t("fav")}`}
+            {isFav?.(current) ? `♥ ${t("fav")}` : `♡ ${t("fav")}`}
           </button>
-          <button className="player-close" onClick={onClose}>Ã¢Å“â€¢ {t("close")}</button>
+          <button className="player-close" onClick={onClose}>✕ {t("close")}</button>
         </div>
         {showTracksMenu && (
           <div className="player-track-menu" onClick={e => e.stopPropagation()}>
@@ -946,7 +946,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                     onClick={() => selectAudioTrack(index)}
                   >
                     <span>{audioTrackLabel(track, index)}</span>
-                    {activeAudio === index && <span className="player-track-check">Ã¢Å“â€œ</span>}
+                    {activeAudio === index && <span className="player-track-check">✓</span>}
                   </button>
                 ))}
               </div>
@@ -959,7 +959,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                   onClick={() => selectSubtitleTrack(-1)}
                 >
                   <span>Off</span>
-                  {activeSub === -1 && <span className="player-track-check">Ã¢Å“â€œ</span>}
+                  {activeSub === -1 && <span className="player-track-check">✓</span>}
                 </button>
                 {subTracks.map((track, index) => (
                   <button
@@ -968,7 +968,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                     onClick={() => selectSubtitleTrack(index)}
                   >
                     <span>{subtitleTrackLabel(track, index)}</span>
-                    {activeSub === index && <span className="player-track-check">Ã¢Å“â€œ</span>}
+                    {activeSub === index && <span className="player-track-check">✓</span>}
                   </button>
                 ))}
               </div>
@@ -979,8 +979,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           <span><span className="kbd">Space</span>{t("playPause")}</span>
           <span><span className="kbd">F</span>{t("fullscreen")}</span>
           <span><span className="kbd">M</span>{t("mute")}</span>
-          <span><span className="kbd">Ã¢â€ ÂÃ¢â€ â€™</span>{current.type==="live"?t("channels"):"Ã‚Â±10s"}</span>
-          <span><span className="kbd">Ã¢â€ â€˜Ã¢â€ â€œ</span>{current.type==="live"?t("channels"):t("volume")}</span>
+          <span><span className="kbd">←→</span>{current.type==="live"?t("channels"):"±10s"}</span>
+          <span><span className="kbd">↑↓</span>{current.type==="live"?t("channels"):t("volume")}</span>
           <span><span className="kbd">P</span>{t("pip")}</span>
           <span><span className="kbd">S</span>Stats</span>
           <span><span className="kbd">Esc</span>Close</span>

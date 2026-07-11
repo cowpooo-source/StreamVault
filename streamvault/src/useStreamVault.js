@@ -1,4 +1,4 @@
-// useStreamVault â€” React hook that wires streamvault-store.js to persistence and side effects
+// useStreamVault — React hook that wires streamvault-store.js to persistence and side effects
 import { useReducer, useEffect, useCallback, useMemo, useRef } from "react";
 import { createInitialStoreState, streamvaultReducer, selectActiveConnection, selectFavItems } from "./streamvault-store.js";
 
@@ -72,7 +72,7 @@ export function useStreamVault({
     return () => { cancelled = true; };
   }, [state.activeConnId]);
 
-  // â”€â”€ actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── actions ─────────────────────────────────────────────────────────
 
   const setConnections = useCallback((conns) => {
     dispatch({ type: "SET_CONNECTIONS", payload: conns });
