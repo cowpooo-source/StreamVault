@@ -3439,7 +3439,7 @@ export default function App() {
     return parts.join(", ") || "preferences";
   }
 
-  function handleImportMultiple(items) {
+  async function handleImportMultiple(items) {
     if (!items.length) return;
     // Build configs for all items
     const configs = items.map(d => {
@@ -3466,12 +3466,20 @@ export default function App() {
     }
     // Single state update with all connections
     setConnections(newConns);
-    // Only connect if at least one connection was imported
+    // Open direct connections through the same HTTP session flow as normal switching.
     if (added > 0) {
-      const firstAdded = newConns[newConns.length - added]; // first of the newly added
+      const firstAdded = newConns[newConns.length - added];
       if (firstAdded) {
         setActiveConnId(firstAdded.id);
-        setConn(firstAdded.config);
+        setContentSessionOpening(true);
+        try {
+          const opened = await maybeOpenDirectContentSession(firstAdded, { location: window.location });
+          if (!opened) setConn(firstAdded.config);
+        } catch (error) {
+          setConnError(error?.message || "Unable to open the imported connection");
+        } finally {
+          setContentSessionOpening(false);
+        }
       }
     }
   }
