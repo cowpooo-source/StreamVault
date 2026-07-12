@@ -207,6 +207,22 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.error).toBe('Unauthorized');
   });
 
+  it('POST /api/content-session allows a UUID-scoped guest session', async () => {
+    const res = await request(app)
+      .post('/api/content-session')
+      .set('X-Guest-Id', '841f8a36-fb33-4e1b-bb0d-e57f9346d34a')
+      .send({
+        connection: {
+          id: 'guest-xtream',
+          type: 'xtream',
+          label: 'Guest Xtream',
+          config: { type: 'xtream', server: 'http://provider.example.com', user: 'u', pass: 'p' },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeTruthy();
+  });
   it('POST /api/content-session rejects unsupported provider types', async () => {
     mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
 
