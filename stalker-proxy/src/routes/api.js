@@ -48,11 +48,15 @@ function createApiRouter(deps) {
             try {
               const data = await r.json();
               const ui = data?.user_info;
+              const status = String(ui?.status ?? "").trim().toLowerCase();
+              const disabled = ["disabled", "expired", "blocked", "suspended", "0"].includes(status);
+              result.valid = ui?.auth === 1 && !disabled;
               result.details.auth = ui?.auth === 1 ? "ok" : "failed";
-              result.details.status = ui?.status || "—";
-              result.details.maxCons = ui?.max_connections ?? "—";
-              result.details.activeConns = ui?.active_cons ?? "—";
-            } catch { result.details.parse = "non-JSON"; }
+              result.details.status = ui?.status || "unknown";
+              result.details.maxCons = ui?.max_connections ?? "unknown";
+              result.details.activeConns = ui?.active_cons ?? "unknown";
+              if (!result.valid) result.details.error = disabled ? "Account disabled or expired" : "Authentication failed";
+            } catch { result.valid = false; result.details.parse = "non-JSON"; }
           }
         } else { result.details.status = "unreachable"; }
       } else if (type === "m3u" && m3uUrl) {

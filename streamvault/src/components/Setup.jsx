@@ -97,7 +97,8 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         if (!server || !user || !pass) throw new Error("All fields required");
         const api = makeXtreamAPI(server, user, pass);
         const data = await api.auth();
-        if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
+        const status = String(data?.user_info?.status ?? "").trim().toLowerCase();
+        if (data?.user_info?.auth !== 1 || ["disabled", "expired", "blocked", "suspended", "0"].includes(status)) throw new Error("Invalid credentials or disabled account");
         trackAnalytics("portal_connect", { provider_type: "xtream", success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onReconnect(conn.id);
         return;
@@ -217,7 +218,8 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         const server = f.server.trim().replace(/\/$/,"");
         const api = makeXtreamAPI(server, f.user, f.pass);
         const data = await api.auth();
-        if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
+        const status = String(data?.user_info?.status ?? "").trim().toLowerCase();
+        if (data?.user_info?.auth !== 1 || ["disabled", "expired", "blocked", "suspended", "0"].includes(status)) throw new Error("Invalid credentials or disabled account");
 
         trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
         onConnect({ type, server, user:f.user, pass:f.pass, info:data?.user_info });

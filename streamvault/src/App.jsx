@@ -1267,8 +1267,8 @@ const ConnectionManager = memo(function ConnectionManager({ connections, activeC
                 </div>
                 {diag && (
                   <div style={{marginTop:".4rem",padding:".35rem .5rem",background:"var(--s1)",borderRadius:6,fontSize:".65rem",lineHeight:1.6,fontFamily:"monospace"}}>
-                    <span style={{color: diag.reachable ? "#4caf50" : "#f44336",fontWeight:700}}>
-                      {diag.reachable ? "● Reachable" : "● Unreachable"}
+                    <span style={{color: (diag.valid ?? diag.reachable) ? "#4caf50" : "#f44336",fontWeight:700}}>
+                      {diag.valid === false ? "Authentication failed" : diag.reachable ? "Reachable" : "Unreachable"}
                     </span>
                     {diag.latency != null && <span style={{color:"var(--t2)",marginLeft:".5rem"}}>{diag.latency}ms</span>}
                     {Object.entries(diag.details || {}).map(([k, v]) => (
@@ -1334,7 +1334,8 @@ const EditConnectionModal = ({ conn, onClose, onSave, t }) => {
         const server = form.server.trim().replace(/\/$/, "");
         const api = makeXtreamAPI(server, form.user, form.pass);
         const data = await api.auth();
-        if (data?.user_info?.auth === 0) throw new Error("Invalid credentials");
+        const status = String(data?.user_info?.status ?? "").trim().toLowerCase();
+        if (data?.user_info?.auth !== 1 || ["disabled", "expired", "blocked", "suspended", "0"].includes(status)) throw new Error("Invalid credentials or disabled account");
         finalConfig = { type, server, user: form.user, pass: form.pass, info: data?.user_info };
       } else if (type === "m3u") {
         if (!form.url) throw new Error("Playlist URL required");
@@ -1708,6 +1709,8 @@ export default function App() {
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
     }
+
+    if (isHttpContentMode()) { setAuthLoading(false); return; }
 
     const wasGuest = localStorage.getItem("sv-guest-mode") === "1";
     if (wasGuest) { setIsGuest(true); setAuthLoading(false); return; }

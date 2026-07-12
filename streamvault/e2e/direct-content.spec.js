@@ -3,6 +3,10 @@ import { expect, test } from "@playwright/test";
 test.describe("Direct content session", () => {
   test("validates an HTTP session without persisting provider credentials", async ({ page }) => {
     const providerRequests = [];
+    let authMeRequests = 0;
+    page.on("request", request => {
+      if (request.url().includes("/api/auth/me")) authMeRequests += 1;
+    });
 
     await page.route("**/api/content-session/validate?token=direct-session", async (route) => {
       await route.fulfill({
@@ -44,7 +48,7 @@ test.describe("Direct content session", () => {
     await page.goto("/content?token=direct-session");
 
     await expect(page).toHaveURL(/\/content$/);
-    await expect(page.getByText("Direct Channel", { exact: false })).toBeVisible();
+    expect(authMeRequests).toBe(0);    await expect(page.getByText("Direct Channel", { exact: false })).toBeVisible();
     await expect.poll(() => page.evaluate(() => sessionStorage.getItem("sv-content-session-token"))).toBe("direct-session");
 
     const persisted = await page.evaluate(() => ({
