@@ -4,7 +4,7 @@
   "description": "CORS proxy for Stalker/Ministra IPTV portals — handles token handshake and header injection",
   "main": "src/index.js",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "start": "node src/index.js",

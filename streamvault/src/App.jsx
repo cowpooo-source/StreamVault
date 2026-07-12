@@ -2652,7 +2652,9 @@ export default function App() {
         return [...prev, newSource];
       });
       setEpgURL(url);
-      db.set("sv-epgURL", url);
+      if (!httpContentMode) {
+        db.set("sv-epgURL", url);
+      }
     } catch(e) { if (token === epgLoadToken.current) console.error("EPG error:", e); }
     finally { if (token === epgLoadToken.current) setEpgLoading(false); }
   }
