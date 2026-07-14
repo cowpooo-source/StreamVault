@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalytics } from "../utils.js";
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
+import { classifyStreamUrl } from "../stream-classifier.js";
 
 function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
@@ -222,6 +223,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   }
 
   const [streamErr, setStreamErr] = useState(null);
+  const [retryKey, setRetryKey] = useState(0);
+  const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0 });
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState({});
   const statsInterval = useRef(null);
@@ -276,6 +279,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     const video = videoRef.current;
     if (!video || !url) return;
     setStreamErr(null);
+    if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
+      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0 };
+    }
     destroyPlayers();
     video.removeAttribute("src");
 
@@ -333,6 +339,21 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         });
         hls.on(window.Hls.Events.ERROR, (_, data) => {
           if (!data.fatal) return;
+          const recovery = autoRecoveryRef.current;
+          if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && recovery.hls < 2) {
+            recovery.hls += 1;
+            const delay = 500 * (2 ** (recovery.hls - 1));
+            window.setTimeout(() => {
+              if (hlsRef.current !== hls) return;
+              hls.startLoad(-1);
+            }, delay);
+            return;
+          }
+          if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && recovery.hls < 2) {
+            recovery.hls += 1;
+            hls.recoverMediaError();
+            return;
+          }
           const code = data.response?.code;
           let title = "Playback Error";
           let body;
@@ -384,6 +405,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
       mpegtsRef.current = player;
       player.on(window.mpegts.Events.ERROR, (errType, errDetail, errInfo) => {
+        const recovery = autoRecoveryRef.current;
+        if (recovery.ts < 2 && (errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network"))) {
+          recovery.ts += 1;
+          const delay = 500 * (2 ** (recovery.ts - 1));
+          window.setTimeout(() => {
+            if (mpegtsRef.current !== player) return;
+            try { player.unload(); player.load(); player.play().catch(() => {}); } catch {}
+          }, delay);
+          return;
+        }
         const code = errInfo?.code;
         let title = "Playback Error";
         let body;
@@ -444,8 +475,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     }
 
     // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS
-    const fileExt = url.split(/[?#]/)[0].split(".").pop()?.toLowerCase();
-    if (["mp4", "mkv", "avi", "mov", "webm", "mp3", "aac"].includes(fileExt)) {
+    const streamKind = current.streamKind || classifyStreamUrl(url, current.type);
+    if (streamKind === "file") {
       video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
       return;
     }
@@ -464,9 +495,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       return;
     }
 
-    const needTs  = url.includes("extension=ts") || /\.ts(\?|$)/.test(url)
-      || (current.type === "live" && !url.includes(".m3u8"));
-    const needHls = !needTs && (url.includes(".m3u8") || url.includes("/live/") || url.includes("/movie/"));
+    const needTs = streamKind === "ts";
+    const needHls = streamKind === "hls";
 
     // For Xtream live streams on HTTPS, proxy raw TS through stream proxy
     // (HLS .m3u8 has IP-bound segment tokens that break with proxied manifests)
@@ -689,7 +719,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       window.removeEventListener("beforeunload", handleUnload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [current.url, contentIdentity]);
+  }, [current.url, contentIdentity, retryKey]);
 
   // Keyboard shortcuts (TiviMate + SFVIP style)
   useEffect(() => {
@@ -814,6 +844,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                 <div style={{fontSize:"2.2rem",marginBottom:".75rem"}}>{streamErr.icon}</div>
                 <div style={{fontSize:".9rem",color:"var(--t1)",fontWeight:600,marginBottom:".5rem"}}>{streamErr.title}</div>
                 <div style={{fontSize:".78rem",color:"var(--t2)",lineHeight:1.6}}>{streamErr.body}</div>
+                <button className="btn-primary" style={{marginTop:"1rem"}} onClick={() => setRetryKey(key => key + 1)}>Try Again</button>
               </div>
             </div>
           )}

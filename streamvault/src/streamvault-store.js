@@ -1,19 +1,25 @@
 // Pure state module for StreamVault — no side effects, no fetch, no DOM
 // Phase A state: connections, activeConnId, favorites, history
 
+import { normalizeConnections } from "./connection-lifecycle.js";
+
 export function createInitialStoreState() {
   return {
     connections: [],
     activeConnId: null,
     favorites: { live: {}, vod: {}, series: {} },
     history: [],
+    hydrated: false,
   };
 }
 
 export function streamvaultReducer(state, action) {
   switch (action.type) {
     case "SET_CONNECTIONS":
-      return { ...state, connections: Array.isArray(action.payload) ? action.payload : [] };
+      return { ...state, connections: normalizeConnections(action.payload) };
+
+    case "SET_HYDRATED":
+      return { ...state, hydrated: Boolean(action.payload) };
 
     case "SET_ACTIVE_CONN_ID":
       return { ...state, activeConnId: action.payload };

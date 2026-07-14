@@ -93,6 +93,31 @@ function createProxyHelpers(deps) {
     } catch { return false; }
   }
 
+  // Follow redirects only after validating every destination. Automatic
+  // redirect following would allow a public URL to redirect into a private
+  // network or cloud metadata endpoint.
+  async function fetchWithRedirectCheck(urlStr, options = {}, maxRedirects = 5) {
+    let currentUrl = urlStr;
+    for (let hop = 0; hop <= maxRedirects; hop += 1) {
+      if (!(await isUrlAllowed(currentUrl))) {
+        const error = new Error("Redirect target is not allowed");
+        error.code = "URL_NOT_ALLOWED";
+        throw error;
+      }
+      const response = await fetch(currentUrl, { ...options, redirect: "manual" });
+      if (response.status < 300 || response.status >= 400) return { response, url: currentUrl };
+      const location = response.headers?.get?.("location") || response.headers?.get?.("Location");
+      if (!location) {
+        const error = new Error("Redirect response missing Location header");
+        error.code = "INVALID_REDIRECT";
+        throw error;
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+    }
+    const error = new Error("Too many redirects");
+    error.code = "TOO_MANY_REDIRECTS";
+    throw error;
+  }
   // Safe error messages: only expose portal/user-facing errors, not internal stack details
   const SAFE_PREFIXES = ["Portal", "No stream", "Stream server", "Invalid", "portal and mac"];
   function safeError(e) {
@@ -543,6 +568,7 @@ function createProxyHelpers(deps) {
     isPrivateIP,
     isUrlAllowedSync,
     isUrlAllowed,
+    fetchWithRedirectCheck,
     cacheKey,
     summarizeUpstreamHeaders,
     buildStalkerStreamHeaders,

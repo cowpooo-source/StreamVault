@@ -15,7 +15,7 @@ function createApp(deps) {
 
   const helpers = createProxyHelpers({ fetch });
   const { 
-    transferTimeout, agentFor, isUrlAllowed, 
+    transferTimeout, agentFor, isUrlAllowed, fetchWithRedirectCheck, 
     summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, 
     getSession, portalFetchRetry 
   } = helpers;
@@ -363,7 +363,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       try { headers["Referer"] = headers["Referer"] || new URL(url).origin + "/"; } catch {}
       const controller = new AbortController();
       req.on("close", () => controller.abort());
-      const upstream = await fetch(url, { headers, redirect: "follow", signal: controller.signal });
+      const { response: upstream, url: resolvedUrl } = await fetchWithRedirectCheck(url, { headers, signal: controller.signal });
       
       const STREAM_CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS", "Access-Control-Allow-Headers": "Range, Content-Type", "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type" };
       Object.entries(STREAM_CORS).forEach(([k, v]) => res.set(k, v));
@@ -381,10 +381,10 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       if (cl) res.set("Content-Length", cl);
       
       const ct = upstream.headers.get("content-type") || "";
-      if (ct.includes("mpegurl") || ct.includes("m3u") || url.endsWith(".m3u8")) {
+      if (ct.includes("mpegurl") || ct.includes("m3u") || resolvedUrl.endsWith(".m3u8")) {
         const { Transform } = require("stream");
-        const baseDir = url.substring(0, url.lastIndexOf("/") + 1);
-        const serverRoot = new URL(url).origin + "/";
+        const baseDir = resolvedUrl.substring(0, resolvedUrl.lastIndexOf("/") + 1);
+        const serverRoot = new URL(resolvedUrl).origin + "/";
         let leftover = "";
         const rewriter = new Transform({
           transform(chunk, enc, cb) {
@@ -423,7 +423,7 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     try {
       const controller = new AbortController();
       req.on("close", () => controller.abort());
-      const upstream = await fetch(url, { timeout: 10000, signal: controller.signal });
+      const { response: upstream } = await fetchWithRedirectCheck(url, { timeout: 10000, signal: controller.signal });
       if (!upstream || !upstream.ok) return res.status(upstream?.status || 502).end();
       res.set("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
       res.set("Cache-Control", "public, max-age=86400");
@@ -434,11 +434,13 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
   app.get("/proxy", async (req, res) => {
     const { url } = req.query;
     if (!url || !(await isUrlAllowed(url))) return res.status(400).end();
+    let tt;
     try {
-      // Allow up to 15s for metadata responses; fail fast if upstream is dead
-      const tt = transferTimeout(15000);
+      // Catalog/XMLTV responses can be large and slow; keep a bounded total
+      // timeout while allowing legitimate providers to finish streaming.
+      tt = transferTimeout(300000);
       req.on("close", () => tt.abort());
-      const r = await fetch(url, { timeout: 15000, signal: tt.signal });
+      const { response: r } = await fetchWithRedirectCheck(url, { timeout: 300000, signal: tt.signal });
       
       const ct = r.headers.get("content-type") || "application/json";
       res.set("Content-Type", ct);
@@ -453,10 +455,19 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
         return res.json([]);
       }
 
-      // Always pipe the stream to avoid buffering 100MB+ strings in memory
+      // Always pipe the stream to avoid buffering 100MB+ strings in memory.
+      // Explicitly close the client response if the upstream aborts after
+      // headers were sent; otherwise browsers wait forever for EOF.
+      r.body.on("error", (error) => {
+        tt.clear();
+        if (!res.writableEnded) res.destroy(error);
+      });
+      r.body.on("end", () => tt.clear());
       r.body.pipe(res);
-    } catch (e) { 
-      if (!res.headersSent) res.status(502).end(); 
+    } catch (e) {
+      tt?.clear?.();
+      if (!res.headersSent) res.status(502).end();
+      else if (!res.writableEnded) res.destroy(e);
     }
   });
 

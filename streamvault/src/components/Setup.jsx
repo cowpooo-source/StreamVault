@@ -12,6 +12,7 @@ import { detectFromText } from './setup/setup-utils.js';
 import { JellyfinConnectStep } from './setup/JellyfinConnectStep.jsx';
 import { JellyfinAdapter } from '../adapters/jellyfin-adapter.js';
 import { PlexAdapter } from '../adapters/plex-adapter.js';
+import { getConnectionLifecycle, lifecycleFailureMessage } from '../connection-lifecycle.js';
 
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
@@ -88,85 +89,64 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     setLoading(true);
     setErr("");
     const startTime = Date.now();
+    const showValidationFailure = (reason, validation = {}) => {
+      setExpiredPrompt({ conn, validation: { ...validation, status: "failed", reason } });
+      trackAnalytics("portal_connect", {
+        provider_type: conn.type || "unknown",
+        success: "false",
+        latency_ms: Date.now() - startTime,
+        error_code: String(reason || "validation_failed").slice(0, 50),
+      });
+    };
+
     try {
+      const lifecycleFailure = lifecycleFailureMessage(conn);
+      if (lifecycleFailure) {
+        showValidationFailure(lifecycleFailure, getConnectionLifecycle(conn));
+        return;
+      }
       if (conn.type === "xtream") {
         const cfg = conn.config || {};
         const server = (cfg.server || "").trim().replace(/\/$/, "");
-        const user = cfg.user || "";
-        const pass = cfg.pass || "";
-        if (!server || !user || !pass) throw new Error("All fields required");
-        const api = makeXtreamAPI(server, user, pass);
-        const data = await api.auth();
+        if (!server || !cfg.user || !cfg.pass) throw new Error("Missing Xtream server or credentials");
+        const data = await makeXtreamAPI(server, cfg.user, cfg.pass).auth();
         const status = String(data?.user_info?.status ?? "").trim().toLowerCase();
-        if (data?.user_info?.auth !== 1 || ["disabled", "expired", "blocked", "suspended", "0"].includes(status)) throw new Error("Invalid credentials or disabled account");
-        trackAnalytics("portal_connect", { provider_type: "xtream", success: "true", latency_ms: Date.now() - startTime, error_code: null });
-        onReconnect(conn.id);
-        return;
-      }
-
-      if (conn.type === "m3u") {
-        const cfg = conn.config || {};
-        const url = (cfg.url || "").trim();
-        if (!url) throw new Error("Playlist URL required");
-        const validation = await validateM3UChunk(url);
-        if (!validation.ok) throw new Error(validation.reason || "Playlist validation failed");
-        trackAnalytics("portal_connect", { provider_type: "m3u", success: "true", latency_ms: Date.now() - startTime, error_code: null });
-        onReconnect(conn.id);
-        return;
-      }
-
-      if (conn.type === "jellyfin") {
-        const cfg = conn.config || {};
-        const baseUrl = (cfg.baseUrl || cfg.server || "").trim().replace(/\/$/, "");
-        const username = cfg.user || "";
-        const password = cfg.pass || "";
-        if (!baseUrl || !username || !password) throw new Error("Server URL, username, and password required");
-        const { userId } = await JellyfinAdapter.authenticate(baseUrl, username, password);
-        if (!userId) throw new Error("Jellyfin authentication failed");
-        trackAnalytics("portal_connect", { provider_type: "jellyfin", success: "true", latency_ms: Date.now() - startTime, error_code: null });
-        onReconnect(conn.id);
-        return;
-      }
-
-      if (conn.type === "plex") {
-        trackAnalytics("portal_connect", { provider_type: "plex", success: "true", latency_ms: Date.now() - startTime, error_code: null });
-        onReconnect(conn.id);
-        return;
-      }
-
-      if (conn.type === "hls") {
-        trackAnalytics("portal_connect", { provider_type: "hls", success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        if (data?.user_info?.auth !== 1 || ["disabled", "expired", "blocked", "suspended", "0"].includes(status)) {
+          showValidationFailure("Invalid credentials or disabled account", data?.user_info || {});
+          return;
+        }
         onReconnect(conn.id);
         return;
       }
 
       if (conn.type !== "stalker") {
-        throw new Error(`Unsupported connection type: ${conn.type || "unknown"}`);
+        onReconnect(conn.id);
+        return;
       }
 
       const cfg = conn.config || {};
       const vRes = await fetch(`${API}/stalker/validate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Guest-Id": GUEST_ID },
         body: JSON.stringify({ portal: cfg.server, mac: cfg.mac, serial: cfg.serial, deviceId: cfg.deviceId, deviceId2: cfg.deviceId2 }),
       });
       const v = await vRes.json();
       if (!v.portalReachable) {
-        setErr("Portal unreachable. Try again later.");
-        trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.error || "unreachable").slice(0,50) });
+        showValidationFailure(v.error || "Portal unreachable", v);
         return;
       }
-      if (v.status === "expired" || v.status === "blocked" || v.status === "suspended" || v.status === "unregistered") {
-        setExpiredPrompt({ conn, validation: v });
-        trackAnalytics("portal_connect", { provider_type: "stalker", success: "false", latency_ms: Date.now() - startTime, error_code: String(v.status).slice(0,50) });
+      if (["expired", "blocked", "suspended", "unregistered"].includes(v.status)) {
+        const reason = v.status === "expired"
+          ? `Account expired${v.expiry ? ` on ${v.expiry}` : ""}. Contact your provider.`
+          : v.status === "blocked" ? "Account is blocked. Contact your provider."
+          : v.status === "suspended" ? "Account is suspended. Contact your provider."
+          : "MAC address is not registered with this portal.";
+        showValidationFailure(reason, v);
         return;
       }
-      trackAnalytics("portal_connect", { provider_type: "stalker", success: "true", latency_ms: Date.now() - startTime, error_code: null });
       onReconnect(conn.id);
     } catch (e) {
-      console.warn("Validation failed:", e.message);
-      setErr(e.message || "Connection validation failed");
-      trackAnalytics("portal_connect", { provider_type: conn.type || "unknown", success: "false", latency_ms: Date.now() - startTime, error_code: String(e.message || "unknown").slice(0,50) });
+      showValidationFailure(e.message || "Connection validation failed");
     } finally {
       setLoading(false);
     }
@@ -454,18 +434,19 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
             onClick={e => { if (e.target === e.currentTarget) setExpiredPrompt(null); }}>
             <div style={{background:"var(--s1,#0f0f1c)",border:"1px solid rgba(255,255,255,0.08)",
               borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:400,boxShadow:"0 8px 32px rgba(0,0,0,0.5)"}}>
-              <div style={{fontSize:"2rem",textAlign:"center",marginBottom:".75rem"}}>
-                {expiredPrompt.validation.status === "expired" ? "⏰" : "🚫"}
+              <div style={{fontSize:"1.05rem",fontWeight:700,textAlign:"center",marginBottom:".4rem",color:"var(--t1,#dde0f5)"}}>
+                Import Issues Found
               </div>
-              <div style={{fontSize:"1rem",fontWeight:600,textAlign:"center",marginBottom:".3rem",color:"var(--t1,#dde0f5)"}}>
-                {expiredPrompt.validation.status === "expired" ? "Account Expired" :
-                 expiredPrompt.validation.status === "blocked" ? "Account Blocked" :
-                 expiredPrompt.validation.status === "suspended" ? "Account Suspended" :
-                 "Account Unregistered"}
+              <div style={{textAlign:"center",fontSize:".8rem",opacity:.7,marginBottom:"1rem"}}>
+                1 of 1 connection failed validation
               </div>
-              <div style={{fontSize:".78rem",color:"var(--t2,#8080aa)",textAlign:"center",marginBottom:"1rem",lineHeight:1.6}}>
-                {expiredPrompt.validation.expiry && `Expired on ${expiredPrompt.validation.expiry}. `}
-                {expiredPrompt.conn.label}
+              <div style={{padding:".6rem .7rem",background:"rgba(255,45,85,0.08)",border:"1px solid rgba(255,45,85,0.3)",borderRadius:8,fontSize:".8rem",marginBottom:"1rem"}}>
+                <div style={{fontWeight:600,marginBottom:".25rem",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {expiredPrompt.conn.label}
+                </div>
+                <div style={{color:"var(--err,#ff2d55)",fontSize:".78rem"}}>
+                  ⚠ {expiredPrompt.validation.reason || (expiredPrompt.validation.expiry ? `Account expired on ${expiredPrompt.validation.expiry}.` : "Connection validation failed")}
+                </div>
               </div>
               <div style={{display:"flex",gap:".5rem"}}>
                 <button onClick={() => { onRemoveConn?.(expiredPrompt.conn.id); setExpiredPrompt(null); }}

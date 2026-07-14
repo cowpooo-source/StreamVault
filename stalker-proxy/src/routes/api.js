@@ -2,7 +2,7 @@ const express = require("express");
 const { Transform } = require("stream");
 
 function createApiRouter(deps) {
-  const { cache, auth, fetch, isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, safeError, agentFor, getSession } = deps;
+  const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, safeError, agentFor, getSession } = deps;
   const router = express.Router();
   const TMDB_KEY = process.env.TMDB_API_KEY || "";
   const ADMIN_PASS = process.env.ADMIN_PASS;
@@ -61,7 +61,8 @@ function createApiRouter(deps) {
         } else { result.details.status = "unreachable"; }
       } else if (type === "m3u" && m3uUrl) {
         const start = Date.now();
-        const r = await fetch(m3uUrl, { timeout: 8000, redirect: "follow", agent: agentFor(m3uUrl) }).catch(() => null);
+        const fetched = await fetchWithRedirectCheck(m3uUrl, { timeout: 8000, agent: agentFor(m3uUrl) }).catch(() => null);
+        const r = fetched?.response;
         result.latency = Date.now() - start;
         result.reachable = r?.ok || false;
         result.details.status = r?.status || "unreachable";
@@ -116,7 +117,7 @@ function createApiRouter(deps) {
     const { url } = req.query;
     if (!url || !(await isUrlAllowed(url))) return res.status(400).end();
     try {
-      const upstream = await fetch(url, { timeout: 5000, redirect: "follow", headers: { "Accept": "application/xml", "User-Agent": "StreamVault/1.0" } });
+      const { response: upstream } = await fetchWithRedirectCheck(url, { timeout: 5000, headers: { "Accept": "application/xml", "User-Agent": "StreamVault/1.0" } });
       if (!upstream.ok) return res.status(upstream.status).end();
       res.set("Content-Type", upstream.headers.get("content-type") || "application/xml");
       res.send(await upstream.text());

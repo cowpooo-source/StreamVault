@@ -13,6 +13,7 @@ import Setup from './components/Setup.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 import { useStreamVault } from "./useStreamVault.js";
+import { lifecycleFailureMessage } from "./connection-lifecycle.js";
 import {
   clearContentSessionToken,
   contentSessionToken,
@@ -1669,6 +1670,28 @@ const NAV = [
 ];
 
 // ── MAIN APP ──
+function ImportConfirmModal({ prompt, onCancel, onProceed, importing }) {
+  if (!prompt) return null;
+  const { items, failed } = prompt;
+  return (
+    <div className="modal-ov">
+      <div className="modal" style={{ maxWidth: 520, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+        <div className="modal-title" style={{ textAlign: "center", marginBottom: ".4rem" }}>Import Issues Found</div>
+        <div style={{ textAlign: "center", fontSize: ".8rem", opacity: .7, marginBottom: "1rem" }}>{failed.length} of {items.length} connection{failed.length > 1 ? "s" : ""} failed validation</div>
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: ".4rem", marginBottom: "1rem" }}>
+          {failed.map(({ d, r }, i) => (
+            <div key={i} style={{ padding: ".6rem .7rem", background: "rgba(255,45,85,0.08)", border: "1px solid rgba(255,45,85,0.3)", borderRadius: 8, fontSize: ".8rem" }}>
+              <div style={{ display: "flex", gap: ".4rem", marginBottom: ".25rem" }}><span style={{ fontSize: ".65rem", fontWeight: 700, color: "var(--accent)", textTransform: "uppercase" }}>{d.type}</span><strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.label || d.server || d.url}</strong></div>
+              <div style={{ color: "var(--err, #ff2d55)", fontSize: ".78rem" }}>⚠ {r.reason}</div>
+            </div>
+          ))}
+        </div>
+        <p style={{ textAlign: "center", fontSize: ".85rem", opacity: .7, marginBottom: "1rem" }}>Do you still want to import all {items.length} connections?</p>
+        <div className="modal-btns"><button type="button" className="btn-cancel" onClick={onCancel} disabled={importing} style={{ flex: 1 }}>Cancel</button><button type="button" className="btn-confirm" onClick={onProceed} disabled={importing} style={{ flex: 1 }}>{importing ? "Importing..." : `Import ${items.length} Anyway`}</button></div>
+      </div>
+    </div>
+  );
+}
 export default function App() {
   // ── auth state
   const [authUser, setAuthUser] = useState(null); // { id, username, role, limits }
@@ -1720,11 +1743,17 @@ export default function App() {
       .then(async u => {
         setAuthUser(u);
         setEncKeySource(`user:${u.id}`);
-        // Restore this user's connections from server
-        const serverConns = await restoreConnectionsFromServer();
-        if (serverConns?.length) {
-          setConnections(serverConns);
+        // Merge server state with local state so a just-added connection is
+        // not lost if setup reloads before the sync request finishes.
+        const [serverConns, localConns] = await Promise.all([
+          restoreConnectionsFromServer(),
+          db.get("sv-connections", []),
+        ]);
+        const mergedConns = [...(serverConns || [])];
+        for (const localConn of (localConns || [])) {
+          if (!mergedConns.some(c => c.id === localConn.id)) mergedConns.push(localConn);
         }
+        if (mergedConns.length) setConnections(mergedConns);
       })
       .catch(() => { })
       .finally(() => setAuthLoading(false));
@@ -1746,10 +1775,15 @@ export default function App() {
     // Migrate guest data to new user account (favs, history)
     await migrateGuestData();
     
-    // Always restore this user's connections from server
+    // Merge server state with local/guest state so recent additions survive
+    // an auth transition while the server sync is completing.
     const serverConns = await restoreConnectionsFromServer();
-    if (serverConns?.length) {
-      setConnections(serverConns);
+    const mergedConns = [...(serverConns || [])];
+    for (const localConn of guestConns) {
+      if (!mergedConns.some(c => c.id === localConn.id)) mergedConns.push(localConn);
+    }
+    if (mergedConns.length) {
+      setConnections(mergedConns);
     } else if (guestConns.length > 0) {
       // No server data, but we had guest connections — import them to the new account!
       setConnections(guestConns);
@@ -1852,8 +1886,14 @@ export default function App() {
 
   const { state: sv, actions: svActions } = useStreamVault({
     db, syncToServer, syncConnectionsToServer: async (conns) => {
-      const encrypted = await encryptConnections(conns);
-      syncToServer("connections", "_all", encrypted);
+      try {
+        const encrypted = await encryptConnections(conns);
+        await authFetch(API + "/api/sync/connections", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connId: "_all", data: encrypted }),
+        });
+      } catch { /* local persistence remains the fallback */ }
     },
     authUser, isGuest,
     persistActiveConnId: !httpContentMode
@@ -1879,6 +1919,8 @@ export default function App() {
   const [contentSessionLoading, setContentSessionLoading] = useState(httpContentMode);
   const [contentSessionRetryKey, setContentSessionRetryKey] = useState(0);
   const [contentSessionOpening, setContentSessionOpening] = useState(false);
+  const [importPrompt, setImportPrompt] = useState(null);
+  const [importing, setImporting] = useState(false);
   const [ephemeralConnection, setEphemeralConnection] = useState(null);
 
   // ── hidden cats per section
@@ -2184,10 +2226,14 @@ export default function App() {
       // Auto-connect: if we have an active connection, set conn (load cache if available)
       // Re-runs whenever activeConnId or connections change (both start as empty falsy values,
       // so this effect re-fires after useStreamVault populates them from IDB on mount)
-      if (activeConnId && connections.length) {
+      if (sv.hydrated && activeConnId && connections.length) {
         try {
           const connObj = connections.find(c => c.id === activeConnId);
           if (connObj) {
+            if (lifecycleFailureMessage(connObj)) {
+              setConn(null);
+              return;
+            }
             const cached = await loadFromCache(activeConnId, connObj);
             if (!cached) {
               // No cache, but active connection exists — set conn so app screen loads
@@ -2197,7 +2243,7 @@ export default function App() {
         } catch (e) { console.warn("IDB/localStorage error:", e.message); }
       }
     })();
-  }, [activeConnId, connections]); // re-run when hook populates these from IDB
+  }, [activeConnId, connections, sv.hydrated]); // re-run after persisted state is hydrated
 
   // ── restore from server when local favs/history are empty (fires after useStreamVault loads from db)
   useEffect(() => {
@@ -2322,7 +2368,6 @@ export default function App() {
         loadEPG(xtreamEpgUrl);
       }
       else if (conn.epgUrl) loadEPG(conn.epgUrl);
-      else if (epgURL) loadEPG(epgURL);
       return;
     }
     let cancelled = false;
@@ -2359,7 +2404,6 @@ export default function App() {
         const epgUrls = conn.epgUrls || (cached?.epgUrls ?? []) || (channels?.epgUrls ?? []);
         if (epgUrls?.length) epgUrls.forEach(u => loadEPG(u));
         else if (conn.epgUrl) loadEPG(conn.epgUrl);
-        else if (epgURL) loadEPG(epgURL);
       })();
     } else if (conn.type === "xtream") {
       fetchLive();
@@ -3043,6 +3087,12 @@ export default function App() {
     if (contentSessionOpening) return;
     if (id === activeConnId) { setShowConnManager(false); return; }
     const target = connections.find(c => c.id === id);
+    const lifecycleFailure = lifecycleFailureMessage(target);
+    if (lifecycleFailure) {
+      setConnError(lifecycleFailure);
+      setShowConnManager(true);
+      return;
+    }
     if (!target) return;
     if (!httpContentMode) {
       setContentSessionOpening(true);
@@ -3294,6 +3344,22 @@ export default function App() {
   const activeConnection = httpContentMode
     ? ephemeralConnection
     : connections.find(c => c.id === activeConnId);
+
+  function leaveContentForConnectionChange() {
+    if (!httpContentMode) {
+      setShowConnManager(true);
+      return;
+    }
+
+    const shouldLeave = window.confirm(
+      "This player session is tied to the current connection. Return to secure setup to choose another connection?"
+    );
+    if (!shouldLeave) return;
+
+    clearContentSessionToken();
+    navigateToAppHome({ location: window.location });
+  }
+
   const channelCount = channels.length + vod.length + series.length;
   const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
   const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
@@ -3439,15 +3505,34 @@ export default function App() {
     return parts.join(", ") || "preferences";
   }
 
-  async function handleImportMultiple(items) {
-    if (!items.length) return;
-    // Build configs for all items
-    const configs = items.map(d => {
-      if (d.type === "stalker") return { type: d.type, server: d.server, mac: d.mac, serial: d.serial, deviceId: d.deviceId, deviceId2: d.deviceId2 };
-      if (d.type === "xtream") return { type: d.type, server: d.server, user: d.user, pass: d.pass };
-      return { type: d.type, url: d.url };
-    });
-    // Build all connection objects at once to avoid stale state
+  async function validateImportItem(d) {
+    if (d.type === "xtream") {
+      if (!d.server || !d.user || !d.pass) return { valid: false, reason: "Missing Xtream fields" };
+      try {
+        const server = d.server.trim().replace(/\/$/, "");
+        const data = await makeXtreamAPI(server, d.user, d.pass).auth();
+        const status = String(data?.user_info?.status ?? "").trim().toLowerCase();
+        if (data?.user_info?.auth !== 1 || ["disabled", "expired", "blocked", "suspended", "0"].includes(status)) return { valid: false, reason: "Invalid credentials or disabled account" };
+        return { valid: true };
+      } catch (e) { return { valid: false, reason: `Cannot reach server: ${e.message}` }; }
+    }
+    if (d.type === "stalker") {
+      if (!d.server || !d.mac) return { valid: false, reason: "Missing portal URL or MAC" };
+      try {
+        const vRes = await fetch(`${API}/stalker/validate`, { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ portal: d.server.trim().replace(/\/$/, ""), mac: d.mac.trim(), serial: d.serial, deviceId: d.deviceId, deviceId2: d.deviceId2 }) });
+        const v = await vRes.json();
+        if (!v.portalReachable) return { valid: false, reason: v.error || "Portal unreachable" };
+        if (v.status === "expired") return { valid: false, reason: `Account expired${v.expiry ? ` on ${v.expiry}` : ""}. Contact your provider.` };
+        if (v.status === "blocked") return { valid: false, reason: "Account is blocked. Contact your provider." };
+        if (v.status === "suspended") return { valid: false, reason: "Account is suspended. Contact your provider." };
+        if (v.status === "unregistered") return { valid: false, reason: "MAC address is not registered with this portal." };
+        return { valid: true };
+      } catch (e) { return { valid: false, reason: `Validation failed: ${e.message}` }; }
+    }
+    return { valid: true, skipped: true };
+  }
+
+  async function applyImportConfigs(configs) {
     const maxConns = userLimits?.maxConnections ?? 5;
     let newConns = [...connections];
     const usedColors = new Set(newConns.map(c => c.color));
@@ -3461,20 +3546,19 @@ export default function App() {
       newConns.push({ id: cId, type: cfg.type, label: makeConnectionLabel(cfg.type, cfg), color, config: cfg });
       added++;
     }
-    if (added < configs.length) {
-      alert(`Imported ${added} of ${configs.length} connections (limit: ${maxConns}). Remove existing connections to add more.`);
-    }
-    // Single state update with all connections
+    if (added < configs.length) alert(`Imported ${added} of ${configs.length} connections (limit: ${maxConns}). Remove existing connections to add more.`);
     setConnections(newConns);
-    // Open direct connections through the same HTTP session flow as normal switching.
     if (added > 0) {
       const firstAdded = newConns[newConns.length - added];
       if (firstAdded) {
-        setActiveConnId(firstAdded.id);
         setContentSessionOpening(true);
+        setConnError("");
         try {
           const opened = await maybeOpenDirectContentSession(firstAdded, { location: window.location });
-          if (!opened) setConn(firstAdded.config);
+          if (!opened) {
+            setActiveConnId(firstAdded.id);
+            setConn(firstAdded.config);
+          }
         } catch (error) {
           setConnError(error?.message || "Unable to open the imported connection");
         } finally {
@@ -3482,6 +3566,23 @@ export default function App() {
         }
       }
     }
+  }
+
+  async function handleImportMultiple(items) {
+    if (!items.length || importing) return;
+    setImporting(true);
+    try {
+      const results = await Promise.all(items.map(validateImportItem));
+      const failed = items.map((d, i) => ({ d, r: results[i] })).filter(({ r }) => !r.valid);
+      if (failed.length) {
+        setImportPrompt({ items, failed });
+        return;
+      }
+      await applyImportConfigs(items.map(d => d.type === "stalker"
+        ? { type: d.type, server: d.server, mac: d.mac, serial: d.serial, deviceId: d.deviceId, deviceId2: d.deviceId2 }
+        : d.type === "xtream" ? { type: d.type, server: d.server, user: d.user, pass: d.pass }
+        : { type: d.type, url: d.url }));
+    } finally { setImporting(false); }
   }
 
   // Auth gate: show login/register before anything else
@@ -3520,10 +3621,7 @@ export default function App() {
               Try Again
             </button>
             <button
-              onClick={() => {
-                clearContentSessionToken();
-                navigateToAppHome({ location: window.location });
-              }}
+              onClick={leaveContentForConnectionChange}
               style={{ minWidth: 180, background: "transparent", border: "1px solid var(--b2)", color: "var(--t1)" }}
             >
               Return to Secure Setup
@@ -3550,7 +3648,23 @@ export default function App() {
         onLogout={handleLogout} 
         t={t} 
       />
-      {/* Feedback widget on Setup screen too */}
+            {importPrompt && createPortal(
+        <ImportConfirmModal
+          prompt={importPrompt}
+          importing={importing}
+          onCancel={() => setImportPrompt(null)}
+          onProceed={async () => {
+            const items = importPrompt.items;
+            setImportPrompt(null);
+            await applyImportConfigs(items.map(d => d.type === "stalker"
+              ? { type: d.type, server: d.server, mac: d.mac, serial: d.serial, deviceId: d.deviceId, deviceId2: d.deviceId2 }
+              : d.type === "xtream" ? { type: d.type, server: d.server, user: d.user, pass: d.pass }
+              : { type: d.type, url: d.url }));
+          }}
+        />,
+        document.body
+      )}
+            {/* Feedback widget on Setup screen too */}
       <button onClick={() => setFbOpen(true)} title="Send feedback"
         style={{position:"fixed",bottom:18,right:18,zIndex:9998,width:42,height:42,borderRadius:"50%",
           background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",color:"var(--accent,#00d4ff)",
@@ -3617,7 +3731,7 @@ export default function App() {
         <div className="s-logo">Portal Heaven</div>
         {activeConnection && (
           <div className="conn-card" style={{borderLeftColor: activeConnection.color}}
-            onClick={() => { setShowConnManager(true); setMobileMenuOpen(false); }}>
+            onClick={() => { leaveContentForConnectionChange(); setMobileMenuOpen(false); }}>
             <div className="conn-card-row">
               <span className="conn-card-icon">{CONN_ICONS[activeConnection.type] || "📡"}</span>
               <div className="conn-card-info">
@@ -3675,7 +3789,7 @@ export default function App() {
         {/* Connection Card */}
         {activeConnection && (
           <div className="conn-card" style={{borderLeftColor: activeConnection.color}}
-            onClick={() => setShowConnManager(true)} title="Switch connection">
+            onClick={leaveContentForConnectionChange} title="Switch connection">
             <div className="conn-card-row">
               <span className="conn-card-icon">{CONN_ICONS[activeConnection.type] || "📡"}</span>
               <div className="conn-card-info">

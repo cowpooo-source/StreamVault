@@ -10,6 +10,7 @@ describe("streamvaultStore", () => {
         activeConnId: null,
         favorites: { live: {}, vod: {}, series: {} },
         history: [],
+        hydrated: false,
       });
     });
 

@@ -55,7 +55,7 @@ describe("useStreamVault", () => {
 
   it("loads activeConnId from db on mount", async () => {
     mockDb.get
-      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([{ id: "c1", label: "Stored", type: "xtream", config: {} }])
       .mockResolvedValueOnce("c1");
 
     const { result } = renderHook(() => useStreamVault(opts()));

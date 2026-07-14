@@ -1,6 +1,7 @@
 // useStreamVault — React hook that wires streamvault-store.js to persistence and side effects
 import { useReducer, useEffect, useCallback, useMemo, useRef } from "react";
 import { createInitialStoreState, streamvaultReducer, selectActiveConnection, selectFavItems } from "./streamvault-store.js";
+import { normalizeConnections } from "./connection-lifecycle.js";
 
 // Debounce helper for server sync
 const _syncTimers = {};
@@ -43,13 +44,18 @@ export function useStreamVault({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const storedConns = await db.get("sv-connections", []);
+      const storedConns = normalizeConnections(await db.get("sv-connections", []));
       if (cancelled) return;
       dispatch({ type: "SET_CONNECTIONS", payload: storedConns || [] });
 
       const storedActiveConnId = await db.get("sv-activeConn", null);
       if (cancelled) return;
-      if (storedActiveConnId) dispatch({ type: "SET_ACTIVE_CONN_ID", payload: storedActiveConnId });
+      if (storedActiveConnId && storedConns.some((connection) => connection.id === storedActiveConnId)) {
+        dispatch({ type: "SET_ACTIVE_CONN_ID", payload: storedActiveConnId });
+      } else if (storedActiveConnId) {
+        await db.set("sv-activeConn", null);
+      }
+      dispatch({ type: "SET_HYDRATED", payload: true });
     })();
     return () => { cancelled = true; };
   }, []);

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { resolveUrl, rewriteM3u8, rewriteMediaUrl } from '../src/utils/proxyHelpers';
+import { describe, it, expect, vi } from 'vitest';
+import { resolveUrl, rewriteM3u8, rewriteMediaUrl, createProxyHelpers } from '../src/utils/proxyHelpers';
 
 describe('proxyHelpers', () => {
   describe('resolveUrl', () => {
@@ -89,5 +89,26 @@ describe('proxyHelpers', () => {
       const rewritten = rewriteM3u8(m3u8, 'http://base.com/', 'tok');
       expect(rewritten).toContain('/stream?url=http%3A%2F%2Fbase.com%2Fsegment1.ts');
     });
+  });
+});
+describe("redirect targets", () => {
+  it("rejects a redirect into a private address", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      status: 302,
+      headers: { get: (name) => name.toLowerCase() === "location" ? "http://127.0.0.1/admin" : null },
+    });
+    const helpers = createProxyHelpers({ fetch });
+    await expect(helpers.fetchWithRedirectCheck("http://example.com/start")).rejects.toThrow("Redirect target is not allowed");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("limits redirect chains", async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      status: 302,
+      headers: { get: () => "http://example.com/next" },
+    });
+    const helpers = createProxyHelpers({ fetch });
+    await expect(helpers.fetchWithRedirectCheck("http://example.com/start", {}, 2)).rejects.toThrow("Too many redirects");
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 });
