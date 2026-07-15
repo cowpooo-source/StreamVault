@@ -128,7 +128,7 @@ function createApp(deps) {
   const { createPlayerRouter } = require("./routes/player");
   const { stripe, handleWebhook } = require("./stripe.js");
 
-  const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
+  const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, agentFor };
 
   app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));
@@ -436,11 +436,19 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
     if (!url || !(await isUrlAllowed(url))) return res.status(400).end();
     let tt;
     try {
-      // Catalog/XMLTV responses can be large and slow; keep a bounded total
-      // timeout while allowing legitimate providers to finish streaming.
-      tt = transferTimeout(300000);
-      req.on("close", () => tt.abort());
-      const { response: r } = await fetchWithRedirectCheck(url, { timeout: 300000, signal: tt.signal });
+      // Catalog/XMLTV responses can be large, but a stalled provider must not
+      // retain an upstream socket indefinitely on the small VPS.
+      const configuredTimeout = Number.parseInt(process.env.PROXY_TRANSFER_TIMEOUT_MS || "", 10);
+      const timeoutMs = Number.isFinite(configuredTimeout)
+        ? Math.min(90000, Math.max(15000, configuredTimeout))
+        : 60000;
+      tt = transferTimeout(timeoutMs);
+      const cancelTransfer = () => tt.abort();
+      const clearTransfer = () => tt.clear();
+      req.once("close", cancelTransfer);
+      res.once("finish", clearTransfer);
+      res.once("close", clearTransfer);
+      const { response: r } = await fetchWithRedirectCheck(url, { signal: tt.signal });
       
       const ct = r.headers.get("content-type") || "application/json";
       res.set("Content-Type", ct);
@@ -459,10 +467,10 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       // Explicitly close the client response if the upstream aborts after
       // headers were sent; otherwise browsers wait forever for EOF.
       r.body.on("error", (error) => {
-        tt.clear();
+        clearTransfer();
         if (!res.writableEnded) res.destroy(error);
       });
-      r.body.on("end", () => tt.clear());
+      r.body.once("end", clearTransfer);
       r.body.pipe(res);
     } catch (e) {
       tt?.clear?.();

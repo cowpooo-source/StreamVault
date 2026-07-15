@@ -294,7 +294,13 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     else if (d.type === "m3u") { setType("m3u"); set("url", d.url || ""); }
   };
 
-  const TYPES = [["import",t("import")],["xtream",t("xtreamCodes")],["m3u",t("m3uPlaylist")],["stalker",t("stalkerPortal")],["hls",t("directHLS")],["jellyfin","Jellyfin"]];
+  const TYPES = [
+    ["import", "\u21e9", t("import")],
+    ["xtream", "\u25a3", t("xtreamCodes")],
+    ["m3u", "\u2637", t("m3uPlaylist")],
+    ["stalker", "\u25c9", t("stalkerPortal")],
+    ["hls", "\u25b6", t("directHLS")],
+  ];
 
   return (
     <div className="setup">
@@ -367,8 +373,9 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
 
         {err && <div className="err">⚠ {err}</div>}
         <div className="tabs">
-          {TYPES.map(([k,label]) => (
+          {TYPES.map(([k, icon, label]) => (
             <button key={k} className={`tab ${type===k?"on":""}`} onClick={() => {setType(k);setErr("")}}>
+              <span aria-hidden="true" style={{ marginRight: ".35rem", fontSize: ".9em" }}>{icon}</span>
               {label}
             </button>
           ))}

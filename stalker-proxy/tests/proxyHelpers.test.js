@@ -111,4 +111,12 @@ describe("redirect targets", () => {
     await expect(helpers.fetchWithRedirectCheck("http://example.com/start", {}, 2)).rejects.toThrow("Too many redirects");
     expect(fetch).toHaveBeenCalledTimes(3);
   });
+
+  it("returns a non-redirect 3xx response unchanged", async () => {
+    const fetch = vi.fn().mockResolvedValue({ status: 300, headers: { get: () => null } });
+    const helpers = createProxyHelpers({ fetch });
+    const result = await helpers.fetchWithRedirectCheck("http://example.com/choices");
+    expect(result.response.status).toBe(300);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
 });

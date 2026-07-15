@@ -97,6 +97,7 @@ function createProxyHelpers(deps) {
   // redirect following would allow a public URL to redirect into a private
   // network or cloud metadata endpoint.
   async function fetchWithRedirectCheck(urlStr, options = {}, maxRedirects = 5) {
+    const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
     let currentUrl = urlStr;
     for (let hop = 0; hop <= maxRedirects; hop += 1) {
       if (!(await isUrlAllowed(currentUrl))) {
@@ -105,7 +106,7 @@ function createProxyHelpers(deps) {
         throw error;
       }
       const response = await fetch(currentUrl, { ...options, redirect: "manual" });
-      if (response.status < 300 || response.status >= 400) return { response, url: currentUrl };
+      if (!REDIRECT_STATUSES.has(response.status)) return { response, url: currentUrl };
       const location = response.headers?.get?.("location") || response.headers?.get?.("Location");
       if (!location) {
         const error = new Error("Redirect response missing Location header");
