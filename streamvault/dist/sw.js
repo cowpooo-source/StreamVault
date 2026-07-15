@@ -1,9 +1,13 @@
-const CACHE = "sv-mrfk7rtb";
+const CACHE = "sv-mrkv2vwv";
 const APP_SHELL = ['/', '/index.html', '/landing.html'];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(cache => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
+  // Precache is best-effort: a single missing shell asset must not break install.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(cache => Promise.allSettled(APP_SHELL.map(asset => cache.add(asset))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", e => {
@@ -19,20 +23,26 @@ self.addEventListener("fetch", e => {
 
   const url = new URL(e.request.url);
 
-  // Never cache API calls (network-first, no cache)
+  // Never cache auth or content-session routes (network-only, no store).
+  if (url.pathname === "/content" || url.pathname.startsWith("/content/") || url.pathname === "/player" || url.pathname.startsWith("/player/")) return;
+
+  if (url.pathname.startsWith("/api/auth") ||
+      url.pathname.startsWith("/api/content-session")) return;
+
+  // Never cache any other API call (network-first, no cache).
   if (url.pathname.startsWith("/api")) return;
 
-  // Never cache media / stream / proxy / analytics
+  // Never cache media / stream / proxy / analytics / health.
   if (url.pathname.startsWith("/stalker") ||
       url.pathname.startsWith("/stream") ||
       url.pathname.startsWith("/proxy") ||
       url.pathname.startsWith("/analytics") ||
       url.pathname.startsWith("/health")) return;
 
-  // Only cache same-origin static assets
+  // Only cache same-origin static assets.
   if (url.origin !== location.origin) return;
 
-  // Network-first for /Videos/ (never cache media)
+  // Network-first for /Videos/ (never cache media).
   if (url.pathname.startsWith("/Videos/")) {
     e.respondWith(fetch(e.request).then(res => {
       if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
@@ -41,7 +51,7 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // Stale-while-revalidate for /Images/
+  // Stale-while-revalidate for /Images/.
   if (url.pathname.startsWith("/Images/")) {
     e.respondWith(caches.match(e.request).then(cached => {
       const fetchPromise = fetch(e.request).then(res => {
@@ -53,12 +63,12 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // Network-first for HTML, cache-first for assets
+  // Network-first for HTML, cache-first for assets.
   if (e.request.destination === "document" || url.pathname === "/") {
     e.respondWith(fetch(e.request).then(res => {
       if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
       return res;
-    }).catch(() => caches.match("/") || caches.match(e.request)));
+    }).catch(async () => (await caches.match(e.request)) || caches.match("/")));
   } else if (e.request.destination === "script" || e.request.destination === "style" ||
              e.request.destination === "image" || e.request.destination === "font") {
     e.respondWith(caches.match(e.request).then(r => r || fetch(e.request).then(res => {
@@ -66,5 +76,5 @@ self.addEventListener("fetch", e => {
       return res;
     })));
   }
-  // Everything else â€” let the browser handle normally
+  // Everything else — let the browser handle normally.
 });
