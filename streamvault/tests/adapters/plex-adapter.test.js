@@ -23,10 +23,11 @@ describe("PlexAdapter", () => {
         "https://clients.plex.tv/api/v2/pins",
         expect.objectContaining({
           method: "POST",
-          headers: {
+          headers: expect.objectContaining({
             "X-Plex-Client-Identifier": "test-client-id",
             "Content-Type": "application/json",
-          },
+            "X-Plex-Product": "StreamVault",
+          }),
           body: JSON.stringify({ type: "standard" }),
         })
       );
@@ -57,7 +58,7 @@ describe("PlexAdapter", () => {
         })
       );
 
-      await expect(PlexAdapter.createPin()).rejects.toThrow("Failed to create PIN");
+      await expect(PlexAdapter.createPin()).rejects.toThrow("Failed to Plex PIN create");
     });
   });
 
@@ -164,26 +165,32 @@ describe("PlexAdapter", () => {
         product: "plex",
         connections: [
           {
-            protocol: "http",
-            address: "192.168.1.100:32400",
-            local: true,
-            reachable: false,
-          },
-          {
             protocol: "https",
             address: "my-plex-server.plex.direct:32400",
-            local: false,
+            port: 32400,
+            local: 0,
             reachable: true,
+            relay: undefined,
+            uri: "https://my-plex-server.plex.direct:32400",
+          },
+          {
+            protocol: "http",
+            address: "192.168.1.100:32400",
+            port: 32400,
+            local: 1,
+            reachable: false,
+            relay: undefined,
+            uri: "http://192.168.1.100:32400",
           },
         ],
       });
       expect(global.fetch).toHaveBeenCalledWith(
         "https://plex.tv/api/v2/resources",
         expect.objectContaining({
-          method: "GET",
-          headers: {
+          headers: expect.objectContaining({
             "X-Plex-Token": "test-auth-token",
-          },
+            "X-Plex-Product": "StreamVault",
+          }),
         })
       );
     });
@@ -210,7 +217,7 @@ describe("PlexAdapter", () => {
       );
 
       await expect(PlexAdapter.getResources("test-auth-token")).rejects.toThrow(
-        "Failed to get resources"
+        "Failed to Plex resources"
       );
     });
   });
@@ -246,12 +253,12 @@ describe("PlexAdapter", () => {
 
       expect(result.items).toHaveLength(2);
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://plex.example.com:32400/library/sections",
-        expect.objectContaining({ method: "GET", headers: { "X-Plex-Token": "test-token" } })
+        "https://plex.example.com:32400/library/sections?X-Plex-Token=test-token",
+        expect.objectContaining({ headers: expect.objectContaining({ "X-Plex-Token": "test-token" }) })
       );
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://plex.example.com:32400/library/sections/1/all",
-        expect.objectContaining({ method: "GET", headers: { "X-Plex-Token": "test-token" } })
+        "https://plex.example.com:32400/library/sections/1/all?X-Plex-Token=test-token",
+        expect.objectContaining({ headers: expect.objectContaining({ "X-Plex-Token": "test-token" }) })
       );
     });
 
@@ -287,7 +294,7 @@ describe("PlexAdapter", () => {
       );
 
       expect(result).toBe(
-        "https://plex.example.com:32400/video/:/transcode/universal/start.m3u8?path=/library/metadata/item-123&X-Plex-Token=my-token"
+        "https://plex.example.com:32400/video/:/transcode/universal/start.m3u8?path=/library/metadata/item-123&mediaIndex=0&partIndex=0&protocol=hls&X-Plex-Token=my-token&X-Plex-Client-Identifier=test-uuid-1234&X-Plex-Product=StreamVault&X-Plex-Version=0.1.0&X-Plex-Platform=Web&X-Plex-Device=StreamVault"
       );
     });
   });

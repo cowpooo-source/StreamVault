@@ -57,6 +57,9 @@ function normalizeConnection(connection = {}) {
   const local = connection.local === true || connection.local === 1 || connection.local === "1" ? 1 : 0;
   const port = Number(connection.port) || 32400;
   const address = connection.address || "";
+  const hasPort = address.startsWith("[")
+    ? /\]:\d+$/.test(address)
+    : /:\d+$/.test(address);
   return {
     protocol,
     address,
@@ -64,7 +67,7 @@ function normalizeConnection(connection = {}) {
     local,
     reachable: connection.reachable,
     relay: connection.relay,
-    uri: connection.uri || `${protocol}://${address}:${port}`,
+    uri: connection.uri || `${protocol}://${address}${hasPort ? "" : `:${port}`}`,
   };
 }
 
@@ -87,13 +90,14 @@ export const PlexAdapter = {
       method: "POST",
       headers: { ...PLEX_HEADERS, "X-Plex-Client-Identifier": clientId, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ type: "standard" }),
-    });
+    }, "Plex PIN create");
     const data = await readBody(response, "Plex PIN create");
     return { pinId: String(data.id), code: data.code };
   },
 
   async pollPin(pinId, clientId = getClientId()) {
     const response = await fetch(`${PLEX_AUTH_URL}/${encodeURIComponent(pinId)}`, {
+      method: "GET",
       cache: "no-store",
       headers: { ...PLEX_HEADERS, "X-Plex-Client-Identifier": clientId, Accept: "application/json" },
     });
@@ -107,7 +111,7 @@ export const PlexAdapter = {
   async getResources(authToken, clientId = getClientId()) {
     const response = await plexFetch(PLEX_RESOURCES_URL, {
       headers: { ...PLEX_HEADERS, "X-Plex-Token": authToken, "X-Plex-Client-Identifier": clientId, Accept: "application/json" },
-    });
+    }, "Plex resources");
     const data = await readBody(response, "Plex resources");
     const resources = Array.isArray(data) ? data : data.MediaContainer?.Resource || data.Resource || [];
     return {
