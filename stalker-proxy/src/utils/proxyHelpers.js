@@ -152,6 +152,7 @@ function createProxyHelpers(deps) {
   const inFlightSessions = new Map();
   const portalCooldowns = new Map();
   const handshakeFailureCache = new Map();
+  const HANDSHAKE_FAILURE_CACHE_MAX = 500;
   const SESSION_TTL_MS = 30 * 1000;
   const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
   const HANDSHAKE_FAILURE_COOLDOWN_MS = 90 * 1000; // 90s — prevents cascade when portal is down
@@ -175,6 +176,7 @@ function createProxyHelpers(deps) {
     const normalized = normalizeStalkerOpts(opts);
     return {
       token: cached.token,
+      random: cached.random || null,
       base: cached.base,
       apiPath: cached.apiPath,
       portal,
@@ -189,12 +191,14 @@ function createProxyHelpers(deps) {
     const normalized = normalizeStalkerOpts(opts);
     sessionCache.set(sessionCacheKey(portal, mac, normalized), {
       token: result.token,
+      random: result.random || null,
       base: result.base,
       apiPath: result.apiPath,
       expiresAt: Date.now() + SESSION_TTL_MS,
     });
     return {
       token: result.token,
+      random: result.random || null,
       base: result.base,
       apiPath: result.apiPath,
       portal,
@@ -234,6 +238,10 @@ function createProxyHelpers(deps) {
 
   function setHandshakeFailure(portal, mac, opts, errorMsg) {
     const key = sessionCacheKey(portal, mac, opts);
+    if (handshakeFailureCache.size >= HANDSHAKE_FAILURE_CACHE_MAX) {
+      const oldest = handshakeFailureCache.keys().next().value;
+      handshakeFailureCache.delete(oldest);
+    }
     handshakeFailureCache.set(key, {
       error: errorMsg,
       expiresAt: Date.now() + HANDSHAKE_FAILURE_COOLDOWN_MS,
@@ -332,12 +340,52 @@ function createProxyHelpers(deps) {
       if (res.ok) {
         const data = await res.json();
         const token = data?.js?.token;
-        if (token) return { token, base, apiPath };
+        const random = data?.js?.random || null;
+        if (token) return { token, random, base, apiPath };
       }
     } catch(e) { if (e.code === "RATE_LIMITED") throw e; /* other errors: skip */ }
     return null;
   }
 
+  // Complete the portal device-auth step required by newer Stalker portals.
+  // Some portals reject catalog requests until metrics and hw_version_2 are posted.
+  async function completeDeviceAuth(session, opts) {
+    try {
+      const crypto = require("crypto");
+      const metrics = JSON.stringify({
+        mac: session.mac,
+        sn: opts.serial || "",
+        type: "STB",
+        model: "MAG250",
+        uid: "",
+        random: session.random || "",
+      });
+      const params = {
+        type: "stb",
+        action: "get_profile",
+        auth_second_step: 1,
+        metrics,
+        hw_version_2: crypto.createHash("sha1").update(metrics).digest("hex"),
+        JsHttpRequest: "1-xml",
+      };
+      if (opts.serial) params.sn = opts.serial;
+      if (opts.deviceId) params.device_id = opts.deviceId;
+      if (opts.deviceId2 || opts.deviceId) params.device_id2 = opts.deviceId2 || opts.deviceId;
+      const qs = new URLSearchParams(params).toString();
+      const url = `${session.base}${session.apiPath}?JsHttpRequest=1-xml`;
+      const headers = { ...session.headers, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" };
+      const response = await fetch(url, { method: "POST", headers, body: qs, timeout: 8000, agent: agentFor(url) });
+      const body = await response.text();
+      if (!response.ok || /Authorization failed|Device not found|Access denied|not supported|missing metrics/i.test(body)) {
+        console.warn("Stalker device authentication was rejected");
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.warn("Stalker device authentication failed:", error.message);
+      return false;
+    }
+  }
   // Get a session with a valid token — does exactly ONE handshake
   // Path resolution is cached; token is always fresh
   async function getSession(portal, mac, opts = {}, config = {}) {
@@ -379,11 +427,13 @@ function createProxyHelpers(deps) {
         try {
           const result = await tryHandshake(cached.base, cached.apiPath, mac, portal, normalized);
           if (result) {
-            return storeSession(portal, mac, normalized, {
+            const session = storeSession(portal, mac, normalized, {
               token: result.token,
+              random: result.random,
               base: cached.base,
               apiPath: cached.apiPath,
             });
+            return session;
           }
           // Path may have changed — clear cache and re-discover
           pathCache.delete(key);
@@ -415,7 +465,13 @@ function createProxyHelpers(deps) {
             if (result) {
               setPathCache(key, { base, apiPath: path });
               console.log(`✓ Path resolved: ${base}${path}`);
-              return storeSession(portal, mac, normalized, { token: result.token, base, apiPath: path });
+              const session = storeSession(portal, mac, normalized, {
+                token: result.token,
+                random: result.random,
+                base,
+                apiPath: path,
+              });
+              return session;
             }
           } catch(e) {
             if (e.code === "RATE_LIMITED") {
@@ -459,6 +515,13 @@ function createProxyHelpers(deps) {
   async function portalFetchRetry(session, params, timeout) {
     let result = await portalFetch(session, params, timeout);
     if (result === null) {
+      // Authenticate lazily because some legacy portals invalidate an otherwise
+      // valid handshake token when they receive the optional second step.
+      const authenticated = await completeDeviceAuth(session, session.opts || {});
+      if (authenticated) result = await portalFetch(session, params, timeout);
+    }
+    if (result === null) {
+      // Restore a clean token if optional device authentication was rejected.
       const fresh = await session.refresh();
       Object.assign(session, fresh);
       result = await portalFetch(session, params, timeout);

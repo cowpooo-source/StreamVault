@@ -3,6 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import { Readable } from 'stream';
 import { createStalkerRouter } from '../src/routes/stalker';
+import { encryptToken } from '../src/middleware/encrypt';
 
 function makeDeps(overrides = {}) {
   return {
@@ -18,6 +19,7 @@ function makeDeps(overrides = {}) {
     },
     auth: {},
     fetch: vi.fn(),
+    fetchWithRedirectCheck: vi.fn(),
     isUrlAllowed: vi.fn(() => true),
     getSession: vi.fn(),
     portalFetchRetry: vi.fn(),
@@ -204,7 +206,7 @@ describe('createStalkerRouter - unit', () => {
 
   // --- play ---
 
-  it('GET /stalker/play with resolve=1 returns normalized URL', async () => {
+  it('GET /stalker/play with resolve=1 returns metadata for direct playback', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.com/video.m3u8' } }),
@@ -212,9 +214,118 @@ describe('createStalkerRouter - unit', () => {
     const app = makeApp(deps);
     const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&resolve=1');
     expect(res.status).toBe(200);
-    expect(res.body.url).toBe('http://cdn.com/video.m3u8');
+    expect(res.body).toMatchObject({
+      url: 'http://cdn.com/video.m3u8',
+      streamKind: 'hls',
+      direct: true,
+      expiresAt: null,
+    });
+    expect(res.body.fallbackUrl).toContain('/stalker/play?');
   });
 
+  it('GET /stalker/play retries a path-only VOD command with the MAG ffmpeg prefix', async () => {
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: {} })
+      .mockResolvedValueOnce({ js: { cmd: 'http://cdn.com/movie.mp4' } });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+    });
+    const app = makeApp(deps);
+
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=%2Fmedia%2Fmovie.mpg&content_type=vod&resolve=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe('http://cdn.com/movie.mp4');
+    expect(portalFetchRetry).toHaveBeenCalledTimes(2);
+    expect(portalFetchRetry.mock.calls[0][1].cmd).toBe('/media/movie.mpg');
+    expect(portalFetchRetry.mock.calls[1][1].cmd).toBe('ffmpeg /media/movie.mpg');
+  });
+  it('GET /stalker/play resolves a numeric VOD catalog ID before creating its link', async () => {
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: { data: [{ id: '83226', cmd: '/media/file_1753626.mpg' }] } })
+      .mockResolvedValueOnce({ js: { cmd: 'http://cdn.com/media/st12-vod/mac/83226.mp4' } });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+    });
+    const app = makeApp(deps);
+
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=%2Fmedia%2F83226.mpg&content_type=vod&resolve=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe('http://cdn.com/media/st12-vod/mac/83226.mp4');
+    expect(portalFetchRetry).toHaveBeenCalledTimes(2);
+    expect(portalFetchRetry.mock.calls[0][1]).toMatchObject({
+      type: 'vod', action: 'get_ordered_list', category: 0, movie_id: '83226',
+      season_id: 0, episode_id: 0, p: 1, from_ch_id: 0,
+    });
+    expect(portalFetchRetry.mock.calls[1][1].cmd).toBe('/media/file_1753626.mpg');
+  });
+  it('GET /stalker/play resolves credentials from a scoped content session', async () => {
+    const encryptedConnection = encryptToken(JSON.stringify({
+      id: 'stalker-1',
+      type: 'stalker',
+      config: {
+        type: 'stalker',
+        server: 'http://portal.example/c',
+        mac: '00:1A:79:AA:BB:CC',
+        serial: 'SN1',
+      },
+    }));
+    const deps = makeDeps({
+      contentSessionStore: {
+        findByTokenHash: vi.fn().mockResolvedValue({
+          encryptedConnection,
+          expiresAt: Date.now() + 60_000,
+        }),
+        deleteByTokenHash: vi.fn(),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'http://portal.example/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'https://cdn.example/live.ts' } }),
+    });
+    const app = makeApp(deps);
+
+    const res = await request(app).get('/stalker/play?contentToken=scoped-token&cmd=ABC&resolve=1');
+
+    expect(res.status).toBe(200);
+    expect(deps.getSession).toHaveBeenCalledWith(
+      'http://portal.example/c',
+      '00:1A:79:AA:BB:CC',
+      expect.objectContaining({ serial: 'SN1' }),
+    );
+    expect(res.body.fallbackUrl).toContain('contentToken=scoped-token');
+    expect(res.body.fallbackUrl).not.toContain('portal=');
+    expect(res.body.fallbackUrl).not.toContain('mac=');
+  });
+
+  it('GET /stalker/play deletes and rejects an expired content session', async () => {
+    const contentSessionStore = {
+      findByTokenHash: vi.fn().mockResolvedValue({
+        encryptedConnection: 'unused',
+        expiresAt: Date.now() - 1,
+      }),
+      deleteByTokenHash: vi.fn(),
+    };
+    const app = makeApp(makeDeps({ contentSessionStore }));
+
+    const res = await request(app).get('/stalker/play?contentToken=expired-token&cmd=ABC&resolve=1');
+
+    expect(res.status).toBe(410);
+    expect(res.body.code).toBe('expired');
+    expect(contentSessionStore.deleteByTokenHash).toHaveBeenCalledTimes(1);
+  });
+
+  it('GET /stalker/play rejects raw credentials when authentication is configured', async () => {
+    const app = makeApp(makeDeps({
+      auth: { verifyToken: vi.fn().mockReturnValue(null) },
+    }));
+
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&resolve=1');
+
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('unauthorized');
+  });
   it('GET /stalker/play rewrites localhost/127.0.0.1 to portal host', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
@@ -223,17 +334,24 @@ describe('createStalkerRouter - unit', () => {
     const app = makeApp(deps);
     const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&resolve=1');
     expect(res.status).toBe(200);
-    expect(res.body.url).toBe('http://p.com/stream.m3u8');
+    expect(res.body).toMatchObject({
+      url: 'http://p.com/stream.m3u8',
+      streamKind: 'hls',
+      direct: true,
+    });
   });
 
   it('GET /stalker/play calls trackWatch for live streams', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.com/video.mp4' } }),
-      fetch: vi.fn().mockResolvedValue({
-        ok: true, status: 200,
-        headers: { get: (k) => k === 'content-type' ? 'video/mp4' : null },
-        body: Readable.from(['video data']),
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: {
+          ok: true, status: 200,
+          headers: { get: (k) => k === 'content-type' ? 'video/mp4' : null },
+          body: Readable.from(['video data']),
+        },
+        url: 'http://cdn.com/video.mp4',
       }),
       buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
@@ -248,10 +366,13 @@ describe('createStalkerRouter - unit', () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.com/video.mp4' } }),
-      fetch: vi.fn().mockResolvedValue({
-        ok: true, status: 200,
-        headers: { get: (k) => k === 'content-type' ? 'video/mp4' : null },
-        body: Readable.from(['video data']),
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: {
+          ok: true, status: 200,
+          headers: { get: (k) => k === 'content-type' ? 'video/mp4' : null },
+          body: Readable.from(['video data']),
+        },
+        url: 'http://cdn.com/video.mp4',
       }),
       buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
@@ -266,14 +387,17 @@ describe('createStalkerRouter - unit', () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.com/live.m3u8' } }),
-      fetch: vi.fn().mockResolvedValue({
-        ok: true, status: 200,
-        headers: { get: (k) => {
-          if (k === 'content-type') return 'application/vnd.apple.mpegurl';
-          if (k === 'content-length') return null;
-          return null;
-        } },
-        body: Readable.from(['#EXTM3U\nsegment.ts\n']),
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: {
+          ok: true, status: 200,
+          headers: { get: (k) => {
+            if (k === 'content-type') return 'application/vnd.apple.mpegurl';
+            if (k === 'content-length') return null;
+            return null;
+          } },
+          body: Readable.from(['#EXTM3U\nsegment.ts\n']),
+        },
+        url: 'http://cdn.com/live.m3u8',
       }),
       buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({ contentType: 'application/vnd.apple.mpegurl' }),
@@ -283,13 +407,17 @@ describe('createStalkerRouter - unit', () => {
     expect(res.status).toBe(200);
     expect(res.text).toContain('/stream?url=');
     expect(res.text).toContain(encodeURIComponent('http://cdn.com/segment.ts'));
+    expect(res.headers['content-length']).toBeUndefined();
   });
 
   it('GET /stalker/play returns 502 when upstream fetch fails', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.com/video.mp4' } }),
-      fetch: vi.fn().mockResolvedValue({ ok: false, status: 500, headers: new Map([['content-type', 'text/plain']]), body: null }),
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: false, status: 500, headers: { get: () => 'text/plain' }, body: null },
+        url: 'http://cdn.com/video.mp4',
+      }),
       buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
     });

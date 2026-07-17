@@ -119,4 +119,76 @@ describe("redirect targets", () => {
     expect(result.response.status).toBe(300);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  describe('handshake failure cache', () => {
+    it('evicts the oldest failure after 500 unique entries', async () => {
+      const fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+      const helpers = createProxyHelpers({ fetch });
+
+      await expect(helpers.getSession('http://portal-0.example.com/c/', '00:11:22:33:44:55'))
+        .rejects.toThrow('Handshake failed');
+      const callsAfterFirst = fetch.mock.calls.length;
+
+      for (let i = 1; i <= 500; i += 1) {
+        await expect(helpers.getSession(`http://portal-${i}.example.com/c/`, '00:11:22:33:44:55'))
+          .rejects.toThrow('Handshake failed');
+      }
+
+      await expect(helpers.getSession('http://portal-0.example.com/c/', '00:11:22:33:44:55'))
+        .rejects.toThrow('Handshake failed');
+      expect(fetch.mock.calls.length).toBeGreaterThan(callsAfterFirst + 1);
+    });
+  });
+  it('preserves handshake random and performs device auth after an auth failure', async () => {
+    const random = 'handshake-random';
+    let catalogCalls = 0;
+    const fetch = vi.fn().mockImplementation(async (url, options = {}) => {
+      if (url.includes('action=handshake')) {
+        return { ok: true, status: 200, json: async () => ({ js: { token: 'token-1', random } }) };
+      }
+      if (options.method === 'POST' && String(options.body).includes('action=get_profile')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ js: { status: 0 } }) };
+      }
+      if (url.includes('action=get_genres')) {
+        catalogCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          text: async () => catalogCalls === 1
+            ? 'Authorization failed'
+            : JSON.stringify({ js: [{ id: '1', title: 'All' }] }),
+        };
+      }
+      return { ok: false, status: 404 };
+    });
+    const helpers = createProxyHelpers({ fetch });
+
+    const session = await helpers.getSession('http://portal.example.com/c/', '00:11:22:33:44:55');
+    const result = await helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' });
+
+    expect(session.random).toBe(random);
+    expect(result.js).toEqual([{ id: '1', title: 'All' }]);
+    const deviceAuth = fetch.mock.calls.find(([, options]) => options.method === 'POST');
+    expect(deviceAuth).toBeDefined();
+    expect(deviceAuth[1].body).toContain('action=get_profile');
+    expect(deviceAuth[1].body).toContain('metrics=');
+    expect(deviceAuth[1].body).toContain('hw_version_2=');
+  });
+
+  it('does not perform device authentication when the handshake token works', async () => {
+    const fetch = vi.fn().mockImplementation(async (url) => {
+      if (url.includes('action=handshake')) {
+        return { ok: true, status: 200, json: async () => ({ js: { token: 'token-1', random: 'random-1' } }) };
+      }
+      if (url.includes('action=get_genres')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ js: [] }) };
+      }
+      return { ok: false, status: 404 };
+    });
+    const helpers = createProxyHelpers({ fetch });
+
+    const session = await helpers.getSession('http://legacy.example.com/c/', '00:11:22:33:44:55');
+    await helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' });
+
+    expect(fetch.mock.calls.some(([, options = {}]) => options.method === 'POST')).toBe(false);
+  });
 });

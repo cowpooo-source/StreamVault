@@ -54,13 +54,13 @@ function safeSessionStorageRemove(key) {
 }
 
 export function isDirectContentConnection(connection) {
-  return connection?.type === "xtream" || connection?.type === "m3u";
+  return connection?.type === "xtream" || connection?.type === "m3u" || connection?.type === "stalker";
 }
 
 export function contentSessionPayload(connection) {
   const config = connection?.config || {};
   const safeConfig = {};
-  for (const key of ["type", "server", "user", "pass", "url"]) {
+  for (const key of ["type", "server", "user", "pass", "url", "mac", "serial", "deviceId", "deviceId2"]) {
     if (config[key] !== undefined) safeConfig[key] = config[key];
   }
 
@@ -149,6 +149,32 @@ export async function validateContentSession(token) {
   } catch {
     return true;
   }
+}
+
+export async function refreshContentSession(token) {
+  if (!token) throw new Error("Missing content session token");
+  const res = await fetch("/api/content-session/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) {
+    let message = "Content session expired or invalid";
+    let code = res.status === 410 ? "expired" : "invalid";
+    if (res.status === 401 || res.status === 403) code = "unauthorized";
+    else if (res.status === 429) code = "rate_limited";
+    else if (res.status >= 500) code = "server_error";
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+      if (body?.code) code = body.code;
+    } catch { /* response body is optional */ }
+    const error = new Error(message);
+    error.code = code;
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
 }
 
 export async function openDirectContentSession(connection, options = {}) {

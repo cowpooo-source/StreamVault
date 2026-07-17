@@ -10,6 +10,7 @@ import {
   navigateToAppHome,
   openDirectContentSession,
   shouldUseTokenPlayerForItem,
+  refreshContentSession,
   validateContentSession,
 } from "../src/direct-content-session.js";
 
@@ -22,10 +23,10 @@ describe("direct-content-session helpers", () => {
     clearSecureBase();
   });
 
-  it("detects direct content connections for xtream and m3u only", () => {
+  it("detects direct content connections for Xtream, M3U, and Stalker", () => {
     expect(isDirectContentConnection({ type: "xtream" })).toBe(true);
     expect(isDirectContentConnection({ type: "m3u" })).toBe(true);
-    expect(isDirectContentConnection({ type: "stalker" })).toBe(false);
+    expect(isDirectContentConnection({ type: "stalker" })).toBe(true);
     expect(isDirectContentConnection({ type: "hls" })).toBe(false);
     expect(isDirectContentConnection(null)).toBe(false);
   });
@@ -60,6 +61,32 @@ describe("direct-content-session helpers", () => {
     expect(JSON.stringify(payload)).not.toContain("password");
   });
 
+  it("builds a scoped Stalker payload without unrelated fields", () => {
+    const payload = contentSessionPayload({
+      id: "stalker-1",
+      type: "stalker",
+      label: "Portal",
+      config: {
+        type: "stalker",
+        server: "http://portal.example/c",
+        mac: "00:1A:79:AA:BB:CC",
+        serial: "SN1",
+        deviceId: "D1",
+        deviceId2: "D2",
+        token: "must-not-leak",
+      },
+    });
+
+    expect(payload.connection.config).toEqual({
+      type: "stalker",
+      server: "http://portal.example/c",
+      mac: "00:1A:79:AA:BB:CC",
+      serial: "SN1",
+      deviceId: "D1",
+      deviceId2: "D2",
+    });
+    expect(JSON.stringify(payload)).not.toContain("must-not-leak");
+  });
   it("detects /content mode and extracts the token", () => {
     expect(isHttpContentMode({ pathname: "/content", search: "?token=abc123" })).toBe(true);
     expect(contentSessionToken({ pathname: "/content", search: "?token=abc123" })).toBe("abc123");
@@ -134,6 +161,22 @@ describe("direct-content-session helpers", () => {
     await expect(validateContentSession("token-2")).rejects.toThrow("Content session expired or invalid");
   });
 
+  it("refreshes an active content session without exposing connection data", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ expiresAt: 456 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(refreshContentSession("token-3")).resolves.toEqual({ expiresAt: 456 });
+    expect(fetchMock).toHaveBeenCalledWith("/api/content-session/refresh", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ token: "token-3" }),
+    }));
+  });
+
   it("opens a direct content session and navigates via the supplied callback", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ contentUrl: "/content?token=session-123" }), {
@@ -174,12 +217,12 @@ describe("direct-content-session helpers", () => {
   });
 
   it("maybeOpenDirectContentSession only opens for direct connections outside /content mode", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ contentUrl: "/content?token=session-123" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
-    );
+    ));
     const navigate = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -192,10 +235,10 @@ describe("direct-content-session helpers", () => {
 
     await expect(
       maybeOpenDirectContentSession(
-        { type: "stalker", id: "conn-2" },
-        { location: { pathname: "/app", search: "" } },
+        { type: "stalker", id: "conn-2", config: { type: "stalker", server: "http://portal.example/c", mac: "00:11:22:33:44:55" } },
+        { navigate, location: { pathname: "/app", search: "" } },
       ),
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
 
     await expect(
       maybeOpenDirectContentSession(

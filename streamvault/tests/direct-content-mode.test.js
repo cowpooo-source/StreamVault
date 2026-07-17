@@ -85,10 +85,10 @@ describe("direct content mode — security & lifecycle", () => {
     expect(contentSessionToken({ pathname: "/content", search: "" })).toBeNull();
   });
 
-  it("only treats xtream and m3u as direct connections", () => {
+  it("treats Xtream, M3U, and Stalker as direct-content connections", () => {
     expect(isDirectContentConnection({ type: "xtream" })).toBe(true);
     expect(isDirectContentConnection({ type: "m3u" })).toBe(true);
-    expect(isDirectContentConnection({ type: "stalker" })).toBe(false);
+    expect(isDirectContentConnection({ type: "stalker" })).toBe(true);
     expect(isDirectContentConnection({ type: "jellyfin" })).toBe(false);
     expect(isDirectContentConnection({ type: "hls" })).toBe(false);
   });
@@ -119,16 +119,19 @@ describe("direct content mode — security & lifecycle", () => {
     expect(navigate).toHaveBeenCalledWith("http://40.233.113.76/content?token=sess-1");
   });
 
-  it("does not open a direct session for non-direct connection types", async () => {
-    const fetchMock = vi.fn();
+  it("opens a scoped direct session for Stalker", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ contentUrl: "http://40.233.113.76/content?token=stalker-session" }), { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const opened = await maybeOpenDirectContentSession(
-      { type: "stalker", id: "c2" },
+      { type: "stalker", id: "c2", config: { type: "stalker", server: "http://portal.example/c", mac: "00:1A:79:AA:BB:CC" } },
       { location: { pathname: "/app", search: "" } },
     );
-    expect(opened).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(opened).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.connection.config).toMatchObject({ server: "http://portal.example/c", mac: "00:1A:79:AA:BB:CC" });
   });
 
   it("throws a categorized unauthorized error when the backend rejects the session", async () => {

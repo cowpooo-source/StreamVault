@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo, useDeferredValue } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
-import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics } from "./utils.js";
+import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics, resolveUrl } from "./utils.js";
 import Player from "./components/Player.jsx";
 import DirectHLSView from "./components/DirectHLSView.jsx";
 import TimelineGrid from "./components/TimelineGrid.jsx";
 import VirtualGrid from "./components/VirtualGrid.jsx";
+import { classifyStreamUrl } from "./stream-classifier.js";
+import { stripTransientStreamFields } from "./stream-routing.js";
 import AuthScreen from './components/AuthScreen.jsx';
 import SettingsView from './components/SettingsView.jsx';
 import DiscoverView from './components/DiscoverView.jsx';
@@ -22,6 +24,7 @@ import {
   maybeOpenDirectContentSession,
   navigateToAppHome,
   persistContentSessionToken,
+  refreshContentSession,
   validateContentSession,
   shouldUseTokenPlayerForItem,
 } from "./direct-content-session.js";
@@ -1149,11 +1152,12 @@ function parseEPGDate(s) {
 // uid is now imported from utils.js
 
 // Transform stalker item URL: extract direct HTTP URLs, store original as _stalkerCmd
-function transformStalkerItem(item) {
-  if (item._stalkerCmd !== undefined) return item;
+function transformStalkerItem(item, portalBase) {
   const raw = (item.url || "").replace(/^ffmpeg\s+/, "").trim();
   const isDirect = raw.startsWith("http") && !raw.includes("localhost");
-  return { ...item, _stalkerCmd: item.url, url: isDirect ? raw : null };
+  const logo = item.logo ? (resolveUrl(item.logo, portalBase) || item.logo) : null;
+  if (item._stalkerCmd !== undefined) return { ...item, logo };
+  return { ...item, logo, _stalkerCmd: item.url, url: isDirect ? raw : null };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2007,12 +2011,48 @@ export default function App() {
     return () => { cancelled = true; };
   }, [httpContentMode, contentSessionRetryKey, setActiveConnId]);
 
+  useEffect(() => {
+    if (!httpContentMode || !ephemeralConnection) return undefined;
+    const token = contentSessionToken();
+    if (!token) return undefined;
+    let stopped = false;
+    let refreshing = false;
+
+    const refresh = async () => {
+      if (stopped || refreshing) return;
+      refreshing = true;
+      try {
+        await refreshContentSession(token);
+      } catch (error) {
+        const terminal = ["unauthorized", "invalid", "expired"].includes(error?.code)
+          || [401, 403, 410].includes(error?.status);
+        if (terminal && !stopped) {
+          clearContentSessionToken();
+          setPlaying(null);
+          setConn(null);
+          setEphemeralConnection(null);
+          setContentSessionError(error?.message || "Content session expired or invalid");
+        } else {
+          console.warn("Content session keepalive failed:", error?.message || error);
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
+
+    const timer = window.setInterval(refresh, 5 * 60_000);
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { stopped = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [httpContentMode, ephemeralConnection]);
+
   // ── EPG
   const [epgURL, setEpgURL]   = useState("");
   const [epgSources, setEpgSources] = useState([]); // Array of { id, label, data }
   const [activeEpgSource, setActiveEpgSource] = useState("all");
   const [epgLoading, setEpgLoading] = useState(false);
-  const epgLoadToken = useRef(0); // Tracks current connection to ignore stale loads
+  const epgLoadToken = useRef(0);
+  const stalkerResolveRef = useRef(null); // Tracks current connection to ignore stale loads
 
   const epgData = useMemo(() => {
     if (!epgSources.length) return null;
@@ -2276,13 +2316,16 @@ export default function App() {
     if (Array.isArray(cachedChannels) && cachedChannels.length) {
       setAutoConnected(true);
       setConn(connObj.config);
-      setChannels(cachedChannels);
+      const normalizeCached = items => connObj.type === "stalker"
+        ? items.map(item => transformStalkerItem(item, connObj.config?.server || connObj.config?.portal))
+        : items;
+      setChannels(normalizeCached(cachedChannels));
       const [cachedVod, cachedSeries] = await Promise.all([
         idbCache.get(`content:${id}:vod`),
         idbCache.get(`content:${id}:series`),
       ]);
-      if (Array.isArray(cachedVod)) setVod(cachedVod);
-      if (Array.isArray(cachedSeries)) setSeries(cachedSeries);
+      if (Array.isArray(cachedVod)) setVod(normalizeCached(cachedVod));
+      if (Array.isArray(cachedSeries)) setSeries(normalizeCached(cachedSeries));
       if (connObj.type === "stalker") {
         const [vc, sc] = await Promise.all([
           idbCache.get(`cats:${id}:vod`),
@@ -2526,6 +2569,20 @@ export default function App() {
     }
   }
 
+  function stalkerRequestParams(extra = {}) {
+    const params = new URLSearchParams(extra);
+    const sessionToken = contentSessionToken();
+    if (sessionToken) params.set("contentToken", sessionToken);
+    else {
+      params.set("portal", conn.server);
+      params.set("mac", conn.mac);
+      if (conn.serial) params.set("serial", conn.serial);
+      if (conn.deviceId) params.set("deviceId", conn.deviceId);
+      if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
+    }
+    return params.toString();
+  }
+
   async function fetchStalkerChannels(force = false) {
     if (!conn || conn.type !== "stalker") return;
     const cId = connId(conn);
@@ -2536,10 +2593,10 @@ export default function App() {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${API}/stalker/channels?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
+      const res = await fetch(`${API}/stalker/channels?${stalkerRequestParams()}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      const items = (data.channels || []).map(transformStalkerItem);
+      const items = (data.channels || []).map(item => transformStalkerItem(item, conn.server));
       setChannels(items);
       // Persist to IDB (permanent) + D1
       if (cId) {
@@ -2563,7 +2620,7 @@ export default function App() {
     if (!cats) {
       if (!background) setLoading(true);
       try {
-        const res  = await fetch(`${API}/stalker/${sec}/categories?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
+        const res  = await fetch(`${API}/stalker/${sec}/categories?${stalkerRequestParams()}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         cats = data.categories || [];
@@ -2593,7 +2650,7 @@ export default function App() {
     const cId = connId(conn);
     const CACHE_KEY = cId ? `catitems:${cId}:${sec}:${catId}` : `sv-s-${sec}item-${conn.server}-${catId}`;
     const applyItems = (items) => {
-      const mapped = items.map(item => ({ ...transformStalkerItem(item), group: catTitle }));
+      const mapped = items.map(item => ({ ...transformStalkerItem(item, conn.server), group: catTitle }));
       if (sec === "vod") setVod(prev => [...prev.filter(v => v.group !== catTitle), ...mapped]);
       else setSeries(prev => [...prev.filter(s => s.group !== catTitle), ...mapped]);
 
@@ -2610,13 +2667,13 @@ export default function App() {
     }
     if (!silent) setCatLoading(true);
     try {
-      const res  = await fetch(`${API}/stalker/${sec}?portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}&cat=${catId}`);
+      const res  = await fetch(`${API}/stalker/${sec}?${stalkerRequestParams({ cat: catId })}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const items = data.items || [];
       applyItems(items);
       // Save transformed items to IDB (permanent)
-      idbCache.set(CACHE_KEY, items.map(transformStalkerItem));
+      idbCache.set(CACHE_KEY, items.map(item => transformStalkerItem(item, conn.server)));
     } catch(e) { console.error(`Stalker ${sec} cat items:`, e); }
     finally { if (!silent) setCatLoading(false); fetchingCatRef.current.delete(refKey); }
   }
@@ -2664,17 +2721,67 @@ export default function App() {
     if (conn.serial) params.set("serial", conn.serial);
     if (conn.deviceId) params.set("deviceId", conn.deviceId);
     if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
+    const sessionToken = contentSessionToken();
+    if (sessionToken) {
+      params.delete("portal");
+      params.delete("mac");
+      params.set("contentToken", sessionToken);
+    }
     let url = `${API}/stalker/play?${params.toString()}`;
     if (episode) url += `&episode=${episode}`;
     return url;
   }
 
-  function resolveStalkerStream(item) {
-    const contentType = item.type || "live";
+  async function resolveStalkerStream(item, contentType = item.type || "live", options = {}) {
+    const controller = options.signal ? null : new AbortController();
+    const signal = options.signal || controller.signal;
+    if (controller) {
+      stalkerResolveRef.current?.abort();
+      stalkerResolveRef.current = controller;
+    }
     const cmd = item._stalkerCmd;
-    // Use play endpoint directly — it does create_link + stream pipe in one request.
-    // This preserves IP-bound and time-limited portal tokens.
-    return stalkerPlayUrl(cmd, contentType);
+    let fallbackUrl = stalkerPlayUrl(cmd, contentType, options.episode);
+    if (options.start) fallbackUrl += `&start=${options.start}`;
+    if (options.end) fallbackUrl += `&end=${options.end}`;
+    const fallbackStreamKind = contentType === "live" ? "ts" : "file";
+    try {
+      const res = await fetch(`${fallbackUrl}&resolve=1`, { signal });
+      if (!res.ok) throw new Error(`Stream resolution returned ${res.status}`);
+      const data = await res.json();
+      if (!data.url) throw new Error("Portal did not return a stream URL");
+      const directUrl = data.url;
+      const direct = data.direct !== false;
+      const streamKind = data.streamKind || classifyStreamUrl(directUrl, contentType);
+      return {
+        url: direct ? directUrl : fallbackUrl,
+        streamKind,
+        directUrl,
+        expiresAt: data.expiresAt ?? null,
+        _direct: direct,
+        _stalkerFallbackUrl: fallbackUrl,
+        _stalkerFallbackUsed: !direct,
+      };
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      console.warn("Stalker direct-play resolution failed; using relay", error);
+      return {
+        url: fallbackUrl,
+        streamKind: fallbackStreamKind,
+        _direct: false,
+        _stalkerFallbackUsed: true,
+        _stalkerFallbackUrl: fallbackUrl,
+        expiresAt: null,
+      };
+    } finally {
+      if (controller && stalkerResolveRef.current === controller) stalkerResolveRef.current = null;
+    }
+  }
+
+  async function refreshStalkerStream(item, reason = "refresh") {
+    if (conn?.type !== "stalker" || !item?._stalkerCmd) return null;
+    const refreshed = await resolveStalkerStream(item, item.type || "live", { reason });
+    if (!refreshed?.url) return null;
+    return { ...item, ...refreshed };
   }
 
   async function loadEPG(url, label) {
@@ -2716,16 +2823,9 @@ export default function App() {
     const token = epgLoadToken.current;
     setEpgLoading(true);
     try {
-      const params = new URLSearchParams({
-        portal: conn.server,
-        mac: conn.mac,
-        period: 24, // request 24 hours of data
-      });
-      if (conn.serial) params.set("serial", conn.serial);
-      if (conn.deviceId) params.set("deviceId", conn.deviceId);
-      if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
+      const params = stalkerRequestParams({ period: 24 });
 
-      const res = await fetch(`${API}/stalker/epg?${params.toString()}`);
+      const res = await fetch(`${API}/stalker/epg?${params}`);
       const data = await safeJsonFetch(res);
       if (token !== epgLoadToken.current) return; // Stale, ignore
       if (data.programs) {
@@ -2767,7 +2867,11 @@ export default function App() {
     const newFavs = { ...favs, [type]: { ...favs[type] } };
     const key = item.id || item.url;
     if (newFavs[type][key]) delete newFavs[type][key];
-    else { newFavs[type][key] = { id:item.id, name:item.name, url:item.url, logo:item.logo, group:item.group, type }; track("favorite"); }
+    else {
+      const stableItem = stripTransientStreamFields(item);
+      newFavs[type][key] = { id:stableItem.id, name:stableItem.name, url:stableItem.url, logo:stableItem.logo, group:stableItem.group, type, _stalkerCmd:stableItem._stalkerCmd };
+      track("favorite");
+    }
     setFavs(newFavs);
     if (activeConnId) {
       db.set(`sv-favs-${activeConnId}`, newFavs);
@@ -2809,14 +2913,15 @@ export default function App() {
   }
 
   function addHistory(item) {
-    const previous = historyRef.current.find(h => historyKey(h) === historyKey(item));
+    const stableItem = stripTransientStreamFields(item);
+    const previous = historyRef.current.find(h => historyKey(h) === historyKey(stableItem));
     const entry = {
-      ...item,
+      ...stableItem,
       timestamp: Date.now(),
-      position: item.type === "live" ? 0 : Number(previous?.position || item.position || 0),
-      duration: Number(previous?.duration || item.duration || 0),
+      position: stableItem.type === "live" ? 0 : Number(previous?.position || stableItem.position || 0),
+      duration: Number(previous?.duration || stableItem.duration || 0),
     };
-    persistHistory([entry, ...historyRef.current.filter(h => historyKey(h) !== historyKey(item))].slice(0, 60), true);
+    persistHistory([entry, ...historyRef.current.filter(h => historyKey(h) !== historyKey(stableItem))].slice(0, 60), true);
   }
 
   function updateHistoryProgress(item, { position = 0, duration = 0, completed = false, reason = 'interval' } = {}) {
@@ -2858,8 +2963,8 @@ export default function App() {
     track("history");
     if (conn?.type === "stalker" && item._stalkerCmd && !item.url) {
       const resolved = await resolveStalkerStream(item);
-      if (!resolved) return;
-      const resolved_item = { ...item, url: resolved };
+      if (!resolved?.url) return;
+      const resolved_item = { ...item, ...resolved };
       setPlaying(resolved_item);
       addHistory(resolved_item);
     } else if (shouldUseTokenPlayerForItem(conn, item, window.location)) {
@@ -2921,20 +3026,12 @@ export default function App() {
 
     try {
       if (conn?.type === "stalker" && channel._stalkerCmd) {
-        // Stalker: use /stalker/play with start/end params
-        const playUrl = `${stalkerPlayUrl(channel._stalkerCmd, "live")}&start=${startUTC}&end=${endUTC}`;
-        const res = await fetch(playUrl);
-        if (res.ok) {
-          const ct = res.headers.get("content-type") || "";
-          if (ct.includes("json")) {
-            const data = await res.json();
-            if (data.url) { catchupItem.url = `${API}/stream?url=${encodeURIComponent(data.url)}`; }
-            else if (!data.error) { catchupItem.url = playUrl; }
-            else { console.warn("Catchup stalker error:", data.error); }
-          } else {
-            catchupItem.url = playUrl;
-          }
-        }
+        const resolved = await resolveStalkerStream(
+          { _stalkerCmd: channel._stalkerCmd, type: "live" },
+          "live",
+          { start: startUTC, end: endUTC },
+        );
+        Object.assign(catchupItem, resolved);
       } else if (conn?.type === "xtream" && channel.url) {
         // Xtream Codes: try timeshift URL formats
         const streamId = channel.id;
@@ -2972,7 +3069,7 @@ export default function App() {
 
     try {
       if (conn?.type === "stalker") {
-        const res = await fetch(`${API}/stalker/series/seasons?seriesId=${encodeURIComponent(item.id)}&portal=${encodeURIComponent(conn.server)}&mac=${encodeURIComponent(conn.mac)}`);
+        const res = await fetch(`${API}/stalker/series/seasons?${stalkerRequestParams({ seriesId: item.id })}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         const seasons = data.seasons || [];
@@ -3006,22 +3103,15 @@ export default function App() {
     setEpisodeLoading(episodeNum);
     try {
       if (conn?.type === "stalker") {
-        // Resolve series episode stream — try CF Worker first, fall back to Koyeb
-        let resolvedUrl = null;
-        try {
-          const playUrl = stalkerPlayUrl(season.cmd, "series", episodeNum);
-          const res = await fetch(playUrl);
-          const ct = res.headers.get("content-type") || "";
-          if (ct.includes("json")) {
-            const data = await res.json();
-            if (data.url) resolvedUrl = `${API}/stream?url=${encodeURIComponent(data.url)}`;
-            else if (!data.error) resolvedUrl = playUrl;
-          } else { resolvedUrl = playUrl; }
-        } catch(e) { console.error("Episode play failed:", e.message); }
+        const resolved = await resolveStalkerStream(
+          { _stalkerCmd: season.cmd, type: "series" },
+          "series",
+          { episode: episodeNum },
+        );
         const epItem = {
           id: `${seriesDetail.item.id}-s${seriesDetail.activeSeason}-e${episodeNum}`,
           name: `${seriesDetail.item.name} - ${season.name} E${episodeNum}`,
-          url: resolvedUrl,
+          ...resolved,
           logo: seriesDetail.item.logo,
           type: "vod",
           group: seriesDetail.item.group,
@@ -4271,6 +4361,7 @@ export default function App() {
           channelList={playing.type==="live" ? channels : null}
           epgData={epgData}
           onClose={() => setPlaying(null)}
+          onRefreshStream={refreshStalkerStream}
           onPlayCatchup={playCatchup}
           onProgress={updateHistoryProgress}
           toggleFav={toggleFav}

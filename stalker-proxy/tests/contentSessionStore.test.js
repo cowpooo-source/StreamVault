@@ -40,4 +40,17 @@ describe('content session stores', () => {
     expect(await store.findByTokenHash('new')).not.toBeNull();
     db.close();
   });
+
+  it('extends active sessions atomically without reviving expired sessions', async () => {
+    const db = new Database(':memory:');
+    const store = new SqliteContentSessionStore(db);
+    await store.create(session('active', 'user-1', 1_000));
+    await store.create(session('expired', 'user-1', 1_000));
+
+    expect(await store.extendByTokenHash('active', 120_000, 30_000)).toBe(true);
+    expect((await store.findByTokenHash('active')).expiresAt).toBe(120_000);
+    expect(await store.extendByTokenHash('expired', 120_000, 70_000)).toBe(false);
+    expect((await store.findByTokenHash('expired')).expiresAt).toBe(61_000);
+    db.close();
+  });
 });

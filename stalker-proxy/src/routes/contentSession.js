@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 const { encryptToken, decryptToken } = require('../middleware/encrypt');
 const { createContentSessionStore } = require('../services/contentSessionStore');
 
-const TYPES = new Set(['xtream', 'm3u']);
+const TYPES = new Set(['xtream', 'm3u', 'stalker']);
 const NO_STORE = { 'Cache-Control': 'no-store, private', Pragma: 'no-cache', 'Referrer-Policy': 'no-referrer' };
 const fallbackStore = createContentSessionStore();
 const boundedInt = (value, fallback, min, max) => {
@@ -36,8 +36,26 @@ function normalizeConnection(input) {
   if (!TYPES.has(type)) throw new Error('Unsupported content session provider');
   if (type === 'xtream' && (!config.server || !config.user || !config.pass)) throw new Error('Xtream server, user, and password are required');
   if (type === 'm3u' && !config.url) throw new Error('M3U URL is required');
-  const parsed = new URL(type === 'xtream' ? config.server : config.url);
+  if (type === 'stalker' && (!(config.server || config.portal) || !config.mac)) throw new Error('Stalker portal and MAC are required');
+  let parsed;
+  if (type === 'stalker') {
+    parsed = new URL(config.server || config.portal);
+  } else {
+    parsed = new URL(type === 'xtream' ? config.server : config.url);
+  }
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Provider URL must use HTTP or HTTPS');
+  if (type === 'stalker') {
+    return {
+      id, type, label: label || `Stalker · ${config.mac.slice(-5)}`, config: {
+        type: 'stalker',
+        server: parsed.href.replace(/\/$/, ''),
+        mac: String(config.mac).trim(),
+        serial: config.serial || undefined,
+        deviceId: config.deviceId || undefined,
+        deviceId2: config.deviceId2 || undefined,
+      },
+    };
+  }
   return {
     id, type, label: label || (type === 'xtream' ? `${config.user} - Xtream` : 'M3U Playlist'),
     config: type === 'xtream'
@@ -77,7 +95,7 @@ function createContentSessionRouter(deps) {
     if (!user || !userId(user)) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const connection = normalizeConnection(req.body?.connection);
-      const providerUrl = connection.type === 'xtream' ? connection.config.server : connection.config.url;
+      const providerUrl = connection.type === 'm3u' ? connection.config.url : connection.config.server;
       if (isUrlAllowed && !(await isUrlAllowed(providerUrl))) return res.status(403).json({ error: 'Provider URL not allowed' });
       const uid = userId(user);
       await store.deleteExpired();
@@ -114,6 +132,30 @@ function createContentSessionRouter(deps) {
     } catch (error) {
       console.error('content-session validation failed:', error.message);
       return res.status(500).json({ error: 'Failed to validate content session' });
+    }
+  });
+
+  // The opaque token is the authorization for the HTTP content app. Refresh it
+  // only while it is still valid so an expired or revoked session cannot return.
+  router.post('/content-session/refresh', async (req, res) => {
+    const token = String(req.body?.token || '');
+    if (!token) return res.status(400).json({ error: 'Missing token', code: 'malformed' });
+    try {
+      const hash = tokenHash(token);
+      const now = Date.now();
+      const session = await store.findByTokenHash(hash);
+      if (!session) return res.status(401).json({ error: 'Content session invalid', code: 'unauthorized' });
+      if (session.expiresAt <= now) {
+        await store.deleteByTokenHash(hash);
+        return res.status(410).json({ error: 'Content session expired', code: 'expired' });
+      }
+      const expiresAt = now + ttlMs;
+      const extended = await store.extendByTokenHash(hash, expiresAt, now);
+      if (!extended) return res.status(410).json({ error: 'Content session expired', code: 'expired' });
+      return res.json({ expiresAt });
+    } catch (error) {
+      console.error('content-session refresh failed:', error.message);
+      return res.status(500).json({ error: 'Failed to refresh content session', code: 'server_failure' });
     }
   });
 

@@ -3,8 +3,9 @@ import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalyti
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 import { classifyStreamUrl } from "../stream-classifier.js";
+import { shouldProxyStreamUrl } from "../stream-routing.js";
 
-function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, t: pt, isAdEligible, connType }) {
+function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
@@ -224,7 +225,22 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
   const [streamErr, setStreamErr] = useState(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [streamRevision, setStreamRevision] = useState(0);
   const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0 });
+  const playbackGenerationRef = useRef(0);
+
+  useEffect(() => {
+    playbackGenerationRef.current += 1;
+  }, [contentIdentity, retryKey, streamRevision]);
+
+  useEffect(() => {
+    resumeAppliedRef.current = null;
+    resumeRetryRef.current = false;
+    if (autoRecoveryRef.current) {
+      autoRecoveryRef.current.stalkerFallback = false;
+      autoRecoveryRef.current.stalkerRefreshAttempted = false;
+    }
+  }, [retryKey, streamRevision]);
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState({});
   const statsInterval = useRef(null);
@@ -271,26 +287,77 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   }, [showStats, current.url]);
 
   // Xtream and M3U streams play directly from the browser (no proxy, no byte relay).
-  // Stalker, Jellyfin, and Plex still go through the VPS proxy (portal headers, CORS).
+  // Non-direct playback still goes through the proxy for portal headers, CORS, and relay handling.
   const origin = API || location.origin;
-  const needsProxy = (u) => u && !u.startsWith('/') && !u.startsWith(origin) && !current?._direct;
+  const pageProtocol = location.protocol;
+  const needsProxy = (u, kind = "unknown") => shouldProxyStreamUrl(u, {
+    origin,
+    pageProtocol,
+    direct: !!current?._direct,
+    kind,
+  });
 
   function initPlayer(url) {
     const video = videoRef.current;
     if (!video || !url) return;
     setStreamErr(null);
     if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
-      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0 };
+      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stalkerFallback: false, stalkerRefreshAttempted: false, stalkerRefreshTimes: [] };
     }
     destroyPlayers();
     video.removeAttribute("src");
 
     const loadStartTime = Date.now();
-    
+
+    function useStalkerFallback(reason) {
+      if (!current._stalkerFallbackUrl || current._stalkerFallbackUsed || autoRecoveryRef.current.stalkerFallback) return false;
+      autoRecoveryRef.current.stalkerFallback = true;
+      trackAnalytics("stalker_direct_fallback", {
+        content_id: String(current.id || ""),
+        content_type: current.type || "live",
+        reason,
+      });
+      destroyPlayers();
+      setStreamErr(null);
+      setCurrent(prev => ({
+        ...prev,
+        url: prev._stalkerFallbackUrl,
+        _direct: false,
+        _stalkerFallbackUsed: true,
+        streamKind: prev.streamKind || classifyStreamUrl(prev._stalkerFallbackUrl, prev.type),
+      }));
+      return true;
+    }
+
+    async function requestStalkerRefresh(reason) {
+      if (!current._direct || autoRecoveryRef.current.stalkerRefreshAttempted || typeof onRefreshStream !== "function") return false;
+      const now = Date.now();
+      const recentRefreshes = (autoRecoveryRef.current.stalkerRefreshTimes || []).filter(time => time > now - 60_000);
+      if (recentRefreshes.length >= 3) return false;
+      recentRefreshes.push(now);
+      autoRecoveryRef.current.stalkerRefreshTimes = recentRefreshes;
+      autoRecoveryRef.current.stalkerRefreshAttempted = true;
+      const generation = playbackGenerationRef.current;
+      try {
+        const refreshed = await onRefreshStream(current, reason);
+        if (!refreshed?.url || generation !== playbackGenerationRef.current) return false;
+        destroyPlayers();
+        setStreamErr(null);
+        setCurrent(prev => ({ ...prev, ...refreshed }));
+        // A provider may issue the same URL again; force media-engine reinitialization.
+        setStreamRevision(value => value + 1);
+        return true;
+      } catch (error) {
+        console.warn("Stalker stream refresh failed:", error?.message || error);
+        return false;
+      }
+    }
     // Native <video> error handler (for direct src= playback)
-    video.onerror = () => {
+    video.onerror = async () => {
       // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
       if (hlsRef.current || mpegtsRef.current) return;
+      if (current._direct && await requestStalkerRefresh("native_error")) return;
+      if (useStalkerFallback("native_error")) return;
       const e = video.error;
       const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
       const errorPayload = { icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
@@ -310,7 +377,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         const opts = { enableWorker: false, fragLoadingMaxRetry: 2 };
         // On HTTPS pages, proxy HTTP streams through proxy
         // The proxy rewrites HLS manifests so segments also go through proxy (same IP)
-        if (needsProxy(u)) {
+        if (needsProxy(u, "hls")) {
           u = streamProxy(u);
         }
         const hls = new window.Hls(opts);
@@ -337,7 +404,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         hls.on(window.Hls.Events.SUBTITLE_TRACK_SWITCH, (event, data) => {
           setActiveSub(data.id);
         });
-        hls.on(window.Hls.Events.ERROR, (_, data) => {
+        hls.on(window.Hls.Events.ERROR, async (_, data) => {
           if (!data.fatal) return;
           const recovery = autoRecoveryRef.current;
           if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && recovery.hls < 2) {
@@ -354,6 +421,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             hls.recoverMediaError();
             return;
           }
+          if (current._direct && await requestStalkerRefresh(`hls_${data.type || data.details || "error"}`)) return;
+          if (useStalkerFallback(`hls_${data.type || data.details || "error"}`)) return;
           const code = data.response?.code;
           let title = "Playback Error";
           let body;
@@ -391,20 +460,20 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           destroyPlayers();
         });
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = needsProxy(u) ? streamProxy(u) : u; video.play().catch(()=>{});
+        video.src = needsProxy(u, "hls") ? streamProxy(u) : u; video.play().catch(()=>{});
       }
     }
 
     function startMpegts(u) {
       // Proxy HTTP streams through Cloudflare Worker when on HTTPS
-      if (needsProxy(u)) u = streamProxy(u);
+      if (needsProxy(u, "ts")) u = streamProxy(u);
       if (!window.mpegts?.isSupported()) {
         video.src = u; video.play().catch(()=>{}); return;
       }
       const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: u },
         { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
       mpegtsRef.current = player;
-      player.on(window.mpegts.Events.ERROR, (errType, errDetail, errInfo) => {
+      player.on(window.mpegts.Events.ERROR, async (errType, errDetail, errInfo) => {
         const recovery = autoRecoveryRef.current;
         if (recovery.ts < 2 && (errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network"))) {
           recovery.ts += 1;
@@ -415,6 +484,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           }, delay);
           return;
         }
+        if (current._direct && await requestStalkerRefresh(`mpegts_${errType || errDetail || "error"}`)) return;
+        if (useStalkerFallback(`mpegts_${errType || errDetail || "error"}`)) return;
         const code = errInfo?.code;
         let title = "Playback Error";
         let body;
@@ -477,7 +548,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS
     const streamKind = current.streamKind || classifyStreamUrl(url, current.type);
     if (streamKind === "file") {
-      video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
+      video.src = needsProxy(url, "file") ? streamProxy(url) : url; video.play().catch(()=>{});
       return;
     }
 
@@ -490,7 +561,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
                           () => startHls(url));
       } else {
-        video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
+        video.src = needsProxy(url, "file") ? streamProxy(url) : url; video.play().catch(()=>{});
       }
       return;
     }
@@ -500,7 +571,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     // For Xtream live streams on HTTPS, proxy raw TS through stream proxy
     // (HLS .m3u8 has IP-bound segment tokens that break with proxied manifests)
-    if (needTs && needsProxy(url)) {
+    if (needTs && needsProxy(url, "ts")) {
       const proxied = streamProxy(url);
       if (window.mpegts) startMpegts(proxied);
       else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
@@ -517,7 +588,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
                         () => startHls(url));
     } else {
-      video.src = needsProxy(url) ? streamProxy(url) : url; video.play().catch(()=>{});
+      video.src = needsProxy(url, "file") ? streamProxy(url) : url; video.play().catch(()=>{});
     }
   }
 
@@ -719,7 +790,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       window.removeEventListener("beforeunload", handleUnload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [current.url, contentIdentity, retryKey]);
+  }, [current.url, contentIdentity, retryKey, streamRevision]);
 
   // Keyboard shortcuts (TiviMate + SFVIP style)
   useEffect(() => {
