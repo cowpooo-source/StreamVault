@@ -1844,6 +1844,7 @@ export default function App() {
   const [vod, setVod]         = useState([]);
   const [series, setSeries]   = useState([]);
   const [loading, setLoading] = useState(false);
+  const [contentLoad, setContentLoad] = useState(null); // { value, label }
   const [vodSyncing, setVodSyncing] = useState(false);
   const [seriesSyncing, setSeriesSyncing] = useState(false);
 
@@ -2131,6 +2132,19 @@ export default function App() {
   const [lastSynced, setLastSynced] = useState({}); // {live: timestamp, vod: timestamp, series: timestamp}
   const [autoConnected, setAutoConnected] = useState(false); // true if loaded from IDB cache
   const [connError, setConnError] = useState(""); // Xtream auth or fetch error
+  function beginContentLoad(label) {
+    setContentLoad({ value: 8, label });
+    setLoading(true);
+  }
+
+  function updateContentLoad(value, label) {
+    setContentLoad(prev => ({ value, label: label || prev?.label || t("loading") }));
+  }
+
+  function endContentLoad() {
+    setContentLoad(prev => prev ? { ...prev, value: 100 } : prev);
+    setLoading(false);
+  }
 
   // ── TMDB
   const [tmdbKey, setTmdbKey] = useState(() => localStorage.getItem("sv-tmdb-key") || "server");
@@ -2475,10 +2489,11 @@ export default function App() {
       const cached = await idbCache.get(`content:${cId}:live`);
       if (cached && cached.length) { setChannels(cached); return; }
     }
-    setLoading(true);
+    beginContentLoad("Connecting to live channels");
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getLiveCategories(), api.getLive()]);
+      updateContentLoad(62, "Processing live channels…");
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
       const items = sd.map(s => ({ id:String(s.stream_id), name:s.name, logo:s.stream_icon,
         group:cm[s.category_id]||"Other", url:api.liveURL(s.stream_id), num:s.num, epgId:s.epg_channel_id, type:"live" }));
@@ -2490,7 +2505,7 @@ export default function App() {
         setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
     } catch(e) { console.error(e); setConnError(e.message); }
-    finally { setLoading(false); }
+    finally { endContentLoad(); }
   }
 
   async function fetchVOD(force = false, background = false) {
@@ -2507,12 +2522,13 @@ export default function App() {
     }
     if (!force && vod.length) return;
     
-    if (!background) setLoading(true);
+    if (!background) beginContentLoad("Loading movies");
     else setVodSyncing(true);
 
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getVODCategories(), api.getVOD()]);
+      if (!background) updateContentLoad(62, "Processing movies…");
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
       const items = sd.map(s => ({ id:String(s.stream_id), name:s.name, logo:s.stream_icon,
         group:cm[s.category_id]||"Other", url:api.vodURL(s.stream_id, s.container_extension||"mp4"),
@@ -2527,7 +2543,7 @@ export default function App() {
       }
     } catch(e) { console.error(e); setConnError(e.message); }
     finally { 
-      if (!background) setLoading(false); 
+      if (!background) endContentLoad();
       else setVodSyncing(false);
     }
   }
@@ -2545,12 +2561,13 @@ export default function App() {
     }
     if (!force && series.length) return;
     
-    if (!background) setLoading(true);
+    if (!background) beginContentLoad("Loading series");
     else setSeriesSyncing(true);
 
     try {
       const api = makeXtreamAPI(conn.server, conn.user, conn.pass);
       const [catData, sd] = await Promise.all([api.getSeriesCategories(), api.getSeries()]);
+      if (!background) updateContentLoad(62, "Processing series…");
       const cm = Object.fromEntries(catData.map(c => [c.category_id, c.category_name]));
       const items = sd.map(s => ({ id:String(s.series_id), name:s.name, logo:s.cover,
         group:cm[s.category_id]||"Other", year:s.releaseDate?.slice(0,4), rating:s.rating, type:"series",
@@ -2564,7 +2581,7 @@ export default function App() {
       }
     } catch(e) { console.error(e); setConnError(e.message); }
     finally { 
-      if (!background) setLoading(false); 
+      if (!background) endContentLoad();
       else setSeriesSyncing(false);
     }
   }
@@ -2591,11 +2608,12 @@ export default function App() {
       const cached = await idbCache.get(`content:${cId}:live`);
       if (cached && cached.length) { setChannels(cached); return; }
     }
-    setLoading(true);
+    beginContentLoad("Connecting to Stalker portal");
     try {
       const res = await fetch(`${API}/stalker/channels?${stalkerRequestParams()}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      updateContentLoad(62, "Processing live channels…");
       const items = (data.channels || []).map(item => transformStalkerItem(item, conn.server));
       setChannels(items);
       // Persist to IDB (permanent) + D1
@@ -2605,7 +2623,7 @@ export default function App() {
         setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
     } catch(e) { console.error("Stalker channels error:", e); }
-    finally { setLoading(false); }
+    finally { endContentLoad(); }
   }
 
   // ── Load category list for Stalker VOD / Series (permanent IDB cache, no TTL)
@@ -2618,18 +2636,19 @@ export default function App() {
       try { cats = await idbCache.get(`cats:${cId}:${sec}`); } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
     if (!cats) {
-      if (!background) setLoading(true);
+      if (!background) beginContentLoad("Loading categories");
       try {
         const res  = await fetch(`${API}/stalker/${sec}/categories?${stalkerRequestParams()}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
+        if (!background) updateContentLoad(52, "Loading categories…");
         cats = data.categories || [];
         // Save to IDB (permanent) + D1
         if (cId) {
           idbCache.set(`cats:${cId}:${sec}`, cats);
         }
       } catch(e) { console.error(`Stalker ${sec} cats:`, e); return; }
-      finally { if (!background) setLoading(false); }
+      finally { if (!background) endContentLoad(); }
     }
     sec === "vod" ? setStalkerVodCats(cats) : setStalkerSeriesCats(cats);
     if (cats.length) {
@@ -2665,17 +2684,27 @@ export default function App() {
         }
       } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
-    if (!silent) setCatLoading(true);
+    if (!silent) {
+      setCatLoading(true);
+      beginContentLoad("Loading category items");
+    }
     try {
       const res  = await fetch(`${API}/stalker/${sec}?${stalkerRequestParams({ cat: catId })}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      if (!silent) updateContentLoad(72, "Processing provider items…");
       const items = data.items || [];
       applyItems(items);
       // Save transformed items to IDB (permanent)
       idbCache.set(CACHE_KEY, items.map(item => transformStalkerItem(item, conn.server)));
     } catch(e) { console.error(`Stalker ${sec} cat items:`, e); }
-    finally { if (!silent) setCatLoading(false); fetchingCatRef.current.delete(refKey); }
+    finally {
+      if (!silent) {
+        setCatLoading(false);
+        endContentLoad();
+      }
+      fetchingCatRef.current.delete(refKey);
+    }
   }
 
   // ── Option F: background prefetch remaining categories sequentially
@@ -3513,7 +3542,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [page, autoLoadMore, hasMore, section]);
 
-  function handleConnect(connConfig) {
+  async function handleConnect(connConfig) {
     const startTime = Date.now();
     const err = saveConnection(connConfig);
     
@@ -3526,6 +3555,32 @@ export default function App() {
     });
 
     if (err) { alert(err); return; }
+
+    // Open direct content immediately after setup. Otherwise the first playback
+    // click still runs on the secure page and falls back to the legacy player.
+    const id = connId(connConfig);
+    const saved = connections.find(c => c.id === id);
+    const target = saved || {
+      id,
+      type: connConfig.type,
+      label: makeConnectionLabel(connConfig.type, connConfig),
+      config: connConfig,
+    };
+
+    if (!httpContentMode) {
+      setContentSessionOpening(true);
+      setConnError("");
+      try {
+        const opened = await maybeOpenDirectContentSession(target, { location: window.location });
+        if (opened) return;
+      } catch (e) {
+        setConnError(e?.message || "Failed to open direct content session");
+        return;
+      } finally {
+        setContentSessionOpening(false);
+      }
+    }
+
     setConn(connConfig);
   }
 
@@ -4064,7 +4119,7 @@ export default function App() {
 
         {/* Body */}
         {loading ? (
-          <div className="loading"><div className="spinner" /><span>{t("loadingSection", LABEL[section])}</span></div>
+          <div className="loading" role="status" aria-live="polite"><div className="spinner" /><div style={{width:"min(360px, 72vw)", display:"flex", flexDirection:"column", gap:".45rem"}}><div style={{height:"6px", width:"100%", background:"var(--s2)", borderRadius:"999px", overflow:"hidden"}}><div style={{height:"100%", width:(contentLoad?.value ?? 24)+"%", background:"var(--accent)", borderRadius:"999px", transition:"width .35s ease"}} /></div><span>{contentLoad?.label || t("loadingSection", LABEL[section])}</span></div></div>
         ) : section==="discover" ? (
           <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
         ) : section==="settings" ? (

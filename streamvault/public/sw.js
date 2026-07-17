@@ -1,4 +1,4 @@
-const CACHE = "sv-v3";
+const CACHE = "sv-v4";
 const APP_SHELL = ['/', '/index.html', '/landing.html'];
 
 self.addEventListener("install", e => {
@@ -47,7 +47,7 @@ self.addEventListener("fetch", e => {
     e.respondWith(fetch(e.request).then(res => {
       if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
       return res;
-    }).catch(() => caches.match(e.request)));
+    }).catch(() => caches.match(e.request).then(cached => cached || new Response("", { status: 504, statusText: "Offline" }))));
     return;
   }
 
@@ -57,7 +57,7 @@ self.addEventListener("fetch", e => {
       const fetchPromise = fetch(e.request).then(res => {
         if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
         return res;
-      });
+      }).catch(() => cached || new Response("", { status: 504, statusText: "Offline" }));
       return cached || fetchPromise;
     }));
     return;
@@ -68,13 +68,13 @@ self.addEventListener("fetch", e => {
     e.respondWith(fetch(e.request).then(res => {
       if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
       return res;
-    }).catch(async () => (await caches.match(e.request)) || caches.match("/")));
+    }).catch(async () => (await caches.match(e.request)) || caches.match("/") || new Response("", { status: 503, statusText: "Offline" })));
   } else if (e.request.destination === "script" || e.request.destination === "style" ||
              e.request.destination === "image" || e.request.destination === "font") {
     e.respondWith(caches.match(e.request).then(r => r || fetch(e.request).then(res => {
       if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
       return res;
-    })));
+    }).catch(() => new Response("", { status: 503, statusText: "Offline" }))));
   }
   // Everything else — let the browser handle normally.
 });
