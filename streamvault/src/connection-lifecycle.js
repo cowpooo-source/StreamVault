@@ -37,6 +37,17 @@ export function mergeConnectionSnapshots(...snapshots) {
   return [...merged.values()];
 }
 
+export function mergeConnectionsWithinLimit(existing, incoming, maxConnections) {
+  const current = normalizeConnections(existing);
+  const savedIds = new Set(current.map(connection => connection.id));
+  const incomingUnique = normalizeConnections(incoming).filter(connection => !savedIds.has(connection.id));
+  const parsedLimit = Number(maxConnections);
+  const limit = Number.isFinite(parsedLimit) ? Math.max(0, Math.floor(parsedLimit)) : 5;
+  const available = Math.max(0, limit - current.length);
+  const added = incomingUnique.slice(0, available);
+  return { connections: [...current, ...added], added, skipped: incomingUnique.length - added.length };
+}
+
 export function getConnectionLifecycle(connection, now = Date.now()) {
   const config = connection?.config || connection || {};
   const accountInfo = config.accountInfo || config.user_info || config.info || {};

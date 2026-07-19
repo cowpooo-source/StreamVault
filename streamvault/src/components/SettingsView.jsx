@@ -3,7 +3,7 @@ import { API } from '../utils.js';
 import { db } from '../app-runtime.js';
 import { mergeConnectionSnapshots } from '../connection-lifecycle.js';
 
-export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings }) {
+export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings, themeName, themeOptions = [], onThemeChange, language, languageOptions = {}, onLanguageChange, onFeedback, onLogout, maxConnections }) {
   const [tab, setTab] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("settingsTab");
     return ["general", "account", "data"].includes(requested) ? requested : "general";
@@ -146,7 +146,13 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
 
       {tab === "general" && (
         <div style={{color:"var(--t2)",fontSize:".9rem"}}>
-          <p>Language and theme settings are available in the sidebar.</p>
+          {(themeOptions.length > 0 || Object.keys(languageOptions).length > 0) && (
+            <div style={{padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
+              <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".8rem",letterSpacing:".05em"}}>Appearance</div>
+              {themeOptions.length > 0 && <div className="fg"><label className="fl" htmlFor="settings-theme">Theme</label><select id="settings-theme" className="fi" value={themeName} onChange={e => onThemeChange?.(e.target.value)}>{themeOptions.map(name => <option key={name} value={name}>{name}</option>)}</select></div>}
+              {Object.keys(languageOptions).length > 0 && <div className="fg"><label className="fl" htmlFor="settings-language">Language</label><select id="settings-language" className="fi" value={language} onChange={e => onLanguageChange?.(e.target.value)}>{Object.entries(languageOptions).map(([code, name]) => <option key={code} value={code}>{name}</option>)}</select></div>}
+            </div>
+          )}
 
           <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
             <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".8rem",letterSpacing:".05em"}}>Playback & Content</div>
@@ -165,6 +171,20 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
             </div>
           </div>
 
+          {(onFeedback || onLogout) && (
+            <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
+              <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".8rem",letterSpacing:".05em"}}>Account Actions</div>
+              <div style={{display:"flex",gap:".6rem",flexWrap:"wrap"}}>
+                {onFeedback && <button className="btn-sm" onClick={onFeedback}>Send Feedback</button>}
+                {onLogout && <button className="btn-sm danger" onClick={onLogout}>{authUser ? "Logout" : "Login"}</button>}
+              </div>
+            </div>
+          )}
+
+          <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem",letterSpacing:".05em"}}>Connections</div>
+            <div style={{fontSize:".85rem",color:"var(--t1)"}}>{connections.length}{Number.isFinite(maxConnections) ? ` / ${maxConnections}` : ""} saved</div>
+          </div>
           <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
             <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem",letterSpacing:".05em"}}>Active Connection</div>
             <div style={{fontSize:".85rem",color:"var(--t1)"}}>

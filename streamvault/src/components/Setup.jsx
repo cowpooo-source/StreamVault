@@ -17,7 +17,7 @@ import SettingsView from './SettingsView.jsx';
 
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-export default function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, onAuth, t: st }) {
+export default function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, onAuth, themeName, themeOptions, onThemeChange, language, languageOptions, onLanguageChange, onFeedback, maxConnections, autoLoadMore, setAutoLoadMore, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -353,7 +353,11 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
               <button type="button" onClick={() => setShowSettings(false)} aria-label="Close settings"
                 style={{position:"absolute",top:10,right:10,background:"none",border:"none",color:"var(--t2)",fontSize:"1.2rem",cursor:"pointer"}}>{"\u00d7"}</button>
               <SettingsView connections={connections} authUser={authUser} activeConnId={null}
-                onAuth={onAuth} onImportFull={onImportFull} autoLoadMore={false} setAutoLoadMore={() => {}} />
+                onAuth={onAuth} onImportFull={onImportFull} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
+                themeName={themeName} themeOptions={themeOptions} onThemeChange={onThemeChange}
+                language={language} languageOptions={languageOptions} onLanguageChange={onLanguageChange}
+                onFeedback={() => { setShowSettings(false); onFeedback?.(); }}
+                onLogout={() => { setShowSettings(false); onLogout?.(); }} maxConnections={maxConnections} />
             </div>
           </div>, document.body
         )}

@@ -52,4 +52,21 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByText("Manage Backups Securely"));
     expect(onOpenSecureSettings).toHaveBeenCalledOnce();
   });
-});
+
+  it("exposes appearance, account actions, and connection allowance", () => {
+    const onThemeChange = vi.fn();
+    const onLanguageChange = vi.fn();
+    const onFeedback = vi.fn();
+    render(<SettingsView {...defaultProps}
+      connections={[{ id: "one", label: "One" }]}
+      themeName="Dark" themeOptions={["Dark", "Light"]} onThemeChange={onThemeChange}
+      language="en" languageOptions={{ en: "English", fr: "French" }} onLanguageChange={onLanguageChange}
+      onFeedback={onFeedback} maxConnections={2} />);
+    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "Light" } });
+    fireEvent.change(screen.getByLabelText("Language"), { target: { value: "fr" } });
+    fireEvent.click(screen.getByText("Send Feedback"));
+    expect(onThemeChange).toHaveBeenCalledWith("Light");
+    expect(onLanguageChange).toHaveBeenCalledWith("fr");
+    expect(onFeedback).toHaveBeenCalledOnce();
+    expect(screen.getByText("1 / 2 saved")).toBeInTheDocument();
+  });});

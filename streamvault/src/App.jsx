@@ -15,7 +15,7 @@ import Setup from './components/Setup.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 import { useStreamVault } from "./useStreamVault.js";
-import { lifecycleFailureMessage, mergeConnectionSnapshots } from "./connection-lifecycle.js";
+import { lifecycleFailureMessage, mergeConnectionSnapshots, mergeConnectionsWithinLimit } from "./connection-lifecycle.js";
 import {
   clearContentSessionToken,
   contentSessionToken,
@@ -3672,11 +3672,11 @@ export default function App() {
     if (data.connections?.length) {
       const storedConnections = await db.get("sv-connections", []);
       const existing = mergeConnectionSnapshots(storedConnections, connections);
-      const existingIds = new Set(existing.map(c => c.id));
-      const newConns = data.connections.filter(c => !existingIds.has(c.id));
-      const merged = [...existing, ...newConns];
-      if (newConns.length || merged.length !== storedConnections.length) setConnections(merged);
-      parts.push(`${newConns.length} new of ${data.connections.length} connections`);
+      const maxConnections = userLimits?.maxConnections ?? 5;
+      const result = mergeConnectionsWithinLimit(existing, data.connections, maxConnections);
+      if (result.added.length || result.connections.length !== storedConnections.length) setConnections(result.connections);
+      parts.push(`${result.added.length} new of ${data.connections.length} connections`);
+      if (result.skipped) parts.push(`${result.skipped} skipped (account limit: ${maxConnections})`);
     }
 
     // 2. Import preferences
@@ -3869,6 +3869,10 @@ export default function App() {
         isGuest={isGuest} 
         onLogout={handleLogout} 
         onAuth={handleAuth}
+        themeName={themeName} themeOptions={THEME_NAMES} onThemeChange={setThemeName}
+        language={lang} languageOptions={LANG_META} onLanguageChange={setLang}
+        onFeedback={() => setFbOpen(true)} maxConnections={userLimits?.maxConnections ?? 5}
+        autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
         t={t} 
       />
             {importPrompt && createPortal(
@@ -4205,7 +4209,10 @@ export default function App() {
             authUser={authUser} activeConnId={activeConnId}
             onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
             contentMode={httpContentMode}
-            onOpenSecureSettings={() => window.location.assign(`${getAppHomeUrl()}?section=settings&settingsTab=data`)} />
+            onOpenSecureSettings={() => window.location.assign(`${getAppHomeUrl()}?section=settings&settingsTab=data`)}
+            themeName={themeName} themeOptions={THEME_NAMES} onThemeChange={setThemeName}
+            language={lang} languageOptions={LANG_META} onLanguageChange={setLang}
+            onFeedback={() => setFbOpen(true)} onLogout={handleLogout} maxConnections={userLimits?.maxConnections ?? 5} />
 
         ) : section==="hls" ? (
           <DirectHLSView />

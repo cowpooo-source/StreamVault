@@ -6,6 +6,7 @@ import {
   getConnectionLifecycle,
   lifecycleFailureMessage,
   mergeConnectionSnapshots,
+  mergeConnectionsWithinLimit,
   normalizeConnections,
 } from "../src/connection-lifecycle.js";
 import { classifyStreamUrl } from "../src/stream-classifier.js";
@@ -82,6 +83,19 @@ describe("connection and playback hardening", () => {
     expect(merged.find(connection => connection.id === "one")?.label).toBe("current");
     expect(merged.map(connection => connection.id)).toEqual(["one", "two"]);
   });
+  it("caps imported connections at the account limit", () => {
+    const existing = [{ id: "one", type: "xtream", config: { server: "http://one" } }];
+    const incoming = [
+      { id: "one", type: "xtream", config: { server: "http://duplicate" } },
+      { id: "two", type: "m3u", config: { url: "http://two" } },
+      { id: "three", type: "m3u", config: { url: "http://three" } },
+    ];
+    const result = mergeConnectionsWithinLimit(existing, incoming, 2);
+    expect(result.connections.map(connection => connection.id)).toEqual(["one", "two"]);
+    expect(result.added).toHaveLength(1);
+    expect(result.skipped).toBe(1);
+  });
+
   it("recognizes disabled and expired provider accounts", () => {
     const expired = { type: "xtream", config: { accountInfo: { exp_date: "1700000000" } } };
     const disabled = { type: "xtream", config: { accountInfo: { status: "Disabled" } } };
