@@ -2740,7 +2740,7 @@ export default function App() {
     return () => clearTimeout(contentSaveTimer.current);
   }, [vod, series, conn]);
 
-  function stalkerPlayUrl(cmd, contentType = "live", episode = null) {
+  function stalkerPlayUrl(cmd, contentType = "live", episode = null, channelId = null) {
     const params = new URLSearchParams({
       portal: conn.server,
       mac: conn.mac,
@@ -2750,6 +2750,7 @@ export default function App() {
     if (conn.serial) params.set("serial", conn.serial);
     if (conn.deviceId) params.set("deviceId", conn.deviceId);
     if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
+    if (contentType === "live" && channelId != null) params.set("channel_id", String(channelId));
     const sessionToken = contentSessionToken();
     if (sessionToken) {
       params.delete("portal");
@@ -2769,7 +2770,7 @@ export default function App() {
       stalkerResolveRef.current = controller;
     }
     const cmd = item._stalkerCmd;
-    let fallbackUrl = stalkerPlayUrl(cmd, contentType, options.episode);
+    let fallbackUrl = stalkerPlayUrl(cmd, contentType, options.episode, contentType === "live" ? item.id : null);
     if (options.start) fallbackUrl += `&start=${options.start}`;
     if (options.end) fallbackUrl += `&end=${options.end}`;
     const fallbackStreamKind = contentType === "live" ? "ts" : "file";
@@ -2990,7 +2991,7 @@ export default function App() {
     
     track("play", { name: item.name, type: item.type || "live" });
     track("history");
-    if (conn?.type === "stalker" && item._stalkerCmd && !item.url) {
+    if (conn?.type === "stalker" && item._stalkerCmd) {
       const resolved = await resolveStalkerStream(item);
       if (!resolved?.url) return;
       const resolved_item = { ...item, ...resolved };
@@ -3056,7 +3057,7 @@ export default function App() {
     try {
       if (conn?.type === "stalker" && channel._stalkerCmd) {
         const resolved = await resolveStalkerStream(
-          { _stalkerCmd: channel._stalkerCmd, type: "live" },
+          { id: channel.id, _stalkerCmd: channel._stalkerCmd, type: "live" },
           "live",
           { start: startUTC, end: endUTC },
         );

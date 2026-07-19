@@ -39,7 +39,7 @@ function rewriteM3u8(content, baseUrl, token) {
 
 // ── Proxy helper factory ──────────────────────────────────────────────────
 function createProxyHelpers(deps) {
-  const { fetch } = deps;
+  const { fetch, isUrlAllowed: suppliedUrlPolicy } = deps;
 
   const keepAliveAgent      = new http.Agent({ keepAlive: true, maxSockets: 50 });
   const keepAliveAgentHttps = new https.Agent({ keepAlive: true, maxSockets: 50 });
@@ -82,7 +82,7 @@ function createProxyHelpers(deps) {
     } catch { return false; }
   }
 
-  async function isUrlAllowed(urlStr) {
+  async function defaultIsUrlAllowed(urlStr) {
     if (!isUrlAllowedSync(urlStr)) return false;
     try {
       const u = new URL(urlStr);
@@ -92,6 +92,8 @@ function createProxyHelpers(deps) {
       return true;
     } catch { return false; }
   }
+
+  const isUrlAllowed = suppliedUrlPolicy || defaultIsUrlAllowed;
 
   // Follow redirects only after validating every destination. Automatic
   // redirect following would allow a public URL to redirect into a private
@@ -106,8 +108,16 @@ function createProxyHelpers(deps) {
         throw error;
       }
       const response = await fetch(currentUrl, { ...options, redirect: "manual" });
-      if (!REDIRECT_STATUSES.has(response.status)) return { response, url: currentUrl };
+      if (!REDIRECT_STATUSES.has(response.status)) {
+        return { response, url: currentUrl, redirected: currentUrl !== urlStr };
+      }
       const location = response.headers?.get?.("location") || response.headers?.get?.("Location");
+      // node-fetch uses Node streams; discard each redirect response before
+      // opening the next hop so redirect probes cannot retain sockets.
+      try {
+        if (typeof response.body?.destroy === "function") response.body.destroy();
+        else await response.body?.cancel?.();
+      } catch {}
       if (!location) {
         const error = new Error("Redirect response missing Location header");
         error.code = "INVALID_REDIRECT";
@@ -254,16 +264,17 @@ function createProxyHelpers(deps) {
   }
 
   function buildStalkerStreamHeaders(session, reqHeaders = {}) {
+    // MAG devices hand the resolved media URL to FFmpeg. Portal API
+    // Authorization/Cookie headers must not leak to the media host.
     const headers = {
-      ...session.headers,
+      "User-Agent": "Lavf53.32.100",
       "Accept": "*/*",
-      "Connection": "keep-alive",
+      "Connection": "close",
+      "Icy-MetaData": "1",
     };
-    delete headers["Content-Type"];
     if (reqHeaders.range) headers["Range"] = reqHeaders.range;
     return headers;
   }
-
   function summarizeUpstreamHeaders(headers) {
     return {
       contentType: headers.get("content-type") || null,

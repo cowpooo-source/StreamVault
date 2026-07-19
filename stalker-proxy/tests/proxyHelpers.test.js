@@ -174,6 +174,28 @@ describe("redirect targets", () => {
     expect(deviceAuth[1].body).toContain('hw_version_2=');
   });
 
+  it('builds FFmpeg media headers without leaking portal credentials', () => {
+    const helpers = createProxyHelpers({ fetch: vi.fn() });
+    const headers = helpers.buildStalkerStreamHeaders({
+      headers: {
+        Authorization: 'Bearer portal-token',
+        Cookie: 'mac=00:11:22:33:44:55',
+        Referer: 'http://portal.example/c/',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    }, { range: 'bytes=5-' });
+
+    expect(headers).toEqual({
+      'User-Agent': 'Lavf53.32.100',
+      Accept: '*/*',
+      Connection: 'close',
+      'Icy-MetaData': '1',
+      Range: 'bytes=5-',
+    });
+    expect(headers).not.toHaveProperty('Authorization');
+    expect(headers).not.toHaveProperty('Cookie');
+    expect(headers).not.toHaveProperty('Referer');
+  });
   it('does not perform device authentication when the handshake token works', async () => {
     const fetch = vi.fn().mockImplementation(async (url) => {
       if (url.includes('action=handshake')) {

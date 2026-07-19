@@ -107,7 +107,37 @@ function createStalkerRouter(deps) {
     if (contentType === "file" || contentType === "vod" || contentType === "series") return "file";
     return "unknown";
   }
-  async function createStalkerLink(session, { cmd, contentType, episode, start, end }) {
+  // Resolve redirect-only CDN front doors before direct browser playback.
+  // The probe follows redirects server-side, validates every destination, and
+  // cancels the response body; media bytes still flow directly to the browser.
+  async function resolveDirectMediaUrl(streamUrl, session, req) {
+    if (typeof fetchWithRedirectCheck !== "function") return streamUrl;
+    try {
+      const headers = (typeof buildStalkerStreamHeaders === "function"
+        ? buildStalkerStreamHeaders(session, req.headers)
+        : {}) || {};
+      headers.Range = "bytes=0-";
+      const resolved = await fetchWithRedirectCheck(streamUrl, {
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+      const response = resolved?.response;
+      try {
+        if (typeof response?.body?.destroy === "function") response.body.destroy();
+        else await response?.body?.cancel?.();
+      } catch {}
+      // The VPS probe and the browser are different clients. A provider may
+      // reject the VPS probe after redirecting, while still allowing the
+      // browser to fetch the validated edge URL directly.
+      if (!resolved?.url || !response) return streamUrl;
+      if (!response.ok && response.status !== 206 && !resolved.redirected) return streamUrl;
+      return resolved.url;
+    } catch (error) {
+      console.warn("Direct stream redirect resolution failed:", error?.message || error);
+      return streamUrl;
+    }
+  }
+  async function createStalkerLink(session, { cmd, contentType, episode, start, end, channelId }) {
     const requestLink = candidate => portalFetchRetry(session, {
       type: (contentType === "vod" || contentType === "series") ? "vod" : "itv",
       action: "create_link",
@@ -120,6 +150,52 @@ function createStalkerRouter(deps) {
       start,
       end,
     });
+
+    const playableLiveUrl = candidate => {
+      const clean = String(candidate || "").trim().replace(/^(?:ffmpeg|ffrt)\s+/i, "").trim();
+      try {
+        const parsed = new URL(clean);
+        if (!/^https?:$/.test(parsed.protocol)) return null;
+        if (/\/play\/live\.php$/i.test(parsed.pathname) && !parsed.searchParams.get("stream")) return null;
+        return clean;
+      } catch {
+        return null;
+      }
+    };
+
+    const existingLiveUrl = contentType === "live" ? playableLiveUrl(cmd) : null;
+    const numericChannelId = String(channelId || "").match(/^\d+$/)?.[0];
+    const tokenizedChannelListUrl = existingLiveUrl && /\/play\/live\.php\?/i.test(existingLiveUrl)
+      && /(?:[?&])play_token=/i.test(existingLiveUrl);
+
+    if (contentType === "live" && numericChannelId && tokenizedChannelListUrl) {
+      try {
+        const channelList = await portalFetchRetry(session, { type: "itv", action: "get_all_channels" });
+        const selected = (channelList?.js?.data || []).find(channel => String(channel.id) === numericChannelId);
+        const freshLiveUrl = playableLiveUrl(selected?.cmd);
+        if (freshLiveUrl) return { js: { cmd: freshLiveUrl } };
+        if (selected?.cmd) {
+          const selectedData = await requestLink(selected.cmd);
+          const selectedResolvedUrl = playableLiveUrl(selectedData?.js?.cmd);
+          if (selectedResolvedUrl) {
+            return { ...selectedData, js: { ...selectedData.js, cmd: selectedResolvedUrl } };
+          }
+        }
+      } catch (error) {
+        if (!existingLiveUrl) throw error;
+      }
+    } else if (contentType === "live" && numericChannelId) {
+      try {
+        const channelData = await requestLink("ffrt http:///ch/" + numericChannelId);
+        const freshLiveUrl = playableLiveUrl(channelData?.js?.cmd);
+        if (freshLiveUrl) {
+          return { ...channelData, js: { ...channelData.js, cmd: freshLiveUrl } };
+        }
+      } catch (error) {
+        if (!existingLiveUrl) throw error;
+      }
+    }
+    if (existingLiveUrl) return { js: { cmd: existingLiveUrl } };
 
     const numericMedia = contentType === "vod"
       ? String(cmd || "").trim().match(/^\/media\/(\d+)\.[a-z0-9]+$/i)
@@ -161,11 +237,10 @@ function createStalkerRouter(deps) {
     // accept the traditional ffmpeg-prefixed command in create_link.
     const normalized = String(cmd || "").trim();
     if (normalized && !/^ffmpeg\s+/i.test(normalized)) {
-      data = await requestLink(`ffmpeg ${normalized}`);
+      data = await requestLink("ffmpeg " + normalized);
     }
     return data;
   }
-
   router.post("/handshake", async (req, res) => {
     const { portal, mac, serial } = req.body;
     if (!portal || !mac) return res.status(400).end();
@@ -252,7 +327,7 @@ function createStalkerRouter(deps) {
       : { portal: resolved.portal, mac: resolved.mac, serial: req.query.serial, deviceId: req.query.deviceId, deviceId2: req.query.deviceId2 };
     if (!portal || !mac) return res.status(400).json({ error: 'portal and mac required', code: 'malformed' });
 
-    const { cmd, content_type, episode, start, end } = req.query;
+    const { cmd, content_type, episode, start, end, channel_id } = req.query;
     const directEnabled = directPlayEnabled();
 
     const fallbackUrl = (() => {
@@ -261,6 +336,7 @@ function createStalkerRouter(deps) {
       if (episode) params.set("episode", episode);
       if (start) params.set("start", start);
       if (end) params.set("end", end);
+      if (channel_id) params.set("channel_id", channel_id);
       if (resolved.mode === 'content-session') {
         params.set("contentToken", resolved.contentToken);
       } else {
@@ -276,14 +352,18 @@ function createStalkerRouter(deps) {
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const data = await createStalkerLink(session, {
-        cmd, contentType: content_type, episode, start, end,
+        cmd, contentType: content_type, episode, start, end, channelId: channel_id,
       });
       const streamUrl = normalizeResolvedUrl(data?.js?.cmd, portal);
       if (!streamUrl) throw new Error("No URL");
       if (!(await isUrlAllowed(streamUrl))) return res.status(403).end();
       const streamKind = classifyStreamKind(streamUrl, content_type === "vod" || content_type === "series" ? "file" : "live");
       if (req.query.resolve === "1") {
-        return res.json({ url: streamUrl, streamKind, direct: directEnabled, fallbackUrl, expiresAt: null });
+        const tokenizedLiveUrl = content_type === "live" && /(?:[?&])play_token=/i.test(streamUrl);
+        const directUrl = directEnabled && !tokenizedLiveUrl && (streamKind === "hls" || streamKind === "ts")
+          ? await resolveDirectMediaUrl(streamUrl, session, req)
+          : streamUrl;
+        return res.json({ url: directUrl, streamKind, direct: directEnabled, fallbackUrl, expiresAt: null });
       }
 
       const watchName = req.query.name || cmd || "Unknown";

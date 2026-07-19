@@ -302,7 +302,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     if (!video || !url) return;
     setStreamErr(null);
     if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
-      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stalkerFallback: false, stalkerRefreshAttempted: false, stalkerRefreshTimes: [] };
+      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stalkerFallback: false, corsProxyFallback: false, stalkerRefreshAttempted: false, stalkerRefreshTimes: [] };
     }
     destroyPlayers();
     video.removeAttribute("src");
@@ -325,6 +325,30 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         _direct: false,
         _stalkerFallbackUsed: true,
         streamKind: prev.streamKind || classifyStreamUrl(prev._stalkerFallbackUrl, prev.type),
+      }));
+      return true;
+    }
+
+    function useCorsProxyFallback(reason, responseCode) {
+      const streamKind = current.streamKind || classifyStreamUrl(current.url, current.type);
+      if (streamKind !== "hls" || !current._direct || current._corsProxyFallbackUsed) return false;
+      if (responseCode && Number(responseCode) > 0) return false;
+      if (autoRecoveryRef.current.corsProxyFallback || !current.url || current.url.startsWith("/stream?")) return false;
+
+      autoRecoveryRef.current.corsProxyFallback = true;
+      trackAnalytics("direct_cors_proxy_fallback", {
+        content_id: String(current.id || ""),
+        content_type: current.type || "live",
+        reason,
+      });
+      destroyPlayers();
+      setStreamErr(null);
+      setCurrent(prev => ({
+        ...prev,
+        url: streamProxy(prev.url),
+        _direct: false,
+        _corsProxyFallbackUsed: true,
+        streamKind: "hls",
       }));
       return true;
     }
@@ -359,8 +383,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (current._direct && await requestStalkerRefresh("native_error")) return;
       if (useStalkerFallback("native_error")) return;
       const e = video.error;
-      const msgs = { 1: "Playback aborted", 2: "Network error — could not load stream", 3: "Decode error — stream format not supported", 4: "Source not supported — the stream format or URL is invalid" };
-      const errorPayload = { icon: "⚠️", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
+      const msgs = { 1: "Playback aborted", 2: "Network error - could not load stream", 3: "Decode error - stream format not supported", 4: "Source not supported - the stream format or URL is invalid" };
+      const errorPayload = { icon: "!", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
       setStreamErr(errorPayload);
       trackAnalytics("playback_error", {
         error_type: "native_video_error",
@@ -407,6 +431,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         hls.on(window.Hls.Events.ERROR, async (_, data) => {
           if (!data.fatal) return;
           const recovery = autoRecoveryRef.current;
+          const code = data.response?.code;
+
+          // Browser CORS failures appear as manifest network errors without a status.
+          // Switch to the same-origin relay immediately instead of retrying forever.
+          if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR
+              && !code
+              && /manifest|level/i.test(String(data.details || ""))) {
+            const reason = "hls_" + (data.details || "manifest_network_error");
+            if (useStalkerFallback(reason) || useCorsProxyFallback(reason)) return;
+          }
+
           if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && recovery.hls < 2) {
             recovery.hls += 1;
             const delay = 500 * (2 ** (recovery.hls - 1));
@@ -423,7 +458,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           }
           if (current._direct && await requestStalkerRefresh(`hls_${data.type || data.details || "error"}`)) return;
           if (useStalkerFallback(`hls_${data.type || data.details || "error"}`)) return;
-          const code = data.response?.code;
+          if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR
+              && useCorsProxyFallback("hls_" + (data.details || "network_error"), code)) return;
           let title = "Playback Error";
           let body;
           if (code === 404) {
@@ -450,7 +486,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           } else {
             body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
           }
-          setStreamErr({ icon: "⚠️", title, body });
+          setStreamErr({ icon: "!", title, body });
           trackAnalytics("playback_error", {
             error_type: `hls_${data.type}`,
             error_code: String(code || data.details || "unknown"),
@@ -523,7 +559,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         } else {
           body = `${errType}: ${errDetail || "Unknown error"}${code ? ` (HTTP ${code})` : ""}`;
         }
-        setStreamErr({ icon: "⚠️", title, body });
+        setStreamErr({ icon: "!", title, body });
         destroyPlayers();
       });
       player.attachMediaElement(video);
@@ -912,7 +948,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
                 background:"rgba(0,0,0,.88)",padding:"2rem",textAlign:"center"}}>
               <div style={{maxWidth:"400px"}}>
-                <div style={{fontSize:"2.2rem",marginBottom:".75rem"}}>{streamErr.icon}</div>
+                <div style={{width:"2.2rem",height:"2.2rem",margin:"0 auto .75rem",border:"2px solid currentColor",borderRadius:"50%",display:"grid",placeItems:"center",fontSize:"1.35rem",fontWeight:800}}>{streamErr.icon}</div>
                 <div style={{fontSize:".9rem",color:"var(--t1)",fontWeight:600,marginBottom:".5rem"}}>{streamErr.title}</div>
                 <div style={{fontSize:".78rem",color:"var(--t2)",lineHeight:1.6}}>{streamErr.body}</div>
                 <button className="btn-primary" style={{marginTop:"1rem"}} onClick={() => setRetryKey(key => key + 1)}>Try Again</button>

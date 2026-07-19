@@ -32,6 +32,7 @@ function makeDeps(overrides = {}) {
 
 function makeApp(deps) {
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json());
   app.use('/stalker', createStalkerRouter(deps));
   return app;
@@ -223,6 +224,119 @@ describe('createStalkerRouter - unit', () => {
     expect(res.body.fallbackUrl).toContain('/stalker/play?');
   });
 
+  it('GET /stalker/play resolves CDN redirects before direct HLS playback', async () => {
+    const cancel = vi.fn();
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cloudedgeserver01.cloudlivecdn.com/path/mono.m3u8?token=t' } }),
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: true, status: 200, body: { cancel } },
+        url: 'http://edge34358171d.akamaix.com/path/mono.m3u8?token=t',
+      }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&resolve=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe('http://edge34358171d.akamaix.com/path/mono.m3u8?token=t');
+    expect(deps.fetchWithRedirectCheck).toHaveBeenCalledWith(
+      'http://cloudedgeserver01.cloudlivecdn.com/path/mono.m3u8?token=t',
+      expect.objectContaining({ headers: expect.objectContaining({ Range: 'bytes=0-' }) }),
+    );
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/play preserves a redirected edge URL when the VPS probe is denied', async () => {
+    const destroy = vi.fn();
+    const edgeUrl = 'http://edge34358171d.akamaix.com/path/mono.m3u8?token=t';
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cloudedgeserver01.cloudlivecdn.com/path/mono.m3u8?token=t' } }),
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: false, status: 403, body: { destroy } },
+        url: edgeUrl,
+        redirected: true,
+      }),
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&resolve=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe(edgeUrl);
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/play refreshes tokenized live URLs from the channel list', async () => {
+    const staleUrl = 'http://me.mdmfista.com/play/live.php?mac=00:1A:79:18:15:1D&stream=1433159&extension=ts&play_token=stale';
+    const freshUrl = 'http://me.mdmfista.com/play/live.php?mac=00:1A:79:18:15:1D&stream=1433159&extension=ts&play_token=fresh';
+    const portalFetchRetry = vi.fn().mockResolvedValue({ js: { data: [{ id: '1433159', cmd: 'ffmpeg ' + freshUrl }] } });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: true, status: 206, body: { cancel: vi.fn() } },
+        url: freshUrl,
+      }),
+    });
+
+    const res = await request(makeApp(deps)).get(
+      '/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=' + encodeURIComponent('ffmpeg ' + staleUrl) + '&content_type=live&channel_id=1433159&resolve=1',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe(freshUrl);
+    expect(res.body.fallbackUrl).toContain('channel_id=1433159');
+    expect(deps.fetchWithRedirectCheck).not.toHaveBeenCalled();
+    expect(portalFetchRetry).toHaveBeenCalledTimes(1);
+    expect(portalFetchRetry.mock.calls[0][1]).toMatchObject({
+      type: 'itv',
+      action: 'get_all_channels',
+    });
+  });
+
+  it('GET /stalker/play reuses a complete live URL when no channel ID is available', async () => {
+    const directUrl = 'http://me.mdmfista.com/play/live.php?mac=00:1A:79:18:15:1D&stream=1433159&extension=ts&play_token=token';
+    const portalFetchRetry = vi.fn();
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: true, status: 206, body: { cancel: vi.fn() } },
+        url: directUrl,
+      }),
+    });
+
+    const res = await request(makeApp(deps)).get(
+      '/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=' + encodeURIComponent('ffmpeg ' + directUrl) + '&content_type=live&resolve=1',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe(directUrl);
+    expect(portalFetchRetry).not.toHaveBeenCalled();
+  });
+  it('GET /stalker/play uses the channel command when a live URL has an empty stream value', async () => {
+    const portalFetchRetry = vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.example/live.ts' } });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: true, status: 200, body: { cancel: vi.fn() } },
+        url: 'http://cdn.example/live.ts',
+      }),
+    });
+
+    const cmd = 'http://me.mdmfista.com/play/live.php?mac=00:1A:79:18:15:1D&stream=&extension=ts&play_token=token';
+    const res = await request(makeApp(deps)).get(
+      '/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=' + encodeURIComponent(cmd) + '&content_type=live&channel_id=11665&resolve=1',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.fallbackUrl).toContain('channel_id=11665');
+    expect(portalFetchRetry.mock.calls[0][1]).toMatchObject({
+      action: 'create_link',
+      cmd: 'ffrt http:///ch/11665',
+    });
+  });
   it('GET /stalker/play retries a path-only VOD command with the MAG ffmpeg prefix', async () => {
     const portalFetchRetry = vi.fn()
       .mockResolvedValueOnce({ js: {} })

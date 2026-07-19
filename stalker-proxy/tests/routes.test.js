@@ -135,14 +135,13 @@ describe('Integration Tests - Routes', () => {
 
   it('POST /api/play-token issues a playbackId and refreshes to a new URL', async () => {
     mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
-    mockFetch.mockResolvedValueOnce({
-      url: 'http://provider.example.com/live/index.m3u8?token=old',
-      body: { cancel: vi.fn() },
-    });
-    mockFetch.mockResolvedValueOnce({
-      url: 'http://provider.example.com/live/index.m3u8?token=new',
-      body: { cancel: vi.fn() },
-    });
+    const redirect = location => ({ status: 302, headers: { get: vi.fn(() => location) } });
+    const playable = () => ({ ok: true, status: 200, body: { cancel: vi.fn() } });
+    mockFetch
+      .mockResolvedValueOnce(redirect('http://provider.example.com/live/index.m3u8?token=old'))
+      .mockResolvedValueOnce(playable())
+      .mockResolvedValueOnce(redirect('http://provider.example.com/live/index.m3u8?token=new'))
+      .mockResolvedValueOnce(playable());
 
     const playRes = await request(app)
       .post('/api/play-token')
@@ -165,6 +164,26 @@ describe('Integration Tests - Routes', () => {
     expect(refreshRes.body.url).toContain('token=new');
   });
 
+  it('GET /api/validate-token returns the final CDN URL after a redirect chain', async () => {
+    const firstUrl = 'http://cloudedgeserver01.cloudlivecdn.com/path/mono.m3u8?token=t';
+    const loadBalancerUrl = 'http://lb01-republiclive.cloudlivecdn.com/path/mono.m3u8?token=t';
+    const finalUrl = 'http://edge34358171d.akamaix.com/path/mono.m3u8?token=t';
+    mockFetch
+      .mockResolvedValueOnce({ status: 301, headers: { get: vi.fn(() => loadBalancerUrl) } })
+      .mockResolvedValueOnce({ status: 302, headers: { get: vi.fn(() => finalUrl) } })
+      .mockResolvedValueOnce({ ok: true, status: 200, body: { cancel: vi.fn() } });
+
+    const playRes = await request(app)
+      .post('/api/play-token')
+      .set('authorization', 'Bearer valid-token')
+      .send({ url: firstUrl });
+    const validateRes = await request(app).get(`/api/validate-token?token=${playRes.body.token}`);
+
+    expect(validateRes.status).toBe(200);
+    expect(validateRes.body.url).toBe(finalUrl);
+    expect(validateRes.body.type).toBe('hls');
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
   it('GET /api/validate-token classifies extensionless live URLs as TS playback', async () => {
     mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
     mockFetch.mockResolvedValueOnce({

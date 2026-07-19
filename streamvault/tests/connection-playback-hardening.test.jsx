@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import React from "react";
 import {
   getConnectionLifecycle,
@@ -13,6 +13,38 @@ import { shouldProxyStreamUrl, stripTransientStreamFields } from "../src/stream-
 vi.mock("../src/vast.js", () => ({ fetchVastAd: vi.fn(() => null) }));
 vi.mock("../src/epg.js", () => ({ getEPGNow: vi.fn(() => null) }));
 import Player from "../src/components/Player.jsx";
+
+function installMockHls() {
+  const instances = [];
+  class MockHls {
+    static isSupported = () => true;
+    static Events = {
+      ERROR: "error",
+      MANIFEST_PARSED: "manifestParsed",
+      AUDIO_TRACKS_UPDATED: "audioTracksUpdated",
+      SUBTITLE_TRACKS_UPDATED: "subtitleTracksUpdated",
+      AUDIO_TRACK_SWITCHED: "audioTrackSwitched",
+      SUBTITLE_TRACK_SWITCH: "subtitleTrackSwitch",
+    };
+    static ErrorTypes = { NETWORK_ERROR: "networkError", MEDIA_ERROR: "mediaError" };
+    constructor() {
+      this.handlers = {};
+      this.audioTracks = [];
+      this.subtitleTracks = [];
+      this.audioTrack = -1;
+      this.subtitleTrack = -1;
+      this.loadSource = vi.fn();
+      this.attachMedia = vi.fn();
+      this.startLoad = vi.fn();
+      this.recoverMediaError = vi.fn();
+      this.destroy = vi.fn();
+      instances.push(this);
+    }
+    on(event, handler) { this.handlers[event] = handler; }
+  }
+  window.Hls = MockHls;
+  return { instances, MockHls };
+}
 
 describe("connection and playback hardening", () => {
   beforeEach(() => {
@@ -98,6 +130,81 @@ describe("connection and playback hardening", () => {
     const loadsBeforeRetry = video.load.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
     expect(video.load.mock.calls.length).toBeGreaterThan(loadsBeforeRetry);
+  });
+  it("falls back through /stream after direct HLS network retries fail without an HTTP status", async () => {
+    const { instances, MockHls } = installMockHls();
+
+
+    const directUrl = "http://provider.example/live/channel.m3u8?token=test";
+    render(<Player
+      item={{ id: "cors-hls", name: "CORS HLS", url: directUrl, type: "live", streamKind: "hls", _direct: true }}
+      channelList={[]}
+      epgData={null}
+      onClose={vi.fn()}
+      onFav={vi.fn()}
+      isFav={() => false}
+      connType="xtream"
+      t={key => key}
+      isAdEligible={false}
+    />);
+
+    await waitFor(() => expect(instances).toHaveLength(1));
+    const directPlayer = instances[0];
+    const fatalNetworkError = { fatal: true, type: MockHls.ErrorTypes.NETWORK_ERROR, details: "manifestLoadError" };
+
+    await act(async () => {
+      await directPlayer.handlers.error(null, fatalNetworkError);
+      await directPlayer.handlers.error(null, fatalNetworkError);
+      await directPlayer.handlers.error(null, fatalNetworkError);
+    });
+
+    await waitFor(() => {
+      expect(instances.some(instance => instance.loadSource.mock.calls.some(([url]) =>
+        url.startsWith("/stream?url=") && decodeURIComponent(url).includes(directUrl)
+      ))).toBe(true);
+    });
+    expect(screen.queryByText(/Playback Error/i)).not.toBeInTheDocument();
+  });
+  it("uses the authenticated Stalker fallback for direct HLS CORS failures", async () => {
+    const { instances, MockHls } = installMockHls();
+    const fallbackUrl = "/stalker/play?contentToken=opaque&cmd=channel";
+    render(<Player
+      item={{
+        id: "stalker-hls",
+        name: "Stalker HLS",
+        url: "http://provider.example/live/channel.m3u8",
+        type: "live",
+        streamKind: "hls",
+        _direct: true,
+        _stalkerFallbackUrl: fallbackUrl,
+      }}
+      channelList={[]}
+      epgData={null}
+      onClose={vi.fn()}
+      onFav={vi.fn()}
+      isFav={() => false}
+      connType="stalker"
+      t={key => key}
+      isAdEligible={false}
+    />);
+
+    await waitFor(() => expect(instances).toHaveLength(1));
+    await act(async () => {
+      await instances[0].handlers.error(null, {
+        fatal: true,
+        type: MockHls.ErrorTypes.NETWORK_ERROR,
+        details: "manifestLoadError",
+      });
+    });
+
+    await waitFor(() => {
+      expect(instances.some(instance => instance.loadSource.mock.calls.some(([url]) =>
+        url.includes(fallbackUrl)
+      ))).toBe(true);
+    });
+    expect(instances.every(instance => instance.loadSource.mock.calls.every(([url]) =>
+      !url.startsWith("/stream?url=")
+    ))).toBe(true);
   });
   it("falls back once when a direct Stalker stream fails", async () => {
     const fallbackUrl = "/stalker/play?portal=example&cmd=channel";

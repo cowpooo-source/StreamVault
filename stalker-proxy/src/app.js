@@ -13,7 +13,7 @@ function createApp(deps) {
   const { cache, auth, fetch, system, email, pool } = deps;
   const app = express();
 
-  const helpers = createProxyHelpers({ fetch });
+  const helpers = createProxyHelpers({ fetch, isUrlAllowed: deps.isUrlAllowed });
   const { 
     transferTimeout, agentFor, isUrlAllowed, fetchWithRedirectCheck, 
     summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, 

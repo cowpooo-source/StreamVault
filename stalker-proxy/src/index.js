@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") });
 const { createApp } = require("./app");
 const cache = require("./cache");
 const auth = require("./auth");
