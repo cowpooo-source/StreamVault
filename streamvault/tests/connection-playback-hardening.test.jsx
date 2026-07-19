@@ -180,6 +180,7 @@ describe("connection and playback hardening", () => {
 
     await waitFor(() => expect(instances).toHaveLength(1));
     const directPlayer = instances[0];
+    expect(directPlayer.loadSource).toHaveBeenCalledWith(expect.stringContaining("_sv_live="));
     const fatalNetworkError = { fatal: true, type: MockHls.ErrorTypes.NETWORK_ERROR, details: "manifestLoadError" };
 
     await act(async () => {

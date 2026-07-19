@@ -123,6 +123,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   }, []);
 
   function destroyPlayers() {
+    clearTimeout(loadingTimerRef.current);
+    loadingTimerRef.current = null;
     if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
     if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
     resetTrackState();
@@ -245,6 +247,13 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   }
 
   const [streamErr, setStreamErr] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const loadingTimerRef = useRef(null);
+
+  function showStreamError(error) {
+    setIsLoading(false);
+    setStreamErr(error);
+  }
   const [relayLoading, setRelayLoading] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [streamRevision, setStreamRevision] = useState(0);
@@ -323,6 +332,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     const video = videoRef.current;
     if (!video || !url) return;
     setStreamErr(null);
+    setIsLoading(true);
+    clearTimeout(loadingTimerRef.current);
     if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
       autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stall: 0, recoveryInFlight: false, corsProxyFallback: false, stalkerRefreshInFlight: false, stalkerRefreshTimes: [] };
     }
@@ -330,6 +341,12 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     video.removeAttribute("src");
 
     const loadStartTime = Date.now();
+    loadingTimerRef.current = window.setTimeout(() => {
+      if (video.readyState < 3 && !streamErr) {
+        showStreamError({ icon: "!", title: "Playback Timeout", body: "The stream did not provide playable media within 20 seconds. Try again or choose another stream." });
+        destroyPlayers();
+      }
+    }, 20_000);
 
 
     function tryCorsProxyFallback(reason, responseCode) {
@@ -373,6 +390,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         if (!refreshed?.url || generation !== playbackGenerationRef.current) return false;
         destroyPlayers();
         setStreamErr(null);
+        setIsLoading(true);
         setCurrent(prev => ({ ...prev, ...refreshed }));
         // A provider may issue the same URL again; force media-engine reinitialization.
         setStreamRevision(value => value + 1);
@@ -389,7 +407,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       const recovery = autoRecoveryRef.current;
       if (recovery.recoveryInFlight || video.ended || video.paused || playbackPhaseRef.current !== "content") return false;
       if ((recovery.stall || 0) >= 3) {
-        setStreamErr({ icon: "!", title: "Playback Stalled", body: "The stream stopped responding after several reconnect attempts. Try again or choose another stream." });
+        showStreamError({ icon: "!", title: "Playback Stalled", body: "The stream stopped responding after several reconnect attempts. Try again or choose another stream." });
         return false;
       }
       recovery.recoveryInFlight = true;
@@ -423,7 +441,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       const errorPayload = current._stalkerCmd
         ? { icon: "!", title: "Direct Playback Incompatible", body: "The provider blocked browser-direct playback after bounded retries. VPS media relay remains disabled." }
         : { icon: "!", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
-      setStreamErr(errorPayload);
+      showStreamError(errorPayload);
       if (current._stalkerCmd) reportStalkerAudit("direct_incompatible");
       trackAnalytics("playback_error", {
         error_type: "native_video_error",
@@ -437,11 +455,26 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     function startHls(u) {
       if (window.Hls?.isSupported()) {
-        const opts = { enableWorker: false, fragLoadingMaxRetry: 2 };
+        const opts = {
+          enableWorker: false,
+          fragLoadingMaxRetry: 2,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 10,
+          maxBufferLength: 30,
+          backBufferLength: 30,
+        };
         // On HTTPS pages, proxy HTTP streams through proxy
         // The proxy rewrites HLS manifests so segments also go through proxy (same IP)
         if (needsProxy(u, "hls")) {
           u = streamProxy(u);
+        }
+        // Bust stale live playlists while preserving provider segment URLs.
+        if (current.type === "live" && current._direct) {
+          try {
+            const playlistUrl = new URL(u, location.href);
+            playlistUrl.searchParams.set("_sv_live", String(Date.now()));
+            u = playlistUrl.toString();
+          } catch { /* Keep non-standard provider URLs unchanged. */ }
         }
         const hls = new window.Hls(opts);
         hlsRef.current = hls;
@@ -545,7 +578,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             body = "The provider or browser rejected direct playback after bounded retries. VPS media relay remains disabled.";
             reportStalkerAudit("direct_incompatible");
           }
-          setStreamErr({ icon: "!", title, body });
+          showStreamError({ icon: "!", title, body });
           trackAnalytics("playback_error", {
             error_type: `hls_${data.type}`,
             error_code: String(code || data.details || "unknown"),
@@ -622,7 +655,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           body = "The provider or browser rejected direct playback after bounded retries. VPS media relay remains disabled.";
           reportStalkerAudit("direct_incompatible");
         }
-        setStreamErr({ icon: "!", title, body });
+        showStreamError({ icon: "!", title, body });
         destroyPlayers();
       });
       player.attachMediaElement(video);
@@ -782,6 +815,12 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
     };
 
+    const handleReady = () => {
+      setIsLoading(false);
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    };
+
     const handlePlay = () => {
       if (current._stalkerCmd && reportedDirectGenerationRef.current !== current.streamGeneration) {
         reportedDirectGenerationRef.current = current.streamGeneration || current.url;
@@ -866,6 +905,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     };
 
     video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("loadeddata", handleReady);
     video.addEventListener("canplay", handleResumeRetry);
     video.addEventListener("durationchange", handleResumeRetry);
     video.addEventListener("timeupdate", handleTimeUpdate);
@@ -925,6 +965,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       stallRecoveryRef.current = null;
       if (video) {
         video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+        video.removeEventListener("loadeddata", handleReady);
         video.removeEventListener("canplay", handleResumeRetry);
         video.removeEventListener("durationchange", handleResumeRetry);
         video.removeEventListener("timeupdate", handleTimeUpdate);
@@ -1024,10 +1065,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (!relayed?.url) throw new Error("Compatibility relay did not return a playable URL");
       destroyPlayers();
       setStreamErr(null);
+      setIsLoading(true);
       setCurrent(relayed);
       setStreamRevision(value => value + 1);
     } catch (error) {
-      setStreamErr({ icon: "!", title: "Compatibility Relay Unavailable", body: error?.message || "The relay request failed." });
+      showStreamError({ icon: "!", title: "Compatibility Relay Unavailable", body: error?.message || "The relay request failed." });
     } finally {
       setRelayLoading(false);
     }
@@ -1052,6 +1094,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       <div className="player-wrap">
         <div style={{ position:"relative" }}>
           <video ref={videoRef} className="player-video" controls playsInline />
+          {isLoading && !streamErr && (
+            <div data-testid="player-loading" style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.35)",pointerEvents:"none"}}>
+              <div className="spinner" aria-label="Loading stream" />
+            </div>
+          )}
           {current._stalkerRelayActive && (
             <div style={{position:"absolute",top:10,left:10,zIndex:4,padding:".35rem .6rem",borderRadius:6,background:"#9a3412",color:"white",fontSize:".72rem",fontWeight:700}}>
               Compatibility relay active
