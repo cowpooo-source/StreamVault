@@ -13,10 +13,11 @@ import { JellyfinConnectStep } from './setup/JellyfinConnectStep.jsx';
 import { JellyfinAdapter } from '../adapters/jellyfin-adapter.js';
 import { PlexAdapter } from '../adapters/plex-adapter.js';
 import { getConnectionLifecycle, lifecycleFailureMessage } from '../connection-lifecycle.js';
+import SettingsView from './SettingsView.jsx';
 
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-export default function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, t: st }) {
+export default function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, onAuth, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -31,6 +32,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(() => localStorage.getItem("sv-disclaimer-accepted") === "1");
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
+  const [showSettings, setShowSettings] = useState(false);
   const set = (k,v) => setF(p => ({...p,[k]:v}));
 
   const handleFileImport = (e) => {
@@ -325,6 +327,13 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
               </div>
             </div>
             {(authUser || isGuest) && (
+              <button type="button" onClick={() => setShowSettings(true)} aria-label="Open settings"
+                style={{background:"none",border:"1px solid var(--b2)",borderRadius:6,cursor:"pointer",
+                  fontSize:".8rem",color:"var(--t3)",padding:".25rem .5rem",transition:"all .2s"}}>
+                {"\u2699"}
+              </button>
+            )}
+            {(authUser || isGuest) && (
               <button onClick={onLogout}
                 style={{background:"none",border:"1px solid var(--b2)",borderRadius:6,cursor:"pointer",
                   fontSize:".65rem",color:"var(--t3)",padding:".25rem .6rem",transition:"all .2s"}}
@@ -334,6 +343,19 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
               </button>
             )}
           </div>
+        )}
+
+        {showSettings && createPortal(
+          <div role="dialog" aria-modal="true" aria-label="Settings"
+            style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+            onClick={e => { if (e.target === e.currentTarget) setShowSettings(false); }}>
+            <div style={{position:"relative",background:"var(--s1,#0f0f1c)",border:"1px solid var(--b2)",borderRadius:14,padding:"1.5rem",width:"100%",maxWidth:620,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px rgba(0,0,0,.5)"}}>
+              <button type="button" onClick={() => setShowSettings(false)} aria-label="Close settings"
+                style={{position:"absolute",top:10,right:10,background:"none",border:"none",color:"var(--t2)",fontSize:"1.2rem",cursor:"pointer"}}>{"\u00d7"}</button>
+              <SettingsView connections={connections} authUser={authUser} activeConnId={null}
+                onAuth={onAuth} onImportFull={onImportFull} autoLoadMore={false} setAutoLoadMore={() => {}} />
+            </div>
+          </div>, document.body
         )}
 
         {authUser && (

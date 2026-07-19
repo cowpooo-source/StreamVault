@@ -11,7 +11,7 @@ vi.mock("../src/components/setup/StalkerForm.jsx", () => ({ StalkerForm: () => <
 vi.mock("../src/components/setup/ImportForm.jsx", () => ({ ImportForm: () => <div data-testid="import-form" /> }));
 vi.mock("../src/components/setup/ConnectionManagerList.jsx", () => ({ ConnectionManagerList: () => <div data-testid="conn-manager-list" /> }));
 
-global.API = "http://localhost";
+globalThis.API = "http://localhost";
 
 describe("Setup", () => {
   const defaultProps = {
@@ -51,5 +51,14 @@ describe("Setup", () => {
   it("should render Manage tab by default if connections exist", () => {
     render(<Setup {...defaultProps} connections={[{id: "1", type: "m3u"}]} />);
     expect(screen.getByTestId("conn-manager-list")).toBeInTheDocument();
+  });
+
+  it("opens settings from the profile card", () => {
+    render(<Setup {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByText("Playback & Content")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
   });
 });

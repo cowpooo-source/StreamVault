@@ -3868,6 +3868,7 @@ export default function App() {
         authUser={authUser} 
         isGuest={isGuest} 
         onLogout={handleLogout} 
+        onAuth={handleAuth}
         t={t} 
       />
             {importPrompt && createPortal(
