@@ -225,4 +225,30 @@ describe("redirect targets", () => {
 
     expect(fetch.mock.calls.some(([, options = {}]) => options.method === 'POST')).toBe(false);
   });
+  it('allows larger channel catalogs without raising other metadata limits', async () => {
+    const previousMetadataLimit = process.env.STALKER_METADATA_MAX_BYTES;
+    const previousChannelLimit = process.env.STALKER_CHANNELS_MAX_BYTES;
+    process.env.STALKER_METADATA_MAX_BYTES = '65536';
+    process.env.STALKER_CHANNELS_MAX_BYTES = '131072';
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: name => name === 'content-length' ? '100000' : null },
+      text: async () => JSON.stringify({ js: { data: [] } }),
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = { base: 'http://portal.example/', apiPath: 'load.php', headers: {} };
+
+    try {
+      await expect(helpers.portalFetchRetry(session, { action: 'get_all_channels' }))
+        .resolves.toEqual({ js: { data: [] } });
+      await expect(helpers.portalFetchRetry(session, { action: 'get_genres' }))
+        .rejects.toThrow('Portal metadata response exceeds 65536 bytes');
+    } finally {
+      if (previousMetadataLimit === undefined) delete process.env.STALKER_METADATA_MAX_BYTES;
+      else process.env.STALKER_METADATA_MAX_BYTES = previousMetadataLimit;
+      if (previousChannelLimit === undefined) delete process.env.STALKER_CHANNELS_MAX_BYTES;
+      else process.env.STALKER_CHANNELS_MAX_BYTES = previousChannelLimit;
+    }
+  });
 });

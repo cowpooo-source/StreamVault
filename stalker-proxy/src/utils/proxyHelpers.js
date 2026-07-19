@@ -39,13 +39,19 @@ function rewriteM3u8(content, baseUrl, token) {
 }
 
 // ── Proxy helper factory ──────────────────────────────────────────────────
-function stalkerMetadataLimit() {
-  const configured = Number.parseInt(process.env.STALKER_METADATA_MAX_BYTES || '', 10);
-  return Number.isFinite(configured) ? Math.min(50 * 1024 * 1024, Math.max(64 * 1024, configured)) : 20 * 1024 * 1024;
+function stalkerMetadataLimit(action) {
+  const isChannelCatalog = action === "get_all_channels";
+  const envName = isChannelCatalog ? "STALKER_CHANNELS_MAX_BYTES" : "STALKER_METADATA_MAX_BYTES";
+  const configured = Number.parseInt(process.env[envName] || "", 10);
+  const defaultLimit = isChannelCatalog ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
+  const maximumLimit = isChannelCatalog ? 100 * 1024 * 1024 : 50 * 1024 * 1024;
+  return Number.isFinite(configured)
+    ? Math.min(maximumLimit, Math.max(64 * 1024, configured))
+    : defaultLimit;
 }
 
-async function readBoundedText(response) {
-  const limit = stalkerMetadataLimit();
+async function readBoundedText(response, action) {
+  const limit = stalkerMetadataLimit(action);
   const declared = Number(response.headers?.get?.('content-length') || 0);
   if (declared > limit) throw new Error(`Portal metadata response exceeds ${limit} bytes`);
   if (!response.body?.[Symbol.asyncIterator]) {
@@ -606,7 +612,7 @@ function createProxyHelpers(deps) {
     try {
       const res = await fetch(url, { headers: session.headers, timeout, signal: requestOptions.signal, agent: agentFor(url) });
       if (res.ok) {
-        const text = await readBoundedText(res);
+        const text = await readBoundedText(res, params.action);
         return parseResponse(text, res);
       }
       if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
@@ -619,7 +625,7 @@ function createProxyHelpers(deps) {
     try {
       const res = await fetch(url, { method: "POST", headers: session.headers, body: qs, timeout, signal: requestOptions.signal, agent: agentFor(url) });
       if (res.ok) {
-        const text = await readBoundedText(res);
+        const text = await readBoundedText(res, params.action);
         return parseResponse(text, res);
       }
       if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
