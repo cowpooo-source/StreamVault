@@ -468,6 +468,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           video.play().catch(()=>{});
           syncHlsTracks();
         });
+        if (window.Hls.Events.FRAG_LOADED) {
+          hls.on(window.Hls.Events.FRAG_LOADED, () => {
+            if (hlsRef.current === hls) autoRecoveryRef.current.hls = 0;
+          });
+        }
 
         hls.on(window.Hls.Events.AUDIO_TRACKS_UPDATED, syncHlsTracks);
         hls.on(window.Hls.Events.SUBTITLE_TRACKS_UPDATED, syncHlsTracks);
@@ -740,7 +745,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     const handleTimeUpdate = () => {
       lastMediaTime = video.currentTime;
       lastMediaProgressAt = Date.now();
-      if (autoRecoveryRef.current) autoRecoveryRef.current.stall = 0;
+      autoRecoveryRef.current.hls = 0;
+      autoRecoveryRef.current.ts = 0;
+      autoRecoveryRef.current.stall = 0;
       if (Date.now() - lastProgressTime < 5000) return;
       lastProgressTime = Date.now();
       reportProgress(false, 'interval');
@@ -782,6 +789,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
       lastMediaTime = video.currentTime;
       lastMediaProgressAt = Date.now();
+      autoRecoveryRef.current.hls = 0;
+      autoRecoveryRef.current.ts = 0;
+      autoRecoveryRef.current.stall = 0;
       clearTimeout(debounceTimer);
       if (!isTracking) {
         isTracking = true;
@@ -802,11 +812,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         return;
       }
       if (Date.now() - lastMediaProgressAt < 15_000) return;
+      const bufferedAhead = video.buffered.length
+        ? video.buffered.end(video.buffered.length - 1) - video.currentTime
+        : 0;
+      if (bufferedAhead > 2) return;
       lastMediaProgressAt = Date.now();
       stallRecoveryRef.current?.("playback_progress_timeout");
     }, 5000);
     const handleStalled = () => {
-      if (!video.paused && !video.ended) lastMediaProgressAt = Math.min(lastMediaProgressAt, Date.now() - 10_000);
+      if (!video.paused && !video.ended && video.currentTime > 0.05) {
+        lastMediaProgressAt = Math.min(lastMediaProgressAt, Date.now() - 10_000);
+      }
     };
     const handlePauseOrWait = () => {
       clearTimeout(debounceTimer);

@@ -23,6 +23,7 @@ function installMockHls() {
     static Events = {
       ERROR: "error",
       MANIFEST_PARSED: "manifestParsed",
+      FRAG_LOADED: "fragLoaded",
       AUDIO_TRACKS_UPDATED: "audioTracksUpdated",
       SUBTITLE_TRACKS_UPDATED: "subtitleTracksUpdated",
       AUDIO_TRACK_SWITCHED: "audioTrackSwitched",
@@ -194,6 +195,25 @@ describe("connection and playback hardening", () => {
     });
     expect(screen.queryByText(/Playback Error/i)).not.toBeInTheDocument();
   });
+  it("resets accumulated HLS errors after a fragment loads successfully", async () => {
+    const { instances, MockHls } = installMockHls();
+    const onRefreshStream = vi.fn();
+    render(<Player
+      item={{ id: "stable-hls", name: "Stable HLS", url: "http://provider.example/live.m3u8", type: "live", streamKind: "hls", _direct: true, _stalkerCmd: "channel" }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      onRefreshStream={onRefreshStream} connType="stalker" t={key => key} isAdEligible={false}
+    />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    const failure = { fatal: true, type: MockHls.ErrorTypes.NETWORK_ERROR, details: "fragLoadError", response: { code: 500 } };
+    await act(async () => {
+      await instances[0].handlers.error(null, failure);
+      await instances[0].handlers.error(null, failure);
+      instances[0].handlers.fragLoaded();
+      await instances[0].handlers.error(null, failure);
+    });
+    expect(onRefreshStream).not.toHaveBeenCalled();
+  });
+
   it("never activates Stalker relay automatically, even when relay is available", async () => {
     const { instances, MockHls } = installMockHls();
     const fallbackUrl = "/stalker/play?contentToken=opaque&cmd=channel";
@@ -336,9 +356,10 @@ describe("connection and playback hardening", () => {
       Object.defineProperty(video, "ended", { configurable: true, value: false });
 
       await act(async () => {});
+      video.currentTime = 0.1;
       fireEvent.playing(video);
       fireEvent.stalled(video);
-      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
 
       expect(onRefreshStream).toHaveBeenCalledOnce();
       expect(onRefreshStream).toHaveBeenCalledWith(expect.objectContaining({ id: "silent-stall" }), "playback_progress_timeout");
