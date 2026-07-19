@@ -266,4 +266,57 @@ describe("connection and playback hardening", () => {
     fireEvent.error(video);
     await waitFor(() => expect(onRefreshStream).toHaveBeenCalledTimes(2));
   });
+
+  it("refreshes a direct Stalker stream when playback silently stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const directUrl = "http://provider.example/direct/channel.ts";
+      const onRefreshStream = vi.fn().mockResolvedValue({ url: directUrl, streamKind: "ts", _direct: true });
+      render(<Player
+        item={{ id: "silent-stall", name: "Silent Stall", url: directUrl, type: "live", _direct: true, _stalkerFallbackUrl: "/stalker/play?contentToken=opaque" }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        onRefreshStream={onRefreshStream} connType="stalker" t={key => key} isAdEligible={false}
+      />);
+      const video = document.querySelector("video");
+      Object.defineProperty(video, "paused", { configurable: true, value: false });
+      Object.defineProperty(video, "ended", { configurable: true, value: false });
+
+      await act(async () => {});
+      fireEvent.playing(video);
+      fireEvent.stalled(video);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+
+      expect(onRefreshStream).toHaveBeenCalledOnce();
+      expect(onRefreshStream).toHaveBeenCalledWith(expect.objectContaining({ id: "silent-stall" }), "playback_progress_timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restores VOD position after recovering from a silent stall", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<Player
+        item={{ id: "vod-stall", name: "VOD Stall", url: "http://provider.example/movie.mp4", type: "vod", streamKind: "file" }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        connType="xtream" t={key => key} isAdEligible={false}
+      />);
+      const video = document.querySelector("video");
+      Object.defineProperty(video, "paused", { configurable: true, value: false });
+      Object.defineProperty(video, "ended", { configurable: true, value: false });
+      Object.defineProperty(video, "duration", { configurable: true, value: 600 });
+      video.currentTime = 120;
+
+      await act(async () => {});
+      fireEvent.playing(video);
+      fireEvent.stalled(video);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      video.currentTime = 0;
+      fireEvent.loadedMetadata(video);
+
+      expect(video.currentTime).toBe(120);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

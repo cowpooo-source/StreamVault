@@ -228,6 +228,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const [streamRevision, setStreamRevision] = useState(0);
   const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0 });
   const playbackGenerationRef = useRef(0);
+  const stallRecoveryRef = useRef(null);
+  const recoveryPositionRef = useRef(null);
 
   useEffect(() => {
     playbackGenerationRef.current += 1;
@@ -302,7 +304,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     if (!video || !url) return;
     setStreamErr(null);
     if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
-      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stalkerFallback: false, corsProxyFallback: false, stalkerRefreshAttempted: false, stalkerRefreshTimes: [] };
+      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stall: 0, recoveryInFlight: false, stalkerFallback: false, corsProxyFallback: false, stalkerRefreshAttempted: false, stalkerRefreshTimes: [] };
     }
     destroyPlayers();
     video.removeAttribute("src");
@@ -376,6 +378,32 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         return false;
       }
     }
+
+    stallRecoveryRef.current = async (reason = "playback_stalled") => {
+      const recovery = autoRecoveryRef.current;
+      if (recovery.recoveryInFlight || video.ended || video.paused || playbackPhaseRef.current !== "content") return false;
+      if ((recovery.stall || 0) >= 3) {
+        setStreamErr({ icon: "!", title: "Playback Stalled", body: "The stream stopped responding after several reconnect attempts. Try again or choose another stream." });
+        return false;
+      }
+      recovery.recoveryInFlight = true;
+      recovery.stall = (recovery.stall || 0) + 1;
+      trackAnalytics("playback_stall_recovery", { content_id: String(current.id || ""), content_type: current.type || "live", attempt: recovery.stall, reason });
+      try {
+        if (current._direct && await requestStalkerRefresh(reason)) return true;
+        if (useStalkerFallback(reason)) return true;
+        if (hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
+        if (mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
+        if (current.type !== "live" && Number.isFinite(video.currentTime)) recoveryPositionRef.current = video.currentTime;
+        setStreamRevision(value => value + 1);
+        return true;
+      } catch (error) {
+        console.warn("Playback stall recovery failed:", error?.message || error);
+        return false;
+      } finally {
+        window.setTimeout(() => { if (autoRecoveryRef.current === recovery) recovery.recoveryInFlight = false; }, 3000);
+      }
+    };
     // Native <video> error handler (for direct src= playback)
     video.onerror = async () => {
       // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
@@ -651,6 +679,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     const handleLoadedMetadata = () => {
       if (playbackPhaseRef.current !== "content" || current.type === "live") return false;
+      if (Number.isFinite(recoveryPositionRef.current) && recoveryPositionRef.current > 0) {
+        const target = clampResumePosition(video, recoveryPositionRef.current);
+        recoveryPositionRef.current = null;
+        try { video.currentTime = target; return true; } catch { recoveryPositionRef.current = target; }
+      }
       const resumeKey = contentIdentity;
       const resumePosition = Number(current.position || 0);
       if (resumePosition <= 5) return false;
@@ -672,7 +705,12 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
     };
 
+    let lastMediaTime = video.currentTime || 0;
+    let lastMediaProgressAt = Date.now();
     const handleTimeUpdate = () => {
+      lastMediaTime = video.currentTime;
+      lastMediaProgressAt = Date.now();
+      if (autoRecoveryRef.current) autoRecoveryRef.current.stall = 0;
       if (Date.now() - lastProgressTime < 5000) return;
       lastProgressTime = Date.now();
       reportProgress(false, 'interval');
@@ -708,6 +746,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     };
 
     const handlePlay = () => {
+      lastMediaTime = video.currentTime;
+      lastMediaProgressAt = Date.now();
       clearTimeout(debounceTimer);
       if (!isTracking) {
         isTracking = true;
@@ -719,6 +759,21 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
     };
 
+    const stallCheckTimer = window.setInterval(() => {
+      if (cancelled || playbackPhaseRef.current !== "content" || video.paused || video.ended || document.hidden) return;
+      if (video.currentTime > lastMediaTime + 0.05) {
+        lastMediaTime = video.currentTime;
+        lastMediaProgressAt = Date.now();
+        if (autoRecoveryRef.current) autoRecoveryRef.current.stall = 0;
+        return;
+      }
+      if (Date.now() - lastMediaProgressAt < 15_000) return;
+      lastMediaProgressAt = Date.now();
+      stallRecoveryRef.current?.("playback_progress_timeout");
+    }, 5000);
+    const handleStalled = () => {
+      if (!video.paused && !video.ended) lastMediaProgressAt = Math.min(lastMediaProgressAt, Date.now() - 10_000);
+    };
     const handlePauseOrWait = () => {
       clearTimeout(debounceTimer);
       // Wait 1.5 seconds to confirm they actually paused and aren't just scrubbing/seeking
@@ -767,6 +822,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     video.addEventListener("playing", handlePlay);
     video.addEventListener("pause", handlePauseOrWait);
     video.addEventListener("ended", handleEnd);
+    video.addEventListener("waiting", handleStalled);
+    video.addEventListener("stalled", handleStalled);
     window.addEventListener("beforeunload", handleUnload);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
@@ -814,6 +871,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       // Cleanup heartbeat timers and listeners
       clearTimeout(debounceTimer);
       clearInterval(heartbeatTimer);
+      clearInterval(stallCheckTimer);
+      stallRecoveryRef.current = null;
       if (video) {
         video.removeEventListener("loadedmetadata", handleLoadedMetadata);
         video.removeEventListener("canplay", handleResumeRetry);
@@ -822,6 +881,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         video.removeEventListener("playing", handlePlay);
         video.removeEventListener("pause", handlePauseOrWait);
         video.removeEventListener("ended", handleEnd);
+        video.removeEventListener("waiting", handleStalled);
+        video.removeEventListener("stalled", handleStalled);
       }
       window.removeEventListener("beforeunload", handleUnload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
