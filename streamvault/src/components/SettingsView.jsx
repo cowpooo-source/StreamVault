@@ -3,8 +3,11 @@ import { API } from '../utils.js';
 import { db } from '../app-runtime.js';
 import { mergeConnectionSnapshots } from '../connection-lifecycle.js';
 
-export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore }) {
-  const [tab, setTab] = useState("general");
+export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings }) {
+  const [tab, setTab] = useState(() => {
+    const requested = new URLSearchParams(window.location.search).get("settingsTab");
+    return ["general", "account", "data"].includes(requested) ? requested : "general";
+  });
   const [importErr, setImportErr] = useState("");
   const [importOk, setImportOk] = useState("");
   const [emailInput, setEmailInput] = useState(authUser?.email || "");
@@ -173,6 +176,18 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
 
       {tab === "data" && (
         <div style={{display:"flex",flexDirection:"column",gap:"1.2rem"}}>
+          {contentMode ? (
+            <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem"}}>
+              <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Secure Backup Management</div>
+              <div style={{fontSize:".78rem",color:"var(--t2)",marginBottom:".7rem"}}>
+                The HTTP player only has access to the active connection. Export and import backups from the secure app to include every saved connection.
+              </div>
+              <button className="btn-primary" style={{padding:".5rem 1.2rem",fontSize:".82rem"}} onClick={onOpenSecureSettings}>
+                Manage Backups Securely
+              </button>
+            </div>
+          ) : (
+            <>
           {/* Export */}
           <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1rem"}}>
             <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".5rem",fontWeight:600}}>Export Data</div>
@@ -195,6 +210,8 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
             {importErr && <div className="err" style={{marginTop:".5rem",fontSize:".78rem"}}>⚠ {importErr}</div>}
             {importOk && <div style={{marginTop:".5rem",fontSize:".78rem",color:"var(--accent)"}}>{importOk}</div>}
           </div>
+            </>
+          )}
         </div>
       )}
     </div>

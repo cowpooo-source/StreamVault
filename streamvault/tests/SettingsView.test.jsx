@@ -43,4 +43,13 @@ describe("SettingsView", () => {
     fireEvent.click(screen.getByText("Download Backup (.json)"));
     expect(db.get).toHaveBeenCalledWith("sv-connections", []);
   });
+
+  it("redirects backup management to the secure app in HTTP content mode", () => {
+    const onOpenSecureSettings = vi.fn();
+    render(<SettingsView {...defaultProps} contentMode onOpenSecureSettings={onOpenSecureSettings} />);
+    fireEvent.click(screen.getByText("Data"));
+    expect(screen.queryByText("Download Backup (.json)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Manage Backups Securely"));
+    expect(onOpenSecureSettings).toHaveBeenCalledOnce();
+  });
 });

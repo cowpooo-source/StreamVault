@@ -1865,6 +1865,8 @@ export default function App() {
 
   // ── ui state
   const [section, setSection] = useState(() => {
+    const requested = new URLSearchParams(window.location.search).get("section");
+    if (["discover", "live", "vod", "series", "favs", "continue", "epg", "search", "hls", "settings"].includes(requested)) return requested;
     try { return localStorage.getItem("sv-lastSection") ? JSON.parse(localStorage.getItem("sv-lastSection")) : "live"; } catch { return "live"; }
   });
   const [cat, setCat]         = useState("All");
@@ -4200,7 +4202,9 @@ export default function App() {
         ) : section==="settings" ? (
           <SettingsView connections={connections}
             authUser={authUser} activeConnId={activeConnId}
-            onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore} />
+            onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
+            contentMode={httpContentMode}
+            onOpenSecureSettings={() => window.location.assign(`${getAppHomeUrl()}?section=settings&settingsTab=data`)} />
 
         ) : section==="hls" ? (
           <DirectHLSView />
