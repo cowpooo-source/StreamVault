@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { Readable } from 'stream';
+import crypto from 'node:crypto';
 import { createStalkerRouter } from '../src/routes/stalker';
 
 describe('Integration Tests - Routes', () => {
@@ -111,13 +112,35 @@ describe('Integration Tests - Routes', () => {
     });
   });
 
-  function authenticatedGet(app, url) {
+  function relayGrant(cmd) {
+    const expires = Date.now() + 60_000;
+    const commandHash = crypto.createHash('sha256').update(cmd).digest('hex');
+    const signature = crypto.createHmac('sha256', process.env.STALKER_RELAY_GRANT_SECRET)
+      .update(`1:${expires}:${commandHash}`)
+      .digest('base64url');
+    return `${expires}.${signature}`;
+  }
+
+  function authenticatedGet(target, path) {
     mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
-    return request(app).get(url).set('authorization', 'Bearer valid-token');
+    if (path.startsWith('/stalker/play?')) {
+      const parsed = new URL(path, 'http://test.local');
+      parsed.searchParams.set('relayGrant', relayGrant(parsed.searchParams.get('cmd') || ''));
+      path = parsed.pathname + parsed.search;
+    }
+    return request(target).get(path).set('authorization', 'Bearer valid-token');
+  }
+
+  function authenticatedPost(target, path) {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'testuser', role: 'regular' });
+    return request(target).post(path).set('authorization', 'Bearer valid-token');
   }
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.STALKER_PLAYBACK_MODE = "relay_allowed";
+    process.env.STALKER_MEDIA_RELAY_ENABLED = "true";
+    process.env.STALKER_RELAY_GRANT_SECRET = "test-relay-secret";
     mockAuth.verifyToken.mockReturnValue({ id: 1, username: "testuser", role: "regular" });
     const { tokens, playbackSessions } = require("../src/routes/player");
     tokens.clear();
@@ -422,7 +445,7 @@ describe('Integration Tests - Routes', () => {
   // --- Stalker Proxy Smoke Tests ---
   
   it('POST /stalker/validate returns 400 without params', async () => {
-    const res = await request(app).post('/stalker/validate').send({});
+    const res = await authenticatedPost(app, '/stalker/validate').send({});
     expect(res.status).toBe(400);
   });
 
@@ -477,7 +500,7 @@ describe('Integration Tests - Routes', () => {
 
     const res = await authenticatedGet(miniApp, '/stalker/vod?portal=http://p.test/c/&mac=00:11:22:33:44:55&cat=1');
     expect(res.status).toBe(200);
-    expect(res.body.items[0].url).toBe('ffmpeg http://example.com/movie.m3u8');
+    expect(res.body.items[0].url).toMatch(/^svopaque:/);
   });
 
   it('GET /stalker/play resolves series episode parameters and normalizes localhost URLs', async () => {
@@ -519,7 +542,7 @@ describe('Integration Tests - Routes', () => {
       disable_ad: 0,
       download: 0,
       force_ch_link_check: 0,
-    }));
+    }), undefined, expect.objectContaining({ signal: expect.anything() }));
     expect(res.body.url).toBe('http://portal.example.com/stream.m3u8');
   });
 
@@ -658,7 +681,7 @@ describe('Integration Tests - Routes', () => {
       disable_ad: 0,
       download: 0,
       force_ch_link_check: 0,
-    }));
+    }), undefined, expect.objectContaining({ signal: expect.anything() }));
     expect(res.body.url).toBe('http://portal.example.com/live.m3u8');
   });
 
@@ -691,7 +714,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    const res = await authenticatedPost(miniApp, '/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
     expect(res.status).toBe(200);
     expect(res.body.valid).toBe(true);
     expect(res.body.portalReachable).toBe(true);
@@ -718,7 +741,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/validate').send({ mac: '00:11:22:33:44:55' });
+    const res = await authenticatedPost(miniApp, '/stalker/validate').send({ mac: '00:11:22:33:44:55' });
     expect(res.status).toBe(400);
   });
 
@@ -738,7 +761,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/' });
+    const res = await authenticatedPost(miniApp, '/stalker/validate').send({ portal: 'http://portal.example.com/c/' });
     expect(res.status).toBe(400);
   });
 
@@ -759,7 +782,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    const res = await authenticatedPost(miniApp, '/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
     expect(res.status).toBe(200); // validate always returns 200 with result object
     expect(res.body.valid).toBe(false);
     expect(res.body.error).toBe('Upstream portal unreachable');
@@ -785,7 +808,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    const res = await authenticatedPost(miniApp, '/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
     expect(res.status).toBe(200);
     expect(res.body.valid).toBe(false);
     expect(res.body.status).toBe('expired');
@@ -812,7 +835,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    const res = await authenticatedPost(miniApp, '/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('suspended');
   });
@@ -837,7 +860,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    const res = await authenticatedPost(miniApp, '/stalker/validate').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('blocked');
     expect(res.body.error).toContain('empty info');
@@ -1129,8 +1152,8 @@ describe('Integration Tests - Routes', () => {
     miniApp.use('/stalker', createStalkerRouter(deps));
 
     const res = await authenticatedGet(miniApp, '/stalker/series/seasons?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&seriesId=123');
-    expect(res.status).toBe(502);
-    expect(res.body.error).toBe('Portal error');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ supported: false, error: 'unsupported_series_api' });
   });
 
   it('GET /stalker/series/seasons returns 400 when seriesId is missing', async () => {
@@ -1225,7 +1248,7 @@ describe('Integration Tests - Routes', () => {
     expect(portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
       series: '5',
       cmd: 'ABC',
-    }));
+    }), undefined, expect.objectContaining({ signal: expect.anything() }));
   });
 
   it('GET /stalker/series/episode/stream strips ffmpeg prefix from URL', async () => {
@@ -1386,7 +1409,7 @@ describe('Integration Tests - Routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.items).toHaveLength(2);
     expect(res.body.items[0]).toMatchObject({ id: '1', name: 'Film A', year: 2023, rating: '8.5', type: 'vod' });
-    expect(res.body.items[0].url).toBe('ffmpeg http://a.com/a.m3u8');
+    expect(res.body.items[0].url).toMatch(/^svopaque:/);
     expect(res.body.items[1].logo).toBe('http://b.com/c.jpg');
   });
 
@@ -1675,7 +1698,7 @@ describe('Integration Tests - Routes', () => {
     expect(portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
       action: 'custom_action',
       param1: 'value1',
-    }));
+    }), undefined, expect.objectContaining({ signal: expect.anything() }));
   });
 
   it('GET /stalker/api returns 502 when upstream fails', async () => {
@@ -1804,7 +1827,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/handshake').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55', serial: 'SN123' });
+    const res = await authenticatedPost(miniApp, '/stalker/handshake').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55', serial: 'SN123' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBe('handshake-token');
   });
@@ -1825,10 +1848,10 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/handshake').send({ portal: 'http://portal.example.com/c/' });
+    const res = await authenticatedPost(miniApp, '/stalker/handshake').send({ portal: 'http://portal.example.com/c/' });
     expect(res.status).toBe(400);
 
-    const res2 = await request(miniApp).post('/stalker/handshake').send({ mac: '00:11:22:33:44:55' });
+    const res2 = await authenticatedPost(miniApp, '/stalker/handshake').send({ mac: '00:11:22:33:44:55' });
     expect(res2.status).toBe(400);
   });
 
@@ -1849,7 +1872,7 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await request(miniApp).post('/stalker/handshake').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
+    const res = await authenticatedPost(miniApp, '/stalker/handshake').send({ portal: 'http://portal.example.com/c/', mac: '00:11:22:33:44:55' });
     expect(res.status).toBe(502);
     expect(res.body.error).toBe('Session creation failed');
   });

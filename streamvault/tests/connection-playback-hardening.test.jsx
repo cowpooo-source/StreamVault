@@ -105,13 +105,13 @@ describe("connection and playback hardening", () => {
       _direct: true,
       _stalkerFallbackUrl: "/stalker/play?portal=secret",
       _stalkerFallbackUsed: false,
-      _stalkerCmd: "ffmpeg http://portal/play/1",
+      _stalkerCmd: "ffmpeg http://portal/play/1?play_token=secret&keep=1",
     });
 
     expect(stable).toMatchObject({
       id: "stalker-1",
       name: "Channel",
-      _stalkerCmd: "ffmpeg http://portal/play/1",
+      _stalkerCmd: "ffmpeg http://portal/play/1?keep=1",
     });
     expect(stable).not.toHaveProperty("url");
     expect(stable).not.toHaveProperty("directUrl");
@@ -165,7 +165,7 @@ describe("connection and playback hardening", () => {
     });
     expect(screen.queryByText(/Playback Error/i)).not.toBeInTheDocument();
   });
-  it("uses the authenticated Stalker fallback for direct HLS CORS failures", async () => {
+  it("never activates Stalker relay automatically, even when relay is available", async () => {
     const { instances, MockHls } = installMockHls();
     const fallbackUrl = "/stalker/play?contentToken=opaque&cmd=channel";
     render(<Player
@@ -176,7 +176,10 @@ describe("connection and playback hardening", () => {
         type: "live",
         streamKind: "hls",
         _direct: true,
-        _stalkerFallbackUrl: fallbackUrl,
+        _stalkerCmd: "ffrt http:///ch/123",
+        _stalkerRefreshUrl: `${fallbackUrl}&resolve=1`,
+        _stalkerRelayAvailable: true,
+        _stalkerDirectOnly: false,
       }}
       channelList={[]}
       epgData={null}
@@ -189,24 +192,46 @@ describe("connection and playback hardening", () => {
     />);
 
     await waitFor(() => expect(instances).toHaveLength(1));
+    const failure = { fatal: true, type: MockHls.ErrorTypes.NETWORK_ERROR, details: "manifestLoadError" };
     await act(async () => {
-      await instances[0].handlers.error(null, {
-        fatal: true,
-        type: MockHls.ErrorTypes.NETWORK_ERROR,
-        details: "manifestLoadError",
-      });
+      await instances[0].handlers.error(null, failure);
+      await instances[0].handlers.error(null, failure);
+      await instances[0].handlers.error(null, failure);
     });
 
-    await waitFor(() => {
-      expect(instances.some(instance => instance.loadSource.mock.calls.some(([url]) =>
-        url.includes(fallbackUrl)
-      ))).toBe(true);
-    });
     expect(instances.every(instance => instance.loadSource.mock.calls.every(([url]) =>
-      !url.startsWith("/stream?url=")
+      !url.includes(fallbackUrl) && !url.startsWith("/stream?url=")
     ))).toBe(true);
+    expect(await screen.findByText("Direct Playback Incompatible")).toBeInTheDocument();
   });
-  it("falls back once when a direct Stalker stream fails", async () => {
+  it("requires confirmation and shows an indicator for emergency relay", async () => {
+    const { instances, MockHls } = installMockHls();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onRequestRelay = vi.fn().mockResolvedValue({
+      id: "stalker-relay", name: "Stalker Relay", type: "live", streamKind: "hls",
+      url: "/stalker/play?contentToken=opaque&cmd=reference&relayGrant=signed",
+      _stalkerCmd: "svopaque:reference", _stalkerRelayAvailable: true, _stalkerRelayActive: true,
+    });
+    render(<Player
+      item={{ id: "stalker-relay", name: "Stalker Relay", url: "http://provider.example/live.m3u8", type: "live", streamKind: "hls", _direct: true, _stalkerCmd: "svopaque:reference", _stalkerRefreshUrl: "/stalker/play?contentToken=opaque&cmd=reference&resolve=1", _stalkerRelayUrl: "/stalker/play?contentToken=opaque&cmd=reference", _stalkerRelayAvailable: true }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      onRequestRelay={onRequestRelay} connType="stalker" t={key => key} isAdEligible={false}
+    />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    const failure = { fatal: true, type: MockHls.ErrorTypes.NETWORK_ERROR, details: "manifestLoadError" };
+    await act(async () => {
+      await instances[0].handlers.error(null, failure);
+      await instances[0].handlers.error(null, failure);
+      await instances[0].handlers.error(null, failure);
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Use Compatibility Relay" }));
+    await waitFor(() => expect(onRequestRelay).toHaveBeenCalledTimes(1));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Compatibility relay active")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("does not relay when a direct Stalker stream fails", async () => {
     const fallbackUrl = "/stalker/play?portal=example&cmd=channel";
     const videoProps = {
       item: {
@@ -225,8 +250,8 @@ describe("connection and playback hardening", () => {
 
     fireEvent.error(video);
 
-    await waitFor(() => expect(video.src).toContain(fallbackUrl));
-    expect(screen.queryByText(/Playback Error/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Playback Error/i)).toBeInTheDocument());
+    expect(video.src).not.toContain(fallbackUrl);
   });
 
   it("reinitializes playback when Stalker refresh returns the same URL", async () => {

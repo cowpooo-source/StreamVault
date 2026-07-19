@@ -19,16 +19,28 @@ export function shouldProxyStreamUrl(url, {
   return !direct;
 }
 
+function stripPlaybackTokens(command) {
+  const value = String(command || "");
+  const prefix = value.match(/^(?:ffmpeg|ffrt)\s+/i)?.[0] || "";
+  const raw = prefix ? value.slice(prefix.length) : value;
+  try {
+    const parsed = new URL(raw);
+    for (const key of ["play_token", "token", "st", "expires", "e"]) parsed.searchParams.delete(key);
+    return prefix + parsed.toString();
+  } catch {
+    return value.replace(/([?&](?:play_token|token|st|expires|e)=)[^&\s]*/ig, "$1");
+  }
+}
+
 export function stripTransientStreamFields(item) {
   if (!item?._stalkerCmd) return item;
-  const {
-    url,
-    directUrl,
-    expiresAt,
-    _direct,
-    _stalkerFallbackUrl,
-    _stalkerFallbackUsed,
-    ...stableItem
-  } = item;
+  const stableItem = { ...item };
+  for (const field of [
+    "url", "directUrl", "expiresAt", "streamGeneration", "streamWarnings",
+    "directCapability", "_direct", "_stalkerRefreshUrl", "_stalkerFallbackUrl",
+    "_stalkerFallbackUsed", "_stalkerRelayAvailable", "_stalkerRelayUrl",
+    "_stalkerRelayActive", "_stalkerDirectOnly",
+  ]) delete stableItem[field];
+  stableItem._stalkerCmd = stripPlaybackTokens(item._stalkerCmd);
   return stableItem;
 }

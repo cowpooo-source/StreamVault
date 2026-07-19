@@ -5,7 +5,7 @@ import { getEPGNow } from "../epg.js";
 import { classifyStreamUrl } from "../stream-classifier.js";
 import { shouldProxyStreamUrl } from "../stream-routing.js";
 
-function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, t: pt, isAdEligible, connType }) {
+function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, onRequestRelay, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
@@ -17,6 +17,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const resumeRetryRef = useRef(false);
   const osdTimer   = useRef(null);
   const resumeAppliedRef = useRef(null);
+  const reportedDirectGenerationRef = useRef(null);
+  const preferredAudioRef = useRef(null);
+  const preferredSubtitleRef = useRef(null);
   const [osd, setOsd]         = useState(true);
   const [showQCH, setShowQCH] = useState(false);
   const qchTimer = useRef(null);
@@ -45,9 +48,25 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
   const contentIdentity = `${current.type || "unknown"}:${current.id || current.url || current.epgId || ""}`;
 
+  function reportStalkerAudit(event) {
+    if (!current?._stalkerCmd || !current?._stalkerRefreshUrl) return;
+    try {
+      const parsed = new URL(current._stalkerRefreshUrl, location.origin);
+      const contentToken = parsed.searchParams.get("contentToken");
+      if (!contentToken) return;
+      fetch(`${API}/stalker/audit-event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event, contentToken }),
+      }).catch(() => {});
+    } catch { /* Best-effort telemetry or browser capability probe. */ }
+  }
+
   useEffect(() => {
     resumeAppliedRef.current = null;
     resumeRetryRef.current = false;
+    preferredAudioRef.current = null;
+    preferredSubtitleRef.current = null;
   }, [contentIdentity]);
 
   const audioTrackLabel = (track, index) =>
@@ -59,6 +78,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     if (hlsRef.current) {
       hlsRef.current.audioTrack = id;
       setActiveAudio(id);
+      preferredAudioRef.current = hlsRef.current.audioTracks?.[id] || { id };
     }
   }
 
@@ -66,6 +86,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     if (hlsRef.current) {
       hlsRef.current.subtitleTrack = id;
       setActiveSub(id);
+      preferredSubtitleRef.current = id < 0 ? { id: -1 } : hlsRef.current.subtitleTracks?.[id] || { id };
     }
   }
 
@@ -90,7 +111,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         const end = seekable.end(seekable.length - 1);
         if (Number.isFinite(start)) target = Math.max(target, start);
         if (Number.isFinite(end)) target = Math.min(target, Math.max(start, end - 0.25));
-      } catch {}
+      } catch { /* Best-effort telemetry or browser capability probe. */ }
     }
     return Math.max(0, target);
   }
@@ -224,6 +245,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   }
 
   const [streamErr, setStreamErr] = useState(null);
+  const [relayLoading, setRelayLoading] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [streamRevision, setStreamRevision] = useState(0);
   const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0 });
@@ -238,10 +260,6 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   useEffect(() => {
     resumeAppliedRef.current = null;
     resumeRetryRef.current = false;
-    if (autoRecoveryRef.current) {
-      autoRecoveryRef.current.stalkerFallback = false;
-      autoRecoveryRef.current.stalkerRefreshAttempted = false;
-    }
   }, [retryKey, streamRevision]);
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState({});
@@ -289,49 +307,34 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   }, [showStats, current.url]);
 
   // Xtream and M3U streams play directly from the browser (no proxy, no byte relay).
-  // Non-direct playback still goes through the proxy for portal headers, CORS, and relay handling.
+  // Generic non-Stalker playback may use the proxy for CORS; Stalker never relays automatically.
   const origin = API || location.origin;
   const pageProtocol = location.protocol;
-  const needsProxy = (u, kind = "unknown") => shouldProxyStreamUrl(u, {
-    origin,
-    pageProtocol,
-    direct: !!current?._direct,
-    kind,
-  });
-
+  const needsProxy = (u, kind = "unknown") => {
+    if (current?._stalkerCmd) return false;
+    return shouldProxyStreamUrl(u, {
+      origin,
+      pageProtocol,
+      direct: !!current?._direct,
+      kind,
+    });
+  };
   function initPlayer(url) {
     const video = videoRef.current;
     if (!video || !url) return;
     setStreamErr(null);
     if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
-      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stall: 0, recoveryInFlight: false, stalkerFallback: false, corsProxyFallback: false, stalkerRefreshAttempted: false, stalkerRefreshTimes: [] };
+      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stall: 0, recoveryInFlight: false, corsProxyFallback: false, stalkerRefreshInFlight: false, stalkerRefreshTimes: [] };
     }
     destroyPlayers();
     video.removeAttribute("src");
 
     const loadStartTime = Date.now();
 
-    function useStalkerFallback(reason) {
-      if (!current._stalkerFallbackUrl || current._stalkerFallbackUsed || autoRecoveryRef.current.stalkerFallback) return false;
-      autoRecoveryRef.current.stalkerFallback = true;
-      trackAnalytics("stalker_direct_fallback", {
-        content_id: String(current.id || ""),
-        content_type: current.type || "live",
-        reason,
-      });
-      destroyPlayers();
-      setStreamErr(null);
-      setCurrent(prev => ({
-        ...prev,
-        url: prev._stalkerFallbackUrl,
-        _direct: false,
-        _stalkerFallbackUsed: true,
-        streamKind: prev.streamKind || classifyStreamUrl(prev._stalkerFallbackUrl, prev.type),
-      }));
-      return true;
-    }
 
-    function useCorsProxyFallback(reason, responseCode) {
+    function tryCorsProxyFallback(reason, responseCode) {
+      // Stalker direct-only playback must never turn a browser error into a VPS relay.
+      if (current._stalkerCmd || current._stalkerDirectOnly) return false;
       const streamKind = current.streamKind || classifyStreamUrl(current.url, current.type);
       if (streamKind !== "hls" || !current._direct || current._corsProxyFallbackUsed) return false;
       if (responseCode && Number(responseCode) > 0) return false;
@@ -356,15 +359,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     }
 
     async function requestStalkerRefresh(reason) {
-      if (!current._direct || autoRecoveryRef.current.stalkerRefreshAttempted || typeof onRefreshStream !== "function") return false;
+      if (!current._direct || autoRecoveryRef.current.stalkerRefreshInFlight || typeof onRefreshStream !== "function") return false;
       const now = Date.now();
       const recentRefreshes = (autoRecoveryRef.current.stalkerRefreshTimes || []).filter(time => time > now - 60_000);
       if (recentRefreshes.length >= 3) return false;
       recentRefreshes.push(now);
       autoRecoveryRef.current.stalkerRefreshTimes = recentRefreshes;
-      autoRecoveryRef.current.stalkerRefreshAttempted = true;
+      autoRecoveryRef.current.stalkerRefreshInFlight = true;
       const generation = playbackGenerationRef.current;
       try {
+        if (current.type !== "live" && Number.isFinite(video.currentTime)) recoveryPositionRef.current = video.currentTime;
         const refreshed = await onRefreshStream(current, reason);
         if (!refreshed?.url || generation !== playbackGenerationRef.current) return false;
         destroyPlayers();
@@ -376,6 +380,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       } catch (error) {
         console.warn("Stalker stream refresh failed:", error?.message || error);
         return false;
+      } finally {
+        autoRecoveryRef.current.stalkerRefreshInFlight = false;
       }
     }
 
@@ -390,8 +396,10 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       recovery.stall = (recovery.stall || 0) + 1;
       trackAnalytics("playback_stall_recovery", { content_id: String(current.id || ""), content_type: current.type || "live", attempt: recovery.stall, reason });
       try {
+        if (recovery.stall === 1 && hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
+        if (recovery.stall === 1 && mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
         if (current._direct && await requestStalkerRefresh(reason)) return true;
-        if (useStalkerFallback(reason)) return true;
+
         if (hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
         if (mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
         if (current.type !== "live" && Number.isFinite(video.currentTime)) recoveryPositionRef.current = video.currentTime;
@@ -409,11 +417,14 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
       if (hlsRef.current || mpegtsRef.current) return;
       if (current._direct && await requestStalkerRefresh("native_error")) return;
-      if (useStalkerFallback("native_error")) return;
+
       const e = video.error;
       const msgs = { 1: "Playback aborted", 2: "Network error - could not load stream", 3: "Decode error - stream format not supported", 4: "Source not supported - the stream format or URL is invalid" };
-      const errorPayload = { icon: "!", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
+      const errorPayload = current._stalkerCmd
+        ? { icon: "!", title: "Direct Playback Incompatible", body: "The provider blocked browser-direct playback after bounded retries. VPS media relay remains disabled." }
+        : { icon: "!", title: "Playback Error", body: msgs[e?.code] || "Unknown video error" };
       setStreamErr(errorPayload);
+      if (current._stalkerCmd) reportStalkerAudit("direct_incompatible");
       trackAnalytics("playback_error", {
         error_type: "native_video_error",
         error_code: String(e?.code || "unknown"),
@@ -441,6 +452,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           setActiveAudio(hls.audioTrack);
           setSubTracks(hls.subtitleTracks || []);
           setActiveSub(hls.subtitleTrack);
+          const preferredAudio = preferredAudioRef.current;
+          if (preferredAudio) {
+            const index = (hls.audioTracks || []).findIndex(track => track.id === preferredAudio.id || (track.lang && track.lang === preferredAudio.lang) || (track.name && track.name === preferredAudio.name));
+            if (index >= 0) hls.audioTrack = index;
+          }
+          const preferredSubtitle = preferredSubtitleRef.current;
+          if (preferredSubtitle?.id === -1) hls.subtitleTrack = -1;
+          else if (preferredSubtitle) {
+            const index = (hls.subtitleTracks || []).findIndex(track => track.id === preferredSubtitle.id || (track.lang && track.lang === preferredSubtitle.lang) || (track.name && track.name === preferredSubtitle.name));
+            if (index >= 0) hls.subtitleTrack = index;
+          }
         };
         hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
           video.play().catch(()=>{});
@@ -467,7 +489,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
               && !code
               && /manifest|level/i.test(String(data.details || ""))) {
             const reason = "hls_" + (data.details || "manifest_network_error");
-            if (useStalkerFallback(reason) || useCorsProxyFallback(reason)) return;
+            if (tryCorsProxyFallback(reason)) return;
           }
 
           if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && recovery.hls < 2) {
@@ -485,9 +507,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             return;
           }
           if (current._direct && await requestStalkerRefresh(`hls_${data.type || data.details || "error"}`)) return;
-          if (useStalkerFallback(`hls_${data.type || data.details || "error"}`)) return;
           if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR
-              && useCorsProxyFallback("hls_" + (data.details || "network_error"), code)) return;
+              && tryCorsProxyFallback("hls_" + (data.details || "network_error"), code)) return;
           let title = "Playback Error";
           let body;
           if (code === 404) {
@@ -513,6 +534,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             body = "Could not reach the stream server. Check your connection or try again.";
           } else {
             body = `HLS error: ${data.details}${code ? ` (HTTP ${code})` : ""}`;
+          }
+          if (current._stalkerCmd) {
+            title = "Direct Playback Incompatible";
+            body = "The provider or browser rejected direct playback after bounded retries. VPS media relay remains disabled.";
+            reportStalkerAudit("direct_incompatible");
           }
           setStreamErr({ icon: "!", title, body });
           trackAnalytics("playback_error", {
@@ -544,12 +570,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           const delay = 500 * (2 ** (recovery.ts - 1));
           window.setTimeout(() => {
             if (mpegtsRef.current !== player) return;
-            try { player.unload(); player.load(); player.play().catch(() => {}); } catch {}
+            try { player.unload(); player.load(); player.play().catch(() => {}); } catch { /* Recovery is best effort. */ }
           }, delay);
           return;
         }
         if (current._direct && await requestStalkerRefresh(`mpegts_${errType || errDetail || "error"}`)) return;
-        if (useStalkerFallback(`mpegts_${errType || errDetail || "error"}`)) return;
         const code = errInfo?.code;
         let title = "Playback Error";
         let body;
@@ -586,6 +611,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           return;
         } else {
           body = `${errType}: ${errDetail || "Unknown error"}${code ? ` (HTTP ${code})` : ""}`;
+        }
+        if (current._stalkerCmd) {
+          title = "Direct Playback Incompatible";
+          body = "The provider or browser rejected direct playback after bounded retries. VPS media relay remains disabled.";
+          reportStalkerAudit("direct_incompatible");
         }
         setStreamErr({ icon: "!", title, body });
         destroyPlayers();
@@ -746,6 +776,10 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     };
 
     const handlePlay = () => {
+      if (current._stalkerCmd && reportedDirectGenerationRef.current !== current.streamGeneration) {
+        reportedDirectGenerationRef.current = current.streamGeneration || current.url;
+        reportStalkerAudit("direct_success");
+      }
       lastMediaTime = video.currentTime;
       lastMediaProgressAt = Date.now();
       clearTimeout(debounceTimer);
@@ -965,6 +999,24 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     showOSD();
   }
 
+  async function activateCompatibilityRelay() {
+    if (typeof onRequestRelay !== "function" || relayLoading) return;
+    if (!window.confirm("Use compatibility relay? Media will temporarily pass through the VPS and may be subject to limits.")) return;
+    setRelayLoading(true);
+    try {
+      const relayed = await onRequestRelay(current);
+      if (!relayed?.url) throw new Error("Compatibility relay did not return a playable URL");
+      destroyPlayers();
+      setStreamErr(null);
+      setCurrent(relayed);
+      setStreamRevision(value => value + 1);
+    } catch (error) {
+      setStreamErr({ icon: "!", title: "Compatibility Relay Unavailable", body: error?.message || "The relay request failed." });
+    } finally {
+      setRelayLoading(false);
+    }
+  }
+
   async function pip() {
     const v = videoRef.current;
     if (!v) return;
@@ -984,6 +1036,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       <div className="player-wrap">
         <div style={{ position:"relative" }}>
           <video ref={videoRef} className="player-video" controls playsInline />
+          {current._stalkerRelayActive && (
+            <div style={{position:"absolute",top:10,left:10,zIndex:4,padding:".35rem .6rem",borderRadius:6,background:"#9a3412",color:"white",fontSize:".72rem",fontWeight:700}}>
+              Compatibility relay active
+            </div>
+          )}
           {adState?.active && (
             <div className="player-ad">
               <div className="player-ad-badge">Sponsored Ad</div>
@@ -1013,6 +1070,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                 <div style={{fontSize:".9rem",color:"var(--t1)",fontWeight:600,marginBottom:".5rem"}}>{streamErr.title}</div>
                 <div style={{fontSize:".78rem",color:"var(--t2)",lineHeight:1.6}}>{streamErr.body}</div>
                 <button className="btn-primary" style={{marginTop:"1rem"}} onClick={() => setRetryKey(key => key + 1)}>Try Again</button>
+                {current._stalkerRelayAvailable && !current._stalkerRelayActive && typeof onRequestRelay === "function" && (
+                  <button className="btn-secondary" style={{marginTop:".65rem",marginLeft:".5rem"}} disabled={relayLoading} onClick={activateCompatibilityRelay}>
+                    {relayLoading ? "Starting Relay..." : "Use Compatibility Relay"}
+                  </button>
+                )}
               </div>
             </div>
           )}

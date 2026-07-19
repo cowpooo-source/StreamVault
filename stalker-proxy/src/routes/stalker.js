@@ -1,23 +1,108 @@
 const express = require("express");
 const { Transform } = require("stream");
 const crypto = require('crypto');
-const { decryptToken } = require('../middleware/encrypt');
+const { AsyncLocalStorage } = require('async_hooks');
+const { decryptToken, encryptToken } = require('../middleware/encrypt');
 const { createContentSessionStore } = require('../services/contentSessionStore');
+const { normalizeCreateLinkResponse, classifyStreamKind: classifyNormalizedStreamKind } = require('../services/stalkerResponseNormalizer');
+const { directPlayEnabled, mediaRelayEnabled, redirectProbeMode } = require('../services/stalkerDirectPolicy');
+const { buildResolveContract } = require('../services/stalkerLinkResolver');
+const { normalizeSeasons } = require('../services/stalkerSeriesNormalizer');
+const { catchupVariants, normalizeCatchupRequest } = require('../services/stalkerCatchupResolver');
+const { sanitizeStalkerUrl, stripStalkerPlaybackTokens } = require('../services/stalkerSecurity');
+const stalkerMetrics = require('../services/stalkerAuditMetrics');
 
 const fallbackSessionStore = createContentSessionStore();
 const tokenHash = token => crypto.createHash('sha256').update(token).digest('hex');
-const directPlayEnabled = () => process.env.STALKER_DIRECT_PLAY_ENABLED !== "false";
+
 const contentSessionTtlMs = () => {
   const parsed = Number.parseInt(process.env.CONTENT_SESSION_TTL_MINUTES || '', 10);
   const minutes = Number.isFinite(parsed) ? Math.min(120, Math.max(5, parsed)) : 30;
   return minutes * 60_000;
 };
 
+const CATALOG_TTL = {
+  channels: 6 * 60 * 60_000,
+  categories: 24 * 60 * 60_000,
+  content: 12 * 60 * 60_000,
+  epg: 30 * 60_000,
+};
+const isRateLimitError = error => /(?:429|rate limit|too many request)/i.test(error?.message || "");
+const OPAQUE_COMMAND_PREFIX = 'svopaque:';
+function encodeOpaqueCommand(command) {
+  if (!command || String(command).startsWith(OPAQUE_COMMAND_PREFIX)) return command || null;
+  return OPAQUE_COMMAND_PREFIX + encryptToken(JSON.stringify({ command: String(command) }));
+}
+function decodeOpaqueCommand(command) {
+  if (!String(command || '').startsWith(OPAQUE_COMMAND_PREFIX)) return command;
+  const payload = JSON.parse(decryptToken(String(command).slice(OPAQUE_COMMAND_PREFIX.length)));
+  if (!payload?.command) throw new Error('Opaque Stalker command is invalid');
+  return payload.command;
+}
+function opaqueSeasonCommands(value, key = '') {
+  if (Array.isArray(value)) return value.map(item => opaqueSeasonCommands(item));
+  if (!value || typeof value !== 'object') return /^(?:cmd|url)$/.test(key) && typeof value === 'string' ? encodeOpaqueCommand(value) : value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, opaqueSeasonCommands(child, childKey)]));
+}
+function cacheSafeCatalog(value, key = '') {
+  if (Array.isArray(value)) return value.map(item => cacheSafeCatalog(item));
+  if (!value || typeof value !== 'object') {
+    return typeof value === 'string' && /^(?:cmd|url)$/i.test(key)
+      ? stripStalkerPlaybackTokens(value)
+      : value;
+  }
+  return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, cacheSafeCatalog(child, childKey)]));
+}
+const catalogItemLimit = () => {
+  const parsed = Number.parseInt(process.env.STALKER_CATALOG_MAX_ITEMS || '', 10);
+  return Number.isFinite(parsed) ? Math.min(20_000, Math.max(100, parsed)) : 5_000;
+};
+
 function createStalkerRouter(deps) {
-  const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
+  const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry: rawPortalFetchRetry, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
   const sessionStore = deps.contentSessionStore || (deps.cache?.db && typeof deps.cache.db.exec === 'function' ? createContentSessionStore({ db: deps.cache.db }) : fallbackSessionStore);
   const router = express.Router();
+  const requestContext = new AsyncLocalStorage();
+  const portalFetchRetry = (session, params, timeout) => rawPortalFetchRetry(
+    session,
+    params,
+    timeout,
+    { signal: requestContext.getStore()?.signal },
+  );
+  router.use((req, res, next) => {
+    const controller = new AbortController();
+    let completed = false;
+    res.once('finish', () => { completed = true; });
+    res.once('close', () => { if (!completed) controller.abort(); });
+    req.once('aborted', () => controller.abort());
+    requestContext.run({ signal: controller.signal }, next);
+  });
   const STREAM_CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS", "Access-Control-Allow-Headers": "Range, Content-Type", "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type" };
+  const safeStalkerError = error => sanitizeStalkerUrl(safeError(error));
+  const mediaTargetHeaders = (headers, portal, target) => {
+    try {
+      if (new URL(portal).host === new URL(target).host) return headers;
+    } catch { return {}; }
+    return Object.fromEntries(Object.entries(headers || {}).filter(([name]) =>
+      !["authorization", "cookie", "proxy-authorization", "referer", "x-user-agent"].includes(name.toLowerCase())));
+  };
+  const activeRelays = new Map();
+  const relayGrantSecret = () => String(process.env.STALKER_RELAY_GRANT_SECRET || "");
+  const relaySubject = req => req._stalkerCreds?.contentToken
+    ? tokenHash(req._stalkerCreds.contentToken)
+    : String(req.user?.sub || req.user?.id || "authenticated");
+  const relaySignature = (req, cmd, expires) => crypto.createHmac("sha256", relayGrantSecret())
+    .update(`${relaySubject(req)}:${expires}:${crypto.createHash("sha256").update(String(cmd)).digest("hex")}`)
+    .digest("base64url");
+  const verifyRelayGrant = (req, cmd) => {
+    const [rawExpires, signature] = String(req.query.relayGrant || "").split(".");
+    const expires = Number(rawExpires);
+    if (!relayGrantSecret() || !signature || !Number.isFinite(expires) || expires <= Date.now()) return false;
+    const expected = relaySignature(req, cmd, expires);
+    return signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  };
+  const relayLimit = () => Math.max(1, Math.min(10, Number.parseInt(process.env.STALKER_RELAY_MAX_CONCURRENCY || "2", 10) || 2));
+
 
   // Resolve stalker credentials from a content-session token or from direct query params.
   // When a contentToken is present, portal+mac are resolved server-side from the encrypted session.
@@ -67,7 +152,7 @@ function createStalkerRouter(deps) {
         }
         return next();
       } catch (e) {
-        if (e.code) return res.status(e.status || 500).json({ error: e.message, code: e.code });
+        if (e.code) return res.status(e.status || 500).json({ error: sanitizeStalkerUrl(e.message), code: e.code });
         return res.status(502).json({ error: 'Failed to verify content session', code: 'server_failure' });
       }
     }
@@ -107,38 +192,47 @@ function createStalkerRouter(deps) {
     if (contentType === "file" || contentType === "vod" || contentType === "series") return "file";
     return "unknown";
   }
-  // Resolve redirect-only CDN front doors before direct browser playback.
-  // The probe follows redirects server-side, validates every destination, and
-  // cancels the response body; media bytes still flow directly to the browser.
+  // Resolve redirect-only CDN front doors without downloading media bytes.
   async function resolveDirectMediaUrl(streamUrl, session, req) {
     if (typeof fetchWithRedirectCheck !== "function") return streamUrl;
     try {
+      const probe = redirectProbeMode();
+      if (probe === "off") return streamUrl;
       const headers = (typeof buildStalkerStreamHeaders === "function"
         ? buildStalkerStreamHeaders(session, req.headers)
         : {}) || {};
-      headers.Range = "bytes=0-";
-      const resolved = await fetchWithRedirectCheck(streamUrl, {
-        headers,
+      const probeHeaders = mediaTargetHeaders(headers, session.portal || session.base, streamUrl);
+      const options = {
+        method: probe === "head" ? "HEAD" : "GET",
+        headers: probeHeaders,
         signal: AbortSignal.timeout(8000),
-      });
+      };
+      if (probe === "range") headers.Range = "bytes=0-0";
+      const resolved = await fetchWithRedirectCheck(streamUrl, options);
       const response = resolved?.response;
       try {
         if (typeof response?.body?.destroy === "function") response.body.destroy();
         else await response?.body?.cancel?.();
       } catch {}
-      // The VPS probe and the browser are different clients. A provider may
-      // reject the VPS probe after redirecting, while still allowing the
-      // browser to fetch the validated edge URL directly.
       if (!resolved?.url || !response) return streamUrl;
       if (!response.ok && response.status !== 206 && !resolved.redirected) return streamUrl;
       return resolved.url;
     } catch (error) {
-      console.warn("Direct stream redirect resolution failed:", error?.message || error);
+      console.warn("Direct stream redirect resolution failed:", sanitizeStalkerUrl(error?.message || String(error)));
       return streamUrl;
     }
   }
-  async function createStalkerLink(session, { cmd, contentType, episode, start, end, channelId }) {
-    const requestLink = candidate => portalFetchRetry(session, {
+  async function createStalkerLink(session, { cmd, contentType, episode, episodeId, seasonId, seriesNumber, videoId, start, end, duration, programId, channelId }) {
+    let portalCalls = 0;
+    const portalCall = (...args) => {
+      if (portalCalls >= 3) throw new Error("Stalker link resolution call limit reached");
+      portalCalls += 1;
+      return portalFetchRetry(...args);
+    };
+    const hasLinkPayload = payload => Boolean(payload?.js?.cmd || payload?.js?.url || payload?.js?.stream || (payload?.js?.id && (payload?.js?.play_token || payload?.js?.playToken)));
+    const requestLink = (candidate, timing = {}) => {
+      stalkerMetrics.increment("stalker_create_link_calls_total");
+      return portalCall(session, {
       type: (contentType === "vod" || contentType === "series") ? "vod" : "itv",
       action: "create_link",
       cmd: candidate,
@@ -147,9 +241,19 @@ function createStalkerRouter(deps) {
       disable_ad: 0,
       download: 0,
       force_ch_link_check: 0,
+      episode_id: episodeId,
+      season_id: seasonId,
+      series_number: seriesNumber,
+      video_id: videoId,
       start,
       end,
+      utc: timing.utc,
+      duration: timing.duration ?? duration,
+      archive: timing.archive,
+      program_id: timing.program_id ?? programId,
+      ...timing,
     });
+    };
 
     const playableLiveUrl = candidate => {
       const clean = String(candidate || "").trim().replace(/^(?:ffmpeg|ffrt)\s+/i, "").trim();
@@ -163,14 +267,16 @@ function createStalkerRouter(deps) {
       }
     };
 
-    const existingLiveUrl = contentType === "live" ? playableLiveUrl(cmd) : null;
+    const catchup = normalizeCatchupRequest({ cmd, channelId, start, end, duration, programId });
+    const isCatchup = catchup.start != null || catchup.programId != null;
+    const existingLiveUrl = contentType === "live" && !isCatchup ? playableLiveUrl(cmd) : null;
     const numericChannelId = String(channelId || "").match(/^\d+$/)?.[0];
     const tokenizedChannelListUrl = existingLiveUrl && /\/play\/live\.php\?/i.test(existingLiveUrl)
       && /(?:[?&])play_token=/i.test(existingLiveUrl);
 
     if (contentType === "live" && numericChannelId && tokenizedChannelListUrl) {
       try {
-        const channelList = await portalFetchRetry(session, { type: "itv", action: "get_all_channels" });
+        const channelList = await portalCall(session, { type: "itv", action: "get_all_channels" });
         const selected = (channelList?.js?.data || []).find(channel => String(channel.id) === numericChannelId);
         const freshLiveUrl = playableLiveUrl(selected?.cmd);
         if (freshLiveUrl) return { js: { cmd: freshLiveUrl } };
@@ -182,6 +288,7 @@ function createStalkerRouter(deps) {
           }
         }
       } catch (error) {
+        if (isRateLimitError(error)) throw error;
         if (!existingLiveUrl) throw error;
       }
     } else if (contentType === "live" && numericChannelId) {
@@ -200,10 +307,20 @@ function createStalkerRouter(deps) {
           return { ...channelData, js: { ...channelData.js, cmd: freshLiveUrl } };
         }
       } catch (error) {
+        if (isRateLimitError(error)) throw error;
         if (!existingLiveUrl) throw error;
       }
     }
     if (existingLiveUrl) return { js: { cmd: existingLiveUrl } };
+
+    if (contentType === "live" && isCatchup) {
+      let lastData;
+      for (const timing of catchupVariants(catchup)) {
+        lastData = await requestLink(catchup.cmd || cmd, timing);
+        if (hasLinkPayload(lastData)) return lastData;
+      }
+      return lastData;
+    }
 
     const numericMedia = contentType === "vod"
       ? String(cmd || "").trim().match(/^\/media\/(\d+)\.[a-z0-9]+$/i)
@@ -213,7 +330,7 @@ function createStalkerRouter(deps) {
     // Match MAG/STB behavior by loading the selected movie before create_link.
     if (numericMedia) {
       const movieId = numericMedia[1];
-      const details = await portalFetchRetry(session, {
+      const details = await portalCall(session, {
         type: "vod",
         action: "get_ordered_list",
         category: 0,
@@ -233,36 +350,36 @@ function createStalkerRouter(deps) {
       const selected = detailItems.find(item => String(item.id) === movieId) || detailItems[0];
       if (selected?.cmd) {
         const selectedData = await requestLink(selected.cmd);
-        if (selectedData?.js?.cmd) return selectedData;
+        if (hasLinkPayload(selectedData)) return selectedData;
       }
     }
 
     let data = await requestLink(cmd);
     const isVod = contentType === "vod" || contentType === "series";
-    if (data?.js?.cmd || !isVod) return data;
+    if (hasLinkPayload(data) || !isVod) return data;
 
     // Some MAG portals return catalog paths such as /media/123.mpg but only
     // accept the traditional ffmpeg-prefixed command in create_link.
     const normalized = String(cmd || "").trim();
-    if (normalized && !/^ffmpeg\s+/i.test(normalized)) {
+    if (normalized && portalCalls < 3 && !/^ffmpeg\s+/i.test(normalized)) {
       data = await requestLink("ffmpeg " + normalized);
     }
     return data;
   }
-  router.post("/handshake", async (req, res) => {
+  router.post("/handshake", requireStalkerAuth, async (req, res) => {
     const { portal, mac, serial } = req.body;
     if (!portal || !mac) return res.status(400).end();
     try {
       const session = await getSession(portal, mac, { serial });
       res.json({ token: session.token });
-    } catch (e) { res.status(502).json({ error: safeError(e) }); }
+    } catch (e) { res.status(502).json({ error: safeStalkerError(e) }); }
   });
 
   router.get("/channels", requireStalkerAuth, async (req, res) => {
     const { portal, mac, refresh, serial } = req.query;
     if (!portal || !mac) return res.status(400).end();
-    const ck = `portal-channels:${portal}`;
-    if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(cached); }
+    const ck = cache.cacheKey(portal, mac, "channels");
+    if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(opaqueSeasonCommands(cached)); }
     try {
       const session = await getSession(portal, mac, { serial });
       const genreData = await portalFetchRetry(session, { type: "itv", action: "get_genres" });
@@ -271,58 +388,107 @@ function createStalkerRouter(deps) {
       const genreMap = Object.fromEntries(genres.map(g => [g.id, g.title]));
       const channels = (chData?.js?.data || []).map(ch => ({
         id: ch.id, name: ch.name, num: ch.number, logo: ch.logo || ch.icon || null,
-        group: genreMap[ch.tv_genre_id] || "Other", url: ch.cmd || null, epgId: ch.xmltv_id || null, type: "live"
+        group: genreMap[ch.tv_genre_id] || "Other", url: encodeOpaqueCommand(ch.cmd), epgId: ch.xmltv_id || null, type: "live"
       }));
       const data = { channels, total: channels.length, refreshed_at: Date.now() };
-      cache.set(ck, data, 86400000);
+      cache.set(ck, cacheSafeCatalog(data), CATALOG_TTL.channels);
       res.json(data);
-    } catch (e) { res.status(502).json({ error: safeError(e) }); }
+    } catch (e) { res.status(502).json({ error: safeStalkerError(e) }); }
   });
 
-  async function fetchAllPages(session, type, category, maxItems = 500) {
+  async function fetchAllPages(session, type, category, maxItems = catalogItemLimit()) {
     let data;
-    try { data = await portalFetchRetry(session, { type, action: "get_ordered_list", category, page: 1, p: 1 }); } catch { return []; }
+    try { data = await portalFetchRetry(session, { type, action: "get_ordered_list", category, page: 1, p: 1 }); }
+    catch (error) { if (isRateLimitError(error)) throw error; return []; }
     const items = data?.js?.data || [];
     if (!items.length) return [];
     const all = [...items];
     const totalPages = parseInt(data.js.total_pages || 1);
     for (let p = 2; p <= totalPages && all.length < maxItems; p++) {
-      const r = await portalFetchRetry(session, { type, action: "get_ordered_list", category, page: p, p }).catch(() => null);
+      let r;
+      try { r = await portalFetchRetry(session, { type, action: "get_ordered_list", category, page: p, p }); }
+      catch (error) { if (isRateLimitError(error)) throw error; break; }
       if (r?.js?.data) all.push(...r.js.data);
     }
     return all.slice(0, maxItems);
   }
 
   router.get("/vod/categories", requireStalkerAuth, async (req, res) => {
-    const { portal, mac, serial } = req.query;
+    const { portal, mac, serial, refresh } = req.query;
+    const ck = cache.cacheKey(portal, mac, "vod-categories");
+    if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(opaqueSeasonCommands(cached)); }
     try {
       const session = await getSession(portal, mac, { serial });
       const catData = await portalFetchRetry(session, { type: "vod", action: "get_categories" });
-      res.json({ categories: (catData?.js || []).map(c => ({ id: String(c.id), title: c.title, count: parseInt(c.count || 0) })) });
-    } catch (e) { res.status(502).json({ error: safeError(e) }); }
+      const data = { categories: (catData?.js || []).map(c => ({ id: String(c.id), title: c.title, count: parseInt(c.count || 0) })) };
+      cache.set(ck, data, CATALOG_TTL.categories);
+      res.json(data);
+    } catch (e) { res.status(502).json({ error: safeStalkerError(e) }); }
   });
 
   router.get("/vod", requireStalkerAuth, async (req, res) => {
-    const { portal, mac, cat, serial } = req.query;
+    const { portal, mac, cat, serial, refresh } = req.query;
+    const ck = cache.cacheKey(portal, mac, "vod", cat || "all");
+    if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(opaqueSeasonCommands(cached)); }
     try {
       const session = await getSession(portal, mac, { serial });
       const raw = await fetchAllPages(session, "vod", cat);
-      res.json({
+      const data = {
         items: raw.map(v => ({
           id: v.id,
           name: v.name,
           logo: v.screenshot_uri || v.cover || null,
           year: v.year,
           rating: v.rating_imdb || null,
-          url: v.cmd || null,
+          url: encodeOpaqueCommand(v.cmd),
           type: "vod",
         })),
         total: raw.length,
+      };
+      cache.set(ck, cacheSafeCatalog(data), CATALOG_TTL.content);
+      res.json(data);
+    } catch (e) { res.status(502).json({ error: safeStalkerError(e) }); }
+  });
+
+  router.post("/resolve-redirect", express.json({ limit: "2kb" }), requireStalkerAuth, async (req, res) => {
+    const sourceUrl = String(req.body?.url || "").trim();
+    if (!sourceUrl) return res.status(400).json({ error: "url required", code: "invalid_url" });
+    if (!(await isUrlAllowed(sourceUrl))) return res.status(403).json({ error: "URL not allowed", code: "url_not_allowed" });
+    try {
+      // This endpoint is control-plane only: HEAD follows redirects, and no
+      // portal authorization or response body is forwarded to the CDN.
+      const resolved = await fetchWithRedirectCheck(sourceUrl, {
+        method: "HEAD",
+        headers: { Accept: "*/*", "User-Agent": "StreamVault/1.0" },
+        signal: AbortSignal.timeout(8000),
       });
-    } catch (e) { res.status(502).json({ error: safeError(e) }); }
+      const response = resolved?.response;
+      try {
+        if (typeof response?.body?.destroy === "function") response.body.destroy();
+        else await response?.body?.cancel?.();
+      } catch {}
+      if (!resolved?.url || !response) return res.status(502).json({ error: "Redirect resolution failed", code: "redirect_resolution_failed" });
+      if (!response.ok) return res.status(422).json({ error: "Provider does not support HEAD redirect resolution", code: "redirect_resolution_unsupported", status: response.status });
+      stalkerMetrics.increment("stalker_redirect_resolutions_total");
+      res.json({ url: resolved.url, status: response.status, redirected: Boolean(resolved.redirected) });
+    } catch (error) {
+      const code = error?.code === "TOO_MANY_REDIRECTS" ? "too_many_redirects" : error?.code === "URL_NOT_ALLOWED" ? "url_not_allowed" : "redirect_resolution_failed";
+      res.status(code === "url_not_allowed" ? 403 : 502).json({ error: sanitizeStalkerUrl(error?.message || "Redirect resolution failed"), code });
+    }
+  });
+
+  router.post("/relay-grant", express.json({ limit: "2kb" }), requireStalkerAuth, (req, res) => {
+    if (!mediaRelayEnabled()) return res.status(409).json({ error: "Media relay is disabled", code: "media_relay_disabled" });
+    if (req.body?.confirm !== true || !req.body?.cmd) return res.status(400).json({ error: "Explicit confirmation and cmd are required", code: "relay_confirmation_required" });
+    if (!relayGrantSecret()) return res.status(503).json({ error: "Relay grants are not configured", code: "relay_not_configured" });
+    const expires = Date.now() + 5 * 60_000;
+    const signature = relaySignature(req, req.body.cmd, expires);
+    res.json({ relayGrant: `${expires}.${signature}`, expiresAt: expires });
   });
 
   router.get("/play", requireStalkerAuth, async (req, res) => {
+    stalkerMetrics.increment("stalker_control_requests_total");
+    if (req.query.refresh === "1") stalkerMetrics.increment("stalker_direct_refreshes_total");
     const resolved = req._stalkerCreds || resolveStalkerCreds(req);
     const { portal, mac, serial, deviceId, deviceId2 } = resolved.mode === 'content-session' && req._stalkerConfig
       ? {
@@ -335,15 +501,22 @@ function createStalkerRouter(deps) {
       : { portal: resolved.portal, mac: resolved.mac, serial: req.query.serial, deviceId: req.query.deviceId, deviceId2: req.query.deviceId2 };
     if (!portal || !mac) return res.status(400).json({ error: 'portal and mac required', code: 'malformed' });
 
-    const { cmd, content_type, episode, start, end, channel_id } = req.query;
+    const { cmd: rawCmd, content_type, episode, episode_id, season_id, series_number, video_id, start, end, duration, program_id, channel_id } = req.query;
+    const cmd = decodeOpaqueCommand(rawCmd);
     const directEnabled = directPlayEnabled();
 
     const fallbackUrl = (() => {
-      const params = new URLSearchParams({ cmd });
+      const params = new URLSearchParams({ cmd: rawCmd });
       if (content_type) params.set("content_type", content_type);
       if (episode) params.set("episode", episode);
+      if (episode_id) params.set("episode_id", episode_id);
+      if (season_id) params.set("season_id", season_id);
+      if (series_number) params.set("series_number", series_number);
+      if (video_id) params.set("video_id", video_id);
       if (start) params.set("start", start);
       if (end) params.set("end", end);
+      if (duration) params.set("duration", duration);
+      if (program_id) params.set("program_id", program_id);
       if (channel_id) params.set("channel_id", channel_id);
       if (resolved.mode === 'content-session') {
         params.set("contentToken", resolved.contentToken);
@@ -360,25 +533,79 @@ function createStalkerRouter(deps) {
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const data = await createStalkerLink(session, {
-        cmd, contentType: content_type, episode, start, end, channelId: channel_id,
+        cmd, contentType: content_type, episode, episodeId: episode_id, seasonId: season_id, seriesNumber: series_number, videoId: video_id, start, end, duration, programId: program_id, channelId: channel_id,
       });
-      const streamUrl = normalizeResolvedUrl(data?.js?.cmd, portal);
+      const normalized = normalizeCreateLinkResponse(data, {
+        portal,
+        mac,
+        contentType: content_type === "vod" || content_type === "series" ? content_type : "live",
+      });
+      const streamUrl = normalized?.url || normalizeResolvedUrl(data?.js?.cmd, portal);
+      const refreshUrl = `${fallbackUrl}${fallbackUrl.includes("?") ? "&" : "?"}resolve=1`;
+      if (req.query.resolve === "1" && normalized?.unsupportedProtocol) {
+        return res.json(buildResolveContract({
+          normalized,
+          direct: false,
+          refreshUrl,
+          relayAvailable: false,
+          warnings: ["unsupported_protocol"],
+        }));
+      }
       if (!streamUrl) throw new Error("No URL");
       if (!(await isUrlAllowed(streamUrl))) return res.status(403).end();
-      const streamKind = classifyStreamKind(streamUrl, content_type === "vod" || content_type === "series" ? "file" : "live");
+      const streamKind = normalized?.streamKind || classifyNormalizedStreamKind(streamUrl, content_type === "vod" || content_type === "series" ? "file" : "live");
       if (req.query.resolve === "1") {
         const tokenizedLiveUrl = content_type === "live" && /(?:[?&])play_token=/i.test(streamUrl);
-        const directUrl = directEnabled && !tokenizedLiveUrl && (streamKind === "hls" || streamKind === "ts")
+        const directUrl = directEnabled && !tokenizedLiveUrl && (streamKind === "hls" || streamKind === "ts" || streamKind === "file")
           ? await resolveDirectMediaUrl(streamUrl, session, req)
           : streamUrl;
-        return res.json({ url: directUrl, streamKind, direct: directEnabled, fallbackUrl, expiresAt: null });
+        const warnings = [];
+        if (directUrl.startsWith("http://")) warnings.push("cors_risk");
+        const contract = buildResolveContract({
+          normalized: { ...normalized, url: directUrl, streamKind },
+          url: directUrl,
+          direct: directEnabled,
+          refreshUrl,
+          relayAvailable: mediaRelayEnabled(),
+          relayUrl: fallbackUrl,
+          warnings,
+        });
+        stalkerMetrics.increment("stalker_direct_attempts_total");
+        return res.json(contract);
       }
 
+      if (!mediaRelayEnabled()) {
+        stalkerMetrics.increment("stalker_media_relay_blocked_total");
+        return res.status(409).json({ error: "Direct playback required; media relay is disabled", code: "media_relay_disabled" });
+      }
+      if (!verifyRelayGrant(req, rawCmd)) {
+        return res.status(403).json({ error: "Explicit relay confirmation required", code: "relay_confirmation_required" });
+      }
+      let providerKey;
+      try { providerKey = crypto.createHash("sha256").update(new URL(portal).host).digest("hex").slice(0, 16); }
+      catch { providerKey = "invalid"; }
+      const activeForProvider = activeRelays.get(providerKey) || 0;
+      if (activeForProvider >= relayLimit()) return res.status(429).json({ error: "Provider relay concurrency limit reached", code: "relay_concurrency_limited" });
+      activeRelays.set(providerKey, activeForProvider + 1);
+      let relayTimer;
+      let relayReleased = false;
+      const releaseRelay = () => {
+        if (relayReleased) return;
+        relayReleased = true;
+        if (relayTimer) clearTimeout(relayTimer);
+        const remaining = (activeRelays.get(providerKey) || 1) - 1;
+        if (remaining > 0) activeRelays.set(providerKey, remaining); else activeRelays.delete(providerKey);
+      };
+      res.once("finish", releaseRelay);
+      res.once("close", releaseRelay);
+      stalkerMetrics.increment("stalker_media_relay_requests_total");
       const watchName = req.query.name || cmd || "Unknown";
       cache.trackWatch(watchName, content_type === "vod" ? "vod" : content_type === "series" ? "series" : "live");
 
-      const fetchHeaders = buildStalkerStreamHeaders(session, req.headers);
+      const rawFetchHeaders = buildStalkerStreamHeaders(session, req.headers);
+      const fetchHeaders = mediaTargetHeaders(rawFetchHeaders, portal, streamUrl);
       const controller = new AbortController();
+      relayTimer = setTimeout(() => controller.abort(), Math.max(60_000, Number(process.env.STALKER_RELAY_MAX_DURATION_MS) || 4 * 60 * 60_000));
       const abortUpstream = () => {
         if (!res.writableEnded) controller.abort();
       };
@@ -399,6 +626,14 @@ function createStalkerRouter(deps) {
         const cr = upstream.headers.get("content-range");
         if (cr) res.set("Content-Range", cr);
       }
+      let relayedBytes = 0;
+      const maxRelayBytes = Math.max(1_000_000, Number(process.env.STALKER_RELAY_MAX_BYTES) || 2 * 1024 * 1024 * 1024);
+      upstream.body?.on?.("data", chunk => {
+        const bytes = chunk.length || 0;
+        relayedBytes += bytes;
+        stalkerMetrics.increment("stalker_media_relay_bytes_total", bytes);
+        if (relayedBytes > maxRelayBytes) controller.abort();
+      });
       const isPlaylist = ct.includes("mpegurl") || ct.includes("m3u") || upstreamUrl.endsWith(".m3u8");
       if (isPlaylist) {
         const parsedStreamUrl = new URL(upstreamUrl);
@@ -442,24 +677,28 @@ function createStalkerRouter(deps) {
       }
     } catch (e) {
       if (res.headersSent || res.destroyed) return;
-      if (/authorization|auth failed|device not found|access denied/i.test(e.message || '')) return res.status(403).json({ error: safeError(e), code: 'authorization_failure' });
-      if (/rate limit|too many request/i.test(e.message || '')) return res.status(429).json({ error: safeError(e), code: 'rate_limited' });
-      if (/expired|invalid token/i.test(e.message || '')) return res.status(410).json({ error: safeError(e), code: 'expired' });
-      res.status(502).json({ error: safeError(e), code: 'server_failure' });
+      if (/authorization|auth failed|device not found|access denied/i.test(e.message || '')) return res.status(403).json({ error: safeStalkerError(e), code: 'authorization_failure' });
+      if (/rate limit|too many request/i.test(e.message || '')) return res.status(429).json({ error: safeStalkerError(e), code: 'rate_limited' });
+      if (/expired|invalid token/i.test(e.message || '')) return res.status(410).json({ error: safeStalkerError(e), code: 'expired' });
+      res.status(502).json({ error: safeStalkerError(e), code: 'server_failure' });
     }
   });
 
   router.get("/epg", requireStalkerAuth, async (req, res) => {
-    const { portal, mac, period = 4, serial } = req.query;
+    const { portal, mac, period = 4, serial, refresh } = req.query;
+    const ck = cache.cacheKey(portal, mac, "epg", period);
+    if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(opaqueSeasonCommands(cached)); }
     try {
       const session = await getSession(portal, mac, { serial });
-      const data = await portalFetchRetry(session, { type: "itv", action: "get_epg_info", period });
+      const epgData = await portalFetchRetry(session, { type: "itv", action: "get_epg_info", period });
       const programs = {};
-      for (const [id, shows] of Object.entries(data?.js?.data || {})) {
-        if (Array.isArray(shows)) programs[id] = shows.map(s => ({ title: s.name || s.title, start: (s.start_timestamp || 0) * 1000, stop: (s.stop_timestamp || 0) * 1000 }));
+      for (const [id, shows] of Object.entries(epgData?.js?.data || {})) {
+        if (Array.isArray(shows)) programs[id] = shows.map(s => ({ id: s.id || s.program_id || null, title: s.name || s.title, start: (s.start_timestamp || 0) * 1000, stop: (s.stop_timestamp || 0) * 1000, cmd: encodeOpaqueCommand(s.cmd || s.command) }));
       }
-      res.json({ programs, refreshed_at: Date.now() });
-    } catch (e) { res.status(502).json({ error: safeError(e) }); }
+      const data = { programs, refreshed_at: Date.now() };
+      cache.set(ck, data, CATALOG_TTL.epg);
+      res.json(data);
+    } catch (e) { res.status(502).json({ error: safeStalkerError(e) }); }
   });
 
   router.get("/api", requireStalkerAuth, async (req, res) => {
@@ -470,12 +709,12 @@ function createStalkerRouter(deps) {
       const data = await portalFetchRetry(session, apiParams);
       res.json(data);
     } catch (e) {
-      console.error("API error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("API error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
-  router.post("/validate", async (req, res) => {
+  router.post("/validate", requireStalkerAuth, async (req, res) => {
     const { portal, mac, serial, deviceId, deviceId2 } = req.body;
     if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
     const start = Date.now();
@@ -573,8 +812,8 @@ function createStalkerRouter(deps) {
       result.latency = Date.now() - start;
       res.json(result);
     } catch (e) {
-      console.error("Validate error:", e.message);
-      result.error = safeError(e);
+      console.error("Validate error:", sanitizeStalkerUrl(e.message));
+      result.error = safeStalkerError(e);
       result.latency = Date.now() - start;
       res.json(result);
     }
@@ -583,6 +822,7 @@ function createStalkerRouter(deps) {
   router.get("/stream", requireStalkerAuth, async (req, res) => {
     const { portal, mac, cmd, content_type, serial, deviceId, deviceId2 } = req.query;
     if (!portal || !mac || !cmd) return res.status(400).json({ error: "portal, mac and cmd required" });
+    if (content_type && !mediaRelayEnabled()) return res.status(409).json({ error: "Direct playback required; media relay is disabled", code: "media_relay_disabled" });
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const data = await portalFetchRetry(session, {
@@ -595,41 +835,52 @@ function createStalkerRouter(deps) {
         download: 0,
         force_ch_link_check: 0,
       });
-      const streamUrl = normalizeResolvedUrl(data?.js?.cmd, portal);
+      const normalized = normalizeCreateLinkResponse(data, { portal, mac, contentType: content_type === "vod" || content_type === "series" ? content_type : "live" });
+      const streamUrl = normalized?.url || normalizeResolvedUrl(data?.js?.cmd, portal);
       if (!streamUrl) throw new Error("No stream URL returned");
       res.json({ url: streamUrl });
     } catch (e) {
-      console.error("Stream error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Stream error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
+
+  async function fetchNormalizedSeasons(session, movieId) {
+    let lastError;
+    let fallbackResult = null;
+    for (const type of ["series", "vod"]) {
+      try {
+        const data = await portalFetchRetry(session, {
+          type, action: "get_ordered_list", movie_id: movieId, page: 1, p: 1,
+        }, 20000);
+        const normalized = normalizeSeasons(data);
+        if (!fallbackResult && normalized.seasons.length) fallbackResult = normalized;
+        if (normalized.supported) return { ...normalized, sourceType: type };
+      } catch (error) {
+        if (/429|rate limit/i.test(error?.message || "")) throw error;
+        lastError = error;
+      }
+    }
+    if (fallbackResult) return { ...fallbackResult, sourceType: null, error: "unsupported_series_api" };
+    return { seasons: [], supported: false, sourceType: null, error: lastError ? "unsupported_series_api" : null };
+  }
 
   router.get("/series/seasons", requireStalkerAuth, async (req, res) => {
     const { portal, mac, seriesId, refresh, serial, deviceId, deviceId2 } = req.query;
     if (!portal || !mac || !seriesId) return res.status(400).json({ error: "portal, mac and seriesId required" });
 
     const ck = cache.cacheKey(portal, mac, "seasons", seriesId);
-    if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
+    if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(opaqueSeasonCommands(cached)); } } cache.trackCacheMiss();
 
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const movieId = seriesId.split(":")[0];
-      const data = await portalFetchRetry(session, {
-        type: "series", action: "get_ordered_list",
-        movie_id: movieId, page: 1, p: 1,
-      }, 20000);
-      const rawSeasons = data?.js?.data || [];
-      const seasons = rawSeasons.map(s => ({
-        id: s.id, name: s.name, cmd: s.cmd || "",
-        episodes: Array.isArray(s.series) ? s.series : [],
-        logo: s.screenshot_uri || s.cover || null,
-      }));
-      const result = { seasons };
-      cache.set(ck, result);
+      const result = opaqueSeasonCommands(await fetchNormalizedSeasons(session, movieId));
+      cache.set(ck, cacheSafeCatalog(result), CATALOG_TTL.content);
       res.json(result);
     } catch (e) {
-      console.error("Series seasons error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Series seasons error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
@@ -638,7 +889,7 @@ function createStalkerRouter(deps) {
     if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
     const ck = cache.cacheKey(portal, mac, "series-cats");
-    if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
+    if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(opaqueSeasonCommands(cached)); } } cache.trackCacheMiss();
 
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
@@ -649,11 +900,11 @@ function createStalkerRouter(deps) {
         count: parseInt(c.count || c.videos_count || c.censored_count || 0),
       }));
       const data = { categories };
-      cache.set(ck, data);
+      cache.set(ck, data, CATALOG_TTL.categories);
       res.json(data);
     } catch (e) {
-      console.error("Series categories error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Series categories error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
@@ -663,7 +914,7 @@ function createStalkerRouter(deps) {
     if (!cat)            return res.status(400).json({ error: "cat (category id) required" });
 
     const ck = cache.cacheKey(portal, mac, "series", cat);
-    if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(cached); } } cache.trackCacheMiss();
+    if (!refresh) { const cached = cache.get(ck); if (cached) { cache.trackCacheHit(); return res.json(opaqueSeasonCommands(cached)); } } cache.trackCacheMiss();
 
     try {
       const session  = await getSession(portal, mac, { serial, deviceId, deviceId2 });
@@ -686,11 +937,11 @@ function createStalkerRouter(deps) {
       }));
 
       const data = { items, total: items.length };
-      cache.set(ck, data);
+      cache.set(ck, cacheSafeCatalog(data), CATALOG_TTL.content);
       res.json(data);
     } catch (e) {
-      console.error("Series error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Series error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
@@ -708,15 +959,16 @@ function createStalkerRouter(deps) {
         disable_ad: 0, download: 0, force_ch_link_check: 0,
       });
 
-      const streamUrl = data?.js?.cmd;
+      const normalized = normalizeCreateLinkResponse(data, { portal, mac, contentType: "series" });
+      const streamUrl = normalized?.url || normalizeResolvedUrl(data?.js?.cmd, portal);
       if (!streamUrl) throw new Error("No stream URL returned for episode");
 
       const cleanUrl = streamUrl.replace(/^ffmpeg\s+/, "").trim();
       console.log(`Series episode stream resolved: ep=${episode}`);
       res.json({ url: cleanUrl });
     } catch (e) {
-      console.error("Series episode stream error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Series episode stream error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
@@ -729,25 +981,11 @@ function createStalkerRouter(deps) {
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const movieId = seriesId.split(":")[0];
-      const data = await portalFetchRetry(session, {
-        type: "series", action: "get_ordered_list",
-        movie_id: movieId, page: 1, p: 1,
-      }, 20000);
-
-      const rawSeasons = data?.js?.data || [];
-      const seasons = rawSeasons.map(s => ({
-        id:       s.id,
-        name:     s.name,
-        cmd:      s.cmd || "",
-        episodes: Array.isArray(s.series) ? s.series : [],
-        logo:     s.screenshot_uri || s.cover || null,
-      }));
-
-      console.log(`Series ${seriesId} seasons: ${seasons.length} (episodes: ${seasons.map(s => s.episodes.length).join(",")})`);
-      res.json({ seasons });
+      const result = opaqueSeasonCommands(await fetchNormalizedSeasons(session, movieId));
+      res.json(result);
     } catch (e) {
-      console.error("Series seasons error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Series seasons error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
@@ -768,12 +1006,12 @@ function createStalkerRouter(deps) {
       const data = await portalFetchRetry(session, params);
       res.json(data?.js || {});
     } catch (e) {
-      console.error("Profile error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Profile error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
-  router.get("/account", async (req, res) => {
+  router.get("/account", requireStalkerAuth, async (req, res) => {
     const { portal, mac, serial, deviceId, deviceId2 } = req.query;
     if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
 
@@ -784,12 +1022,27 @@ function createStalkerRouter(deps) {
       });
       res.json(data?.js || {});
     } catch (e) {
-      console.error("Account error:", e.message);
-      res.status(502).json({ error: safeError(e) });
+      console.error("Account error:", sanitizeStalkerUrl(e.message));
+      res.status(502).json({ error: safeStalkerError(e) });
     }
   });
 
-  router.get("/", async (req, res) => {
+  router.post("/audit-event", express.json({ limit: "1kb" }), requireStalkerAuth, (req, res) => {
+    const names = {
+      direct_success: "stalker_direct_successes_total",
+      direct_incompatible: "stalker_direct_incompatibilities_total",
+    };
+    const counter = names[req.body?.event];
+    if (!counter) return res.status(400).json({ error: "Unsupported audit event", code: "invalid_event" });
+    stalkerMetrics.increment(counter);
+    res.status(204).end();
+  });
+
+  router.get("/audit-metrics", requireStalkerAuth, (req, res) => {
+    res.json(stalkerMetrics.snapshot());
+  });
+
+  router.get("/", requireStalkerAuth, async (req, res) => {
     const { portal, mac, action, ...params } = req.query;
     if (!portal || !mac) return res.status(400).json({ error: "Portal and MAC required" });
     const start = Date.now();
@@ -803,7 +1056,7 @@ function createStalkerRouter(deps) {
     } catch (e) {
       const duration = Date.now() - start;
       cache.trackRequest("stalker", 502, duration);
-      res.status(502).json({ error: e.message });
+      res.status(502).json({ error: sanitizeStalkerUrl(e.message) });
     }
   });
 

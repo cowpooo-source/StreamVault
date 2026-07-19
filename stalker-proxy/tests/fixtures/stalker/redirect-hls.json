@@ -1,0 +1,1 @@
+{"initial":"http://redirect.example.test/live/fixture.m3u8","redirects":["http://edge.example.test/live/fixture.m3u8"],"final":"http://edge.example.test/live/fixture.m3u8"}

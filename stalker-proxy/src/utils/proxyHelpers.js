@@ -2,6 +2,7 @@ const http = require("http");
 const https = require("https");
 const dns = require("dns");
 const util = require("util");
+const { sanitizeStalkerUrl } = require("../services/stalkerSecurity");
 const dnsLookup = util.promisify(dns.lookup);
 
 // ── Pure URL utility functions (no closure dependencies) ──────────────────
@@ -38,6 +39,55 @@ function rewriteM3u8(content, baseUrl, token) {
 }
 
 // ── Proxy helper factory ──────────────────────────────────────────────────
+function stalkerMetadataLimit() {
+  const configured = Number.parseInt(process.env.STALKER_METADATA_MAX_BYTES || '', 10);
+  return Number.isFinite(configured) ? Math.min(50 * 1024 * 1024, Math.max(64 * 1024, configured)) : 20 * 1024 * 1024;
+}
+
+async function readBoundedText(response) {
+  const limit = stalkerMetadataLimit();
+  const declared = Number(response.headers?.get?.('content-length') || 0);
+  if (declared > limit) throw new Error(`Portal metadata response exceeds ${limit} bytes`);
+  if (!response.body?.[Symbol.asyncIterator]) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > limit) throw new Error(`Portal metadata response exceeds ${limit} bytes`);
+    return text;
+  }
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of response.body) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > limit) {
+      response.body.destroy?.();
+      throw new Error(`Portal metadata response exceeds ${limit} bytes`);
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+function buildStalkerProfileParams(session, opts = {}) {
+  const crypto = require("crypto");
+  const metrics = JSON.stringify({
+    mac: session.mac, sn: opts.serial || "", type: opts.stbType || "STB",
+    model: opts.model || "MAG250", uid: opts.uid || "", random: session.random || "",
+  });
+  const params = {
+    type: "stb", action: "get_profile", sn: opts.serial || "",
+    stb_type: opts.stbType || "MAG250", client_type: opts.clientType || "STB",
+    image_version: opts.imageVersion || "0.2.18-r23-254", video_out: opts.videoOut || "hdmi",
+    device_id: opts.deviceId || "", device_id2: opts.deviceId2 || opts.deviceId || "",
+    signature: opts.signature || session.signature || "", auth_second_step: 1,
+    hw_version: opts.hwVersion || "1.7-BD-00",
+    hw_version_2: opts.hwVersion2 || crypto.createHash("sha1").update(metrics).digest("hex"),
+    not_valid_token: opts.notValidToken || session.notValidToken || 0, metrics,
+    timestamp: opts.timestamp || Math.floor(Date.now() / 1000),
+    ver: opts.version || "ImageDescription: 0.2.18-r23-254;", num_banks: opts.numBanks || 2,
+    JsHttpRequest: "1-xml",
+  };
+  return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== null && value !== undefined));
+}
+
 function createProxyHelpers(deps) {
   const { fetch, isUrlAllowed: suppliedUrlPolicy } = deps;
 
@@ -101,13 +151,14 @@ function createProxyHelpers(deps) {
   async function fetchWithRedirectCheck(urlStr, options = {}, maxRedirects = 5) {
     const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
     let currentUrl = urlStr;
+    let redirectHeaders = { ...(options.headers || {}) };
     for (let hop = 0; hop <= maxRedirects; hop += 1) {
       if (!(await isUrlAllowed(currentUrl))) {
         const error = new Error("Redirect target is not allowed");
         error.code = "URL_NOT_ALLOWED";
         throw error;
       }
-      const response = await fetch(currentUrl, { ...options, redirect: "manual" });
+      const response = await fetch(currentUrl, { ...options, headers: redirectHeaders, redirect: "manual" });
       if (!REDIRECT_STATUSES.has(response.status)) {
         return { response, url: currentUrl, redirected: currentUrl !== urlStr };
       }
@@ -123,7 +174,12 @@ function createProxyHelpers(deps) {
         error.code = "INVALID_REDIRECT";
         throw error;
       }
-      currentUrl = new URL(location, currentUrl).toString();
+      const nextUrl = new URL(location, currentUrl).toString();
+      if (new URL(nextUrl).host !== new URL(currentUrl).host) {
+        redirectHeaders = Object.fromEntries(Object.entries(redirectHeaders).filter(([name]) =>
+          !["authorization", "cookie", "proxy-authorization", "referer", "x-user-agent"].includes(name.toLowerCase())));
+      }
+      currentUrl = nextUrl;
     }
     const error = new Error("Too many redirects");
     error.code = "TOO_MANY_REDIRECTS";
@@ -134,7 +190,7 @@ function createProxyHelpers(deps) {
   function safeError(e) {
     const msg = e?.message || "Unknown error";
     if (SAFE_PREFIXES.some(p => msg.startsWith(p))) return msg;
-    console.error("Internal error:", msg);
+    console.error("Internal error:", sanitizeStalkerUrl(msg));
     return "Request failed";
   }
 
@@ -161,6 +217,7 @@ function createProxyHelpers(deps) {
   const sessionCache = new Map();
   const inFlightSessions = new Map();
   const portalCooldowns = new Map();
+  const activeMetadataRequests = new Map();
   const handshakeFailureCache = new Map();
   const HANDSHAKE_FAILURE_CACHE_MAX = 500;
   const SESSION_TTL_MS = 30 * 1000;
@@ -172,7 +229,7 @@ function createProxyHelpers(deps) {
       const oldest = pathCache.keys().next().value;
       pathCache.delete(oldest);
     }
-    pathCache.set(key, value);
+    pathCache.set(key, { ...value, expiresAt: Date.now() + 24 * 60 * 60_000 });
   }
 
   function getCachedSession(portal, mac, opts = {}) {
@@ -187,6 +244,7 @@ function createProxyHelpers(deps) {
     return {
       token: cached.token,
       random: cached.random || null,
+      notValidToken: cached.notValidToken ?? null,
       base: cached.base,
       apiPath: cached.apiPath,
       portal,
@@ -202,6 +260,7 @@ function createProxyHelpers(deps) {
     sessionCache.set(sessionCacheKey(portal, mac, normalized), {
       token: result.token,
       random: result.random || null,
+      notValidToken: result.notValidToken ?? null,
       base: result.base,
       apiPath: result.apiPath,
       expiresAt: Date.now() + SESSION_TTL_MS,
@@ -209,6 +268,7 @@ function createProxyHelpers(deps) {
     return {
       token: result.token,
       random: result.random || null,
+      notValidToken: result.notValidToken ?? null,
       base: result.base,
       apiPath: result.apiPath,
       portal,
@@ -324,7 +384,7 @@ function createProxyHelpers(deps) {
         agent: agentFor(url),
       });
       if (!res.ok) return null;
-      const js = await res.text();
+      const js = await readBoundedText(res);
 
       let m = js.match(/this\.ajax_loader\s*=\s*this\.portal_protocol\s*\+\s*"[^"]*"\s*\+\s*this\.portal_ip\s*\+\s*"\/"\s*\+\s*this\.portal_path\s*\+\s*"\/([^"]+)"/);
       if (m) return m[1];
@@ -352,7 +412,8 @@ function createProxyHelpers(deps) {
         const data = await res.json();
         const token = data?.js?.token;
         const random = data?.js?.random || null;
-        if (token) return { token, random, base, apiPath };
+        const notValidToken = data?.js?.not_valid_token ?? null;
+        if (token) return { token, random, notValidToken, base, apiPath };
       }
     } catch(e) { if (e.code === "RATE_LIMITED") throw e; /* other errors: skip */ }
     return null;
@@ -360,40 +421,22 @@ function createProxyHelpers(deps) {
 
   // Complete the portal device-auth step required by newer Stalker portals.
   // Some portals reject catalog requests until metrics and hw_version_2 are posted.
-  async function completeDeviceAuth(session, opts) {
+  async function completeDeviceAuth(session, opts = {}, requestOptions = {}) {
     try {
-      const crypto = require("crypto");
-      const metrics = JSON.stringify({
-        mac: session.mac,
-        sn: opts.serial || "",
-        type: "STB",
-        model: "MAG250",
-        uid: "",
-        random: session.random || "",
-      });
-      const params = {
-        type: "stb",
-        action: "get_profile",
-        auth_second_step: 1,
-        metrics,
-        hw_version_2: crypto.createHash("sha1").update(metrics).digest("hex"),
-        JsHttpRequest: "1-xml",
-      };
-      if (opts.serial) params.sn = opts.serial;
-      if (opts.deviceId) params.device_id = opts.deviceId;
-      if (opts.deviceId2 || opts.deviceId) params.device_id2 = opts.deviceId2 || opts.deviceId;
+      const params = buildStalkerProfileParams(session, opts);
       const qs = new URLSearchParams(params).toString();
       const url = `${session.base}${session.apiPath}?JsHttpRequest=1-xml`;
       const headers = { ...session.headers, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" };
-      const response = await fetch(url, { method: "POST", headers, body: qs, timeout: 8000, agent: agentFor(url) });
-      const body = await response.text();
+      const response = await fetch(url, { method: "POST", headers, body: qs, timeout: 8000, signal: requestOptions.signal, agent: agentFor(url) });
+      const body = await readBoundedText(response);
       if (!response.ok || /Authorization failed|Device not found|Access denied|not supported|missing metrics/i.test(body)) {
         console.warn("Stalker device authentication was rejected");
         return false;
       }
       return true;
     } catch (error) {
-      console.warn("Stalker device authentication failed:", error.message);
+      if (requestOptions.signal?.aborted) throw error;
+      console.warn("Stalker device authentication failed:", sanitizeStalkerUrl(error.message));
       return false;
     }
   }
@@ -403,7 +446,8 @@ function createProxyHelpers(deps) {
     const normalized = normalizeStalkerOpts(opts);
     const key = cacheKey(portal, mac);
     const sessionKey = sessionCacheKey(portal, mac, normalized);
-    const cached = pathCache.get(key);
+    let cached = pathCache.get(key);
+    if (cached?.expiresAt <= Date.now()) { pathCache.delete(key); cached = null; }
 
     if (config.forceRefresh) {
       sessionCache.delete(sessionKey);
@@ -431,7 +475,6 @@ function createProxyHelpers(deps) {
     }
 
     const loader = (async () => {
-      let sawRateLimit = false;
 
       // If path is known, do a single handshake on the known path
       if (cached) {
@@ -441,6 +484,7 @@ function createProxyHelpers(deps) {
             const session = storeSession(portal, mac, normalized, {
               token: result.token,
               random: result.random,
+              notValidToken: result.notValidToken,
               base: cached.base,
               apiPath: cached.apiPath,
             });
@@ -450,10 +494,8 @@ function createProxyHelpers(deps) {
           pathCache.delete(key);
         } catch (e) {
           if (e.code === "RATE_LIMITED") {
-            sawRateLimit = true;
-            pathCache.delete(key);
-          } else {
-            throw e;
+            setPortalCooldown(portal, mac, normalized);
+            throw new Error("Portal rate limited (429). Try again in a minute.");
           }
         }
       }
@@ -479,6 +521,7 @@ function createProxyHelpers(deps) {
               const session = storeSession(portal, mac, normalized, {
                 token: result.token,
                 random: result.random,
+                notValidToken: result.notValidToken,
                 base,
                 apiPath: path,
               });
@@ -486,16 +529,12 @@ function createProxyHelpers(deps) {
             }
           } catch(e) {
             if (e.code === "RATE_LIMITED") {
-              sawRateLimit = true;
-              continue;
+              setPortalCooldown(portal, mac, normalized);
+              throw new Error("Portal rate limited (429). Try again in a minute.");
             }
             throw e;
           }
         }
-      }
-      if (sawRateLimit) {
-        setPortalCooldown(portal, mac, normalized);
-        throw new Error("Portal rate limited (429). Try again in a minute.");
       }
       throw new Error("Handshake failed: could not obtain token from portal");
     })();
@@ -523,28 +562,34 @@ function createProxyHelpers(deps) {
   }
 
   // portalFetch with automatic token refresh on auth failure
-  async function portalFetchRetry(session, params, timeout) {
-    let result = await portalFetch(session, params, timeout);
+  async function portalFetchRetry(session, params, timeout, requestOptions = {}) {
+    let result = await portalFetch(session, params, timeout, requestOptions);
     if (result === null) {
       // Authenticate lazily because some legacy portals invalidate an otherwise
       // valid handshake token when they receive the optional second step.
-      const authenticated = await completeDeviceAuth(session, session.opts || {});
-      if (authenticated) result = await portalFetch(session, params, timeout);
+      const authenticated = await completeDeviceAuth(session, session.opts || {}, requestOptions);
+      if (authenticated) result = await portalFetch(session, params, timeout, requestOptions);
     }
     if (result === null) {
       // Restore a clean token if optional device authentication was rejected.
       const fresh = await session.refresh();
       Object.assign(session, fresh);
-      result = await portalFetch(session, params, timeout);
+      result = await portalFetch(session, params, timeout, requestOptions);
     }
     if (result === null) throw new Error(`Authorization failed for ${params.action || "unknown"}`);
     return result;
   }
 
   // Make an API call using the resolved session
-  async function portalFetch(session, params, timeout = 12000) {
+  async function portalFetch(session, params, timeout = 12000, requestOptions = {}) {
     const qs = new URLSearchParams({ ...params, JsHttpRequest: "1-xml" }).toString();
     const url = `${session.base}${session.apiPath}?${qs}`;
+    const providerKey = new URL(session.base).host;
+    const active = activeMetadataRequests.get(providerKey) || 0;
+    const maxConcurrent = Math.max(1, Math.min(20, Number.parseInt(process.env.STALKER_METADATA_MAX_CONCURRENCY || "6", 10) || 6));
+    if (active >= maxConcurrent) throw new Error("Portal metadata concurrency limit reached");
+    activeMetadataRequests.set(providerKey, active + 1);
+    try {
 
     function parseResponse(text, res) {
       if (text.includes("Authorization failed") || text.includes("Device not found") || text.includes("Access denied")) return null; // token/auth expired or invalid
@@ -559,30 +604,34 @@ function createProxyHelpers(deps) {
     }
 
     try {
-      const res = await fetch(url, { headers: session.headers, timeout, agent: agentFor(url) });
+      const res = await fetch(url, { headers: session.headers, timeout, signal: requestOptions.signal, agent: agentFor(url) });
       if (res.ok) {
-        const text = await res.text();
+        const text = await readBoundedText(res);
         return parseResponse(text, res);
       }
       if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
       if (res.status >= 500) throw new Error(`Portal server error (${res.status})`);
     } catch (e) {
-      if (e.message.includes("Portal")) throw e; // re-throw our own errors
+      if (requestOptions.signal?.aborted || e.message.includes("Portal")) throw e; // re-throw aborts and our own errors
     }
 
     // Try POST as fallback
     try {
-      const res = await fetch(url, { method: "POST", headers: session.headers, body: qs, timeout, agent: agentFor(url) });
+      const res = await fetch(url, { method: "POST", headers: session.headers, body: qs, timeout, signal: requestOptions.signal, agent: agentFor(url) });
       if (res.ok) {
-        const text = await res.text();
+        const text = await readBoundedText(res);
         return parseResponse(text, res);
       }
       if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
     } catch (e) {
-      if (e.message.includes("Portal")) throw e;
+      if (requestOptions.signal?.aborted || e.message.includes("Portal")) throw e;
     }
 
     throw new Error(`Portal request failed: ${params.action || "unknown"}`);
+    } finally {
+      const remaining = (activeMetadataRequests.get(providerKey) || 1) - 1;
+      if (remaining > 0) activeMetadataRequests.set(providerKey, remaining); else activeMetadataRequests.delete(providerKey);
+    }
   }
 
   function resetProxyHelperStateForTests() {
@@ -590,6 +639,7 @@ function createProxyHelpers(deps) {
     sessionCache.clear();
     inFlightSessions.clear();
     portalCooldowns.clear();
+    activeMetadataRequests.clear();
     handshakeFailureCache.clear();
   }
 
@@ -647,6 +697,7 @@ function createProxyHelpers(deps) {
     cacheKey,
     summarizeUpstreamHeaders,
     buildStalkerStreamHeaders,
+    buildStalkerProfileParams,
     safeError,
     getSession,
     portalFetchRetry,
@@ -658,6 +709,7 @@ function createProxyHelpers(deps) {
 }
 
 module.exports = { createProxyHelpers };
+module.exports.buildStalkerProfileParams = buildStalkerProfileParams;
 module.exports.resolveUrl     = resolveUrl;
 module.exports.rewriteMediaUrl = rewriteMediaUrl;
 module.exports.rewriteM3u8   = rewriteM3u8;

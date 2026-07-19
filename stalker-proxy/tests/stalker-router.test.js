@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { Readable } from 'stream';
+import crypto from 'node:crypto';
 import { createStalkerRouter } from '../src/routes/stalker';
 import { encryptToken } from '../src/middleware/encrypt';
 
@@ -38,9 +39,22 @@ function makeApp(deps) {
   return app;
 }
 
+function relayGrant(cmd = 'ABC') {
+  const expires = Date.now() + 60_000;
+  const commandHash = crypto.createHash('sha256').update(cmd).digest('hex');
+  const signature = crypto.createHmac('sha256', process.env.STALKER_RELAY_GRANT_SECRET)
+    .update(`authenticated:${expires}:${commandHash}`)
+    .digest('base64url');
+  return `${expires}.${signature}`;
+}
+
 describe('createStalkerRouter - unit', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.STALKER_PLAYBACK_MODE = 'relay_allowed';
+    process.env.STALKER_MEDIA_RELAY_ENABLED = 'true';
+    process.env.STALKER_RELAY_GRANT_SECRET = 'test-relay-secret';
+    process.env.TOKEN_MASTER_KEY = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
   });
 
   // --- handshake ---
@@ -207,6 +221,80 @@ describe('createStalkerRouter - unit', () => {
 
   // --- play ---
 
+  it("POST /stalker/resolve-redirect returns the validated edge URL without relaying bytes", async () => {
+    const destroy = vi.fn();
+    const deps = makeDeps({
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { status: 200, ok: true, body: { destroy } },
+        url: "http://edge.example/stream.m3u8",
+        redirected: true,
+      }),
+    });
+    const res = await request(makeApp(deps))
+      .post("/stalker/resolve-redirect")
+      .send({ url: "http://front.example/stream.m3u8" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ url: "http://edge.example/stream.m3u8", redirected: true });
+    expect(deps.fetchWithRedirectCheck).toHaveBeenCalledWith(
+      "http://front.example/stream.m3u8",
+      expect.objectContaining({ method: "HEAD", headers: { Accept: "*/*", "User-Agent": "StreamVault/1.0" } }),
+    );
+    expect(destroy).toHaveBeenCalled();
+  });
+
+  it("returns an explicit compatibility error when a provider rejects HEAD", async () => {
+    const deps = makeDeps({
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: false, status: 405, body: { destroy: vi.fn() } },
+        url: "http://front.example/stream.m3u8",
+        redirected: false,
+      }),
+    });
+    const res = await request(makeApp(deps))
+      .post("/stalker/resolve-redirect")
+      .send({ url: "http://front.example/stream.m3u8" });
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({ code: "redirect_resolution_unsupported", status: 405 });
+  });
+
+  it("returns unsupported protocols as a non-direct contract", async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: "t", headers: {} }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: "rtsp://provider.example/live" } }),
+    });
+    const res = await request(makeApp(deps)).get("/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&resolve=1");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ direct: false, directCapability: "unsupported_protocol", warnings: ["unsupported_protocol"] });
+    expect(deps.isUrlAllowed).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsigned emergency relay requests", async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: "t", headers: {} }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: "http://cdn.example/live.ts" } }),
+    });
+    const res = await request(makeApp(deps)).get("/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC");
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("relay_confirmation_required");
+    expect(deps.fetchWithRedirectCheck).not.toHaveBeenCalled();
+  });
+
+  it("tries at most three catch-up parameter strategies", async () => {
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: {} })
+      .mockResolvedValueOnce({ js: {} })
+      .mockResolvedValueOnce({ js: { cmd: "http://cdn.example/archive.m3u8" } });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: "t", headers: {} }),
+      portalFetchRetry,
+    });
+    const res = await request(makeApp(deps)).get("/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&content_type=live&start=100&end=160&program_id=9&resolve=1");
+    expect(res.status).toBe(200);
+    expect(portalFetchRetry).toHaveBeenCalledTimes(3);
+    expect(portalFetchRetry.mock.calls[1][1]).toMatchObject({ utc: 100, duration: 60 });
+    expect(portalFetchRetry.mock.calls[2][1]).toMatchObject({ archive: 1, program_id: '9' });
+  });
+
   it('GET /stalker/play with resolve=1 returns metadata for direct playback', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
@@ -221,7 +309,7 @@ describe('createStalkerRouter - unit', () => {
       direct: true,
       expiresAt: null,
     });
-    expect(res.body.fallbackUrl).toContain('/stalker/play?');
+    expect(res.body.refreshUrl).toContain('/stalker/play?');
   });
 
   it('GET /stalker/play resolves CDN redirects before direct HLS playback', async () => {
@@ -241,7 +329,7 @@ describe('createStalkerRouter - unit', () => {
     expect(res.body.url).toBe('http://edge34358171d.akamaix.com/path/mono.m3u8?token=t');
     expect(deps.fetchWithRedirectCheck).toHaveBeenCalledWith(
       'http://cloudedgeserver01.cloudlivecdn.com/path/mono.m3u8?token=t',
-      expect.objectContaining({ headers: expect.objectContaining({ Range: 'bytes=0-' }) }),
+      expect.objectContaining({ method: 'HEAD' }),
     );
     expect(cancel).toHaveBeenCalled();
   });
@@ -285,7 +373,7 @@ describe('createStalkerRouter - unit', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.url).toBe(freshUrl);
-    expect(res.body.fallbackUrl).toContain('channel_id=1433159');
+    expect(res.body.refreshUrl).toContain('channel_id=1433159');
     expect(deps.fetchWithRedirectCheck).not.toHaveBeenCalled();
     expect(portalFetchRetry).toHaveBeenCalledTimes(1);
     expect(portalFetchRetry.mock.calls[0][1]).toMatchObject({
@@ -331,7 +419,7 @@ describe('createStalkerRouter - unit', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(res.body.fallbackUrl).toContain('channel_id=11665');
+    expect(res.body.refreshUrl).toContain('channel_id=11665');
     expect(portalFetchRetry.mock.calls[0][1]).toMatchObject({
       action: 'create_link',
       cmd: 'ffrt http:///ch/11665',
@@ -408,9 +496,9 @@ describe('createStalkerRouter - unit', () => {
       '00:1A:79:AA:BB:CC',
       expect.objectContaining({ serial: 'SN1' }),
     );
-    expect(res.body.fallbackUrl).toContain('contentToken=scoped-token');
-    expect(res.body.fallbackUrl).not.toContain('portal=');
-    expect(res.body.fallbackUrl).not.toContain('mac=');
+    expect(res.body.refreshUrl).toContain('contentToken=scoped-token');
+    expect(res.body.refreshUrl).not.toContain('portal=');
+    expect(res.body.refreshUrl).not.toContain('mac=');
   });
 
   it('GET /stalker/play deletes and rejects an expired content session', async () => {
@@ -471,7 +559,7 @@ describe('createStalkerRouter - unit', () => {
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
     });
     const app = makeApp(deps);
-    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&content_type=live');
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&content_type=live&relayGrant=' + encodeURIComponent(relayGrant()) );
     expect(res.status).toBe(200);
     expect(deps.cache.trackWatch).toHaveBeenCalledWith('ABC', 'live');
   });
@@ -492,7 +580,7 @@ describe('createStalkerRouter - unit', () => {
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
     });
     const app = makeApp(deps);
-    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC');
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(relayGrant()) );
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/video/);
   });
@@ -517,7 +605,7 @@ describe('createStalkerRouter - unit', () => {
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({ contentType: 'application/vnd.apple.mpegurl' }),
     });
     const app = makeApp(deps);
-    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC');
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(relayGrant()) );
     expect(res.status).toBe(200);
     expect(res.text).toContain('/stream?url=');
     expect(res.text).toContain(encodeURIComponent('http://cdn.com/segment.ts'));
@@ -536,7 +624,7 @@ describe('createStalkerRouter - unit', () => {
       summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
     });
     const app = makeApp(deps);
-    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC');
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(relayGrant()) );
     expect(res.status).toBe(500);
     expect(res.body.error).toContain('500');
   });
@@ -588,7 +676,8 @@ describe('createStalkerRouter - unit', () => {
     const res = await request(app).get('/stalker/series/seasons?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&seriesId=123');
     expect(res.status).toBe(200);
     expect(res.body.seasons).toHaveLength(1);
-    expect(res.body.seasons[0]).toMatchObject({ id: 's1', name: 'Season 1', cmd: '/s1.m3u8', logo: 'http://cdn/s1.jpg' });
+    expect(res.body.seasons[0]).toMatchObject({ id: 's1', name: 'Season 1', logo: 'http://cdn/s1.jpg' });
+    expect(res.body.seasons[0].cmd).toMatch(/^svopaque:/);
     expect(res.body.seasons[0].episodes).toHaveLength(2);
   });
 
@@ -618,8 +707,8 @@ describe('createStalkerRouter - unit', () => {
     });
     const app = makeApp(deps);
     const res = await request(app).get('/stalker/series/seasons?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&seriesId=123');
-    expect(res.status).toBe(502);
-    expect(res.body.error).toBe('Series portal error');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ supported: false, error: 'unsupported_series_api' });
   });
 
   it('GET /stalker/series/seasons uses cache when available and refresh not set', async () => {
@@ -726,9 +815,30 @@ describe('createStalkerRouter - unit', () => {
     const app = makeApp(deps);
     const res = await request(app).get('/stalker/vod?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cat=1');
     expect(res.status).toBe(200);
-    expect(res.body.items[0]).toMatchObject({ id: 'v1', name: 'Movie One', year: 2024, rating: '8.5', url: 'ffmpeg http://cdn/m1.m3u8', logo: 'http://cdn/c1.jpg', type: 'vod' });
+    expect(res.body.items[0]).toMatchObject({ id: 'v1', name: 'Movie One', year: 2024, rating: '8.5', logo: 'http://cdn/c1.jpg', type: 'vod' });
+    expect(res.body.items[0].url).toMatch(/^svopaque:/);
+    expect(res.body.items[0].url).not.toContain('cdn/m1');
     expect(res.body.items[1]).toMatchObject({ id: 'v2', logo: 'http://cdn/c2.jpg' });
     expect(res.body.total).toBe(2);
+  });
+
+  it("round-trips an opaque catalog command without exposing the provider URL", async () => {
+    const portalFetchRetry = vi.fn()
+      .mockResolvedValueOnce({ js: { data: [{ id: "v1", name: "Movie", cmd: "ffmpeg http://private.example/movie.mp4?play_token=secret" }], total_pages: 1 } })
+      .mockResolvedValueOnce({ js: { cmd: "http://cdn.example/movie.mp4" } });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: "t", headers: {} }),
+      portalFetchRetry,
+    });
+    const app = makeApp(deps);
+    const catalog = await request(app).get("/stalker/vod?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cat=1");
+    const reference = catalog.body.items[0].url;
+    expect(reference).toMatch(/^svopaque:/);
+    expect(reference).not.toContain("private.example");
+
+    const playback = await request(app).get("/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&content_type=vod&resolve=1&cmd=" + encodeURIComponent(reference));
+    expect(playback.status).toBe(200);
+    expect(portalFetchRetry.mock.calls[1][1].cmd).toBe("ffmpeg http://private.example/movie.mp4?play_token=secret");
   });
 
   // --- series episode stream ---
@@ -757,7 +867,7 @@ describe('createStalkerRouter - unit', () => {
     expect(res.body.js.result).toBe('ok');
     expect(deps.portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
       action: 'get_ichannels_via_api',
-    }));
+    }), undefined, expect.objectContaining({ signal: expect.anything() }));
   });
 
   // --- root passthrough ---
@@ -850,5 +960,17 @@ describe('createStalkerRouter - unit', () => {
       cmd: portalCommand,
     });
     expect(fetchWithRedirectCheck).toHaveBeenCalledWith(edgeUrl, expect.any(Object));
+  });
+
+  it('rejects media relay when direct-only mode is enabled', async () => {
+    process.env.STALKER_PLAYBACK_MODE = 'direct_only';
+    process.env.STALKER_MEDIA_RELAY_ENABLED = 'false';
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.example/live.ts' } }),
+    });
+    const res = await request(makeApp(deps)).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(relayGrant()) );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('media_relay_disabled');
   });
 });

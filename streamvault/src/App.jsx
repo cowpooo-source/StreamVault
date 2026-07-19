@@ -1151,9 +1151,13 @@ function parseEPGDate(s) {
 
 // uid is now imported from utils.js
 
+const STALKER_LIVE_TTL_MS = 6 * 60 * 60_000;
+const STALKER_CATEGORY_TTL_MS = 24 * 60 * 60_000;
+const STALKER_CATALOG_TTL_MS = 12 * 60 * 60_000;
+
 // Transform stalker item URL: extract direct HTTP URLs, store original as _stalkerCmd
 function transformStalkerItem(item, portalBase) {
-  const raw = (item.url || "").replace(/^ffmpeg\s+/, "").trim();
+  const raw = (item.url || "").replace(/^(?:ffmpeg|ffrt)\s+/i, "").trim();
   const isDirect = raw.startsWith("http") && !raw.includes("localhost");
   const logo = item.logo ? (resolveUrl(item.logo, portalBase) || item.logo) : null;
   if (item._stalkerCmd !== undefined) return { ...item, logo };
@@ -2327,32 +2331,54 @@ export default function App() {
   // ── load cached content from IDB for a connection
   async function loadFromCache(id, connObj) {
     const cachedChannels = await idbCache.get(`content:${id}:live`);
-    if (Array.isArray(cachedChannels) && cachedChannels.length) {
-      setAutoConnected(true);
-      setConn(connObj.config);
-      const normalizeCached = items => connObj.type === "stalker"
-        ? items.map(item => transformStalkerItem(item, connObj.config?.server || connObj.config?.portal))
-        : items;
-      setChannels(normalizeCached(cachedChannels));
-      const [cachedVod, cachedSeries] = await Promise.all([
-        idbCache.get(`content:${id}:vod`),
-        idbCache.get(`content:${id}:series`),
-      ]);
-      if (Array.isArray(cachedVod)) setVod(normalizeCached(cachedVod));
-      if (Array.isArray(cachedSeries)) setSeries(normalizeCached(cachedSeries));
-      if (connObj.type === "stalker") {
-        const [vc, sc] = await Promise.all([
-          idbCache.get(`cats:${id}:vod`),
-          idbCache.get(`cats:${id}:series`),
-        ]);
-        if (Array.isArray(vc)) setStalkerVodCats(vc);
-        if (Array.isArray(sc)) setStalkerSeriesCats(sc);
-      }
-      const syncTs = await idbCache.get(`sync:${id}`);
-      if (syncTs) setLastSynced(syncTs);
-      return true;
+    if (!Array.isArray(cachedChannels) || !cachedChannels.length) return false;
+
+    const isStalker = connObj.type === "stalker";
+    const now = Date.now();
+    let needsBackgroundRefresh = false;
+    if (isStalker) {
+      const cachedAt = await idbCache.get(`cachetime:content:${id}:live`);
+      needsBackgroundRefresh = now - Number(cachedAt || 0) >= STALKER_LIVE_TTL_MS;
     }
-    return false;
+
+    const normalizeCached = items => isStalker
+      ? items.map(item => transformStalkerItem(item, connObj.config?.server || connObj.config?.portal))
+      : items;
+    const syncTs = await idbCache.get(`sync:${id}`);
+    setChannels(normalizeCached(cachedChannels));
+
+    const [cachedVod, cachedSeries] = await Promise.all([
+      idbCache.get(`content:${id}:vod`),
+      idbCache.get(`content:${id}:series`),
+    ]);
+    if (Array.isArray(cachedVod)) {
+      setVod(normalizeCached(cachedVod));
+      if (isStalker && now - Number(syncTs?.vod || 0) >= STALKER_CATALOG_TTL_MS) needsBackgroundRefresh = true;
+    }
+    if (Array.isArray(cachedSeries)) {
+      setSeries(normalizeCached(cachedSeries));
+      if (isStalker && now - Number(syncTs?.series || 0) >= STALKER_CATALOG_TTL_MS) needsBackgroundRefresh = true;
+    }
+
+    if (isStalker) {
+      const [vodCategories, seriesCategories] = await Promise.all([
+        Promise.all([idbCache.get(`cats:${id}:vod`), idbCache.get(`cachetime:cats:${id}:vod`)]),
+        Promise.all([idbCache.get(`cats:${id}:series`), idbCache.get(`cachetime:cats:${id}:series`)]),
+      ]);
+      if (Array.isArray(vodCategories[0])) {
+        setStalkerVodCats(vodCategories[0]);
+        if (now - Number(vodCategories[1] || 0) >= STALKER_CATEGORY_TTL_MS) needsBackgroundRefresh = true;
+      }
+      if (Array.isArray(seriesCategories[0])) {
+        setStalkerSeriesCats(seriesCategories[0]);
+        if (now - Number(seriesCategories[1] || 0) >= STALKER_CATEGORY_TTL_MS) needsBackgroundRefresh = true;
+      }
+    }
+
+    if (syncTs) setLastSynced(syncTs);
+    setAutoConnected(!needsBackgroundRefresh);
+    setConn(connObj.config);
+    return true;
   }
 
   // ── migrate old profile/lastConn data to connection system
@@ -2603,10 +2629,11 @@ export default function App() {
   async function fetchStalkerChannels(force = false) {
     if (!conn || conn.type !== "stalker") return;
     const cId = connId(conn);
-    // Check IDB first (permanent, no TTL)
+    // Stalker channel catalogs expire after six hours.
     if (!force && cId) {
-      const cached = await idbCache.get(`content:${cId}:live`);
-      if (cached && cached.length) { setChannels(cached); return; }
+      const cacheKey = `content:${cId}:live`;
+      const [cached, cachedAt] = await Promise.all([idbCache.get(cacheKey), idbCache.get(`cachetime:${cacheKey}`)]);
+      if (cached?.length && Date.now() - Number(cachedAt || 0) < STALKER_LIVE_TTL_MS) { setChannels(cached); return; }
     }
     beginContentLoad("Connecting to Stalker portal");
     try {
@@ -2616,9 +2643,11 @@ export default function App() {
       updateContentLoad(62, "Processing live channels…");
       const items = (data.channels || []).map(item => transformStalkerItem(item, conn.server));
       setChannels(items);
-      // Persist to IDB (permanent) + D1
+      // Persist stable channel data to IDB + D1
       if (cId) {
-        idbCache.set(`content:${cId}:live`, items);
+        const cacheKey = `content:${cId}:live`;
+        idbCache.set(cacheKey, items.map(item => stripTransientStreamFields(item)));
+        idbCache.set(`cachetime:${cacheKey}`, Date.now());
         const now = Date.now();
         setLastSynced(prev => { const n = { ...prev, live: now }; idbCache.set(`sync:${cId}`, n); return n; });
       }
@@ -2626,14 +2655,17 @@ export default function App() {
     finally { endContentLoad(); }
   }
 
-  // ── Load category list for Stalker VOD / Series (permanent IDB cache, no TTL)
+  // ── Load category lists with a bounded IndexedDB TTL
   // background=true: don't touch setCat/setLoading (used for pre-fetching on connect)
   async function loadStalkerCats(sec, force = false, background = false) {
     const cId = connId(conn);
     let cats = null;
-    // Check IDB first (permanent, no TTL)
     if (!force && cId) {
-      try { cats = await idbCache.get(`cats:${cId}:${sec}`); } catch (e) { console.warn("IDB/localStorage error:", e.message); }
+      try {
+        const cacheKey = `cats:${cId}:${sec}`;
+        const [cached, cachedAt] = await Promise.all([idbCache.get(cacheKey), idbCache.get(`cachetime:${cacheKey}`)]);
+        if (cached?.length && Date.now() - Number(cachedAt || 0) < STALKER_CATEGORY_TTL_MS) cats = cached;
+      } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
     if (!cats) {
       if (!background) beginContentLoad("Loading categories");
@@ -2643,9 +2675,11 @@ export default function App() {
         if (data.error) throw new Error(data.error);
         if (!background) updateContentLoad(52, "Loading categories…");
         cats = data.categories || [];
-        // Save to IDB (permanent) + D1
+        // Save categories to IDB + D1
         if (cId) {
-          idbCache.set(`cats:${cId}:${sec}`, cats);
+          const cacheKey = `cats:${cId}:${sec}`;
+          idbCache.set(cacheKey, cats);
+          idbCache.set(`cachetime:${cacheKey}`, Date.now());
         }
       } catch(e) { console.error(`Stalker ${sec} cats:`, e); return; }
       finally { if (!background) endContentLoad(); }
@@ -2661,7 +2695,7 @@ export default function App() {
     }
   }
 
-  // ── Load items for one Stalker category (permanent IndexedDB cache, no TTL)
+  // ── Load items for one Stalker category with a bounded IndexedDB TTL
   async function loadStalkerCatItems(sec, catId, catTitle, silent = false, force = false) {
     const refKey = `${sec}-${catId}`;
     if (fetchingCatRef.current.has(refKey)) return;
@@ -2677,10 +2711,9 @@ export default function App() {
     if (!force) {
       try {
         const cached = await idbCache.get(CACHE_KEY);
-        // No TTL — permanent cache
-        if (cached) {
-          const items = cached.items || cached;
-          if (items.length) { applyItems(items); fetchingCatRef.current.delete(refKey); return; }
+        const cachedAt = await idbCache.get(`cachetime:${CACHE_KEY}`);
+        if (cached?.length && Date.now() - Number(cachedAt || 0) < STALKER_CATALOG_TTL_MS) {
+          applyItems(cached); fetchingCatRef.current.delete(refKey); return;
         }
       } catch (e) { console.warn("IDB/localStorage error:", e.message); }
     }
@@ -2695,8 +2728,9 @@ export default function App() {
       if (!silent) updateContentLoad(72, "Processing provider items…");
       const items = data.items || [];
       applyItems(items);
-      // Save transformed items to IDB (permanent)
-      idbCache.set(CACHE_KEY, items.map(item => transformStalkerItem(item, conn.server)));
+      // Persist only stable catalog fields; signed playback URLs are stripped.
+      idbCache.set(CACHE_KEY, items.map(item => stripTransientStreamFields(transformStalkerItem(item, conn.server))));
+      idbCache.set(`cachetime:${CACHE_KEY}`, Date.now());
     } catch(e) { console.error(`Stalker ${sec} cat items:`, e); }
     finally {
       if (!silent) {
@@ -2729,18 +2763,18 @@ export default function App() {
     clearTimeout(contentSaveTimer.current);
     contentSaveTimer.current = setTimeout(() => {
       if (vod.length) {
-        idbCache.set(`content:${cId}:vod`, vod);
+        idbCache.set(`content:${cId}:vod`, conn.type === "stalker" ? vod.map(stripTransientStreamFields) : vod);
         setLastSynced(prev => { const n = { ...prev, vod: Date.now() }; idbCache.set(`sync:${cId}`, n); return n; });
       }
       if (series.length) {
-        idbCache.set(`content:${cId}:series`, series);
+        idbCache.set(`content:${cId}:series`, conn.type === "stalker" ? series.map(stripTransientStreamFields) : series);
         setLastSynced(prev => { const n = { ...prev, series: Date.now() }; idbCache.set(`sync:${cId}`, n); return n; });
       }
     }, 3000);
     return () => clearTimeout(contentSaveTimer.current);
   }, [vod, series, conn]);
 
-  function stalkerPlayUrl(cmd, contentType = "live", episode = null, channelId = null) {
+  function stalkerPlayUrl(cmd, contentType = "live", episode = null, channelId = null, episodeMeta = {}) {
     const params = new URLSearchParams({
       portal: conn.server,
       mac: conn.mac,
@@ -2751,6 +2785,10 @@ export default function App() {
     if (conn.deviceId) params.set("deviceId", conn.deviceId);
     if (conn.deviceId2) params.set("deviceId2", conn.deviceId2);
     if (contentType === "live" && channelId != null) params.set("channel_id", String(channelId));
+    if (episodeMeta.episodeId != null) params.set("episode_id", String(episodeMeta.episodeId));
+    if (episodeMeta.seasonId != null) params.set("season_id", String(episodeMeta.seasonId));
+    if (episodeMeta.seriesNumber != null) params.set("series_number", String(episodeMeta.seriesNumber));
+    if (episodeMeta.videoId != null) params.set("video_id", String(episodeMeta.videoId));
     const sessionToken = contentSessionToken();
     if (sessionToken) {
       params.delete("portal");
@@ -2770,38 +2808,44 @@ export default function App() {
       stalkerResolveRef.current = controller;
     }
     const cmd = item._stalkerCmd;
-    let fallbackUrl = stalkerPlayUrl(cmd, contentType, options.episode, contentType === "live" ? item.id : null);
+    let fallbackUrl = stalkerPlayUrl(cmd, contentType, options.episode, contentType === "live" ? item.id : null, options.episodeMeta || {});
     if (options.start) fallbackUrl += `&start=${options.start}`;
     if (options.end) fallbackUrl += `&end=${options.end}`;
-    const fallbackStreamKind = contentType === "live" ? "ts" : "file";
+    if (options.duration) fallbackUrl += `&duration=${options.duration}`;
+    if (options.programId != null) fallbackUrl += `&program_id=${encodeURIComponent(options.programId)}`;
     try {
-      const res = await fetch(`${fallbackUrl}&resolve=1`, { signal });
+      const refreshFlag = options.reason ? "&refresh=1" : "";
+      const res = await fetch(`${fallbackUrl}&resolve=1${refreshFlag}`, { signal });
       if (!res.ok) throw new Error(`Stream resolution returned ${res.status}`);
       const data = await res.json();
       if (!data.url) throw new Error("Portal did not return a stream URL");
       const directUrl = data.url;
       const direct = data.direct !== false;
       const streamKind = data.streamKind || classifyStreamUrl(directUrl, contentType);
+      if (!direct || !directUrl) {
+        const error = new Error(data.error || "The provider did not return a browser-playable direct URL");
+        error.code = data.code || "direct_play_unavailable";
+        error.relayAvailable = data.relayAvailable === true;
+        throw error;
+      }
       return {
-        url: direct ? directUrl : fallbackUrl,
+        url: directUrl,
         streamKind,
         directUrl,
         expiresAt: data.expiresAt ?? null,
-        _direct: direct,
-        _stalkerFallbackUrl: fallbackUrl,
-        _stalkerFallbackUsed: !direct,
+        _direct: true,
+        _stalkerDirectOnly: data.relayAvailable !== true,
+        _stalkerRelayAvailable: data.relayAvailable === true,
+        _stalkerRelayUrl: data.relayAvailable === true ? data.relayUrl : null,
+        _stalkerRefreshUrl: data.refreshUrl || `${fallbackUrl}&resolve=1`,
+        directCapability: data.directCapability || "browser_candidate",
+        streamGeneration: data.generation || null,
+        streamWarnings: Array.isArray(data.warnings) ? data.warnings : [],
       };
     } catch (error) {
       if (error?.name === "AbortError") throw error;
-      console.warn("Stalker direct-play resolution failed; using relay", error);
-      return {
-        url: fallbackUrl,
-        streamKind: fallbackStreamKind,
-        _direct: false,
-        _stalkerFallbackUsed: true,
-        _stalkerFallbackUrl: fallbackUrl,
-        expiresAt: null,
-      };
+      console.warn("Stalker direct-play resolution failed", error);
+      throw error;
     } finally {
       if (controller && stalkerResolveRef.current === controller) stalkerResolveRef.current = null;
     }
@@ -2812,6 +2856,23 @@ export default function App() {
     const refreshed = await resolveStalkerStream(item, item.type || "live", { reason });
     if (!refreshed?.url) return null;
     return { ...item, ...refreshed };
+  }
+
+  async function requestStalkerRelay(item) {
+    if (!item?._stalkerRelayAvailable || !item?._stalkerRelayUrl) return null;
+    const relayUrl = new URL(item._stalkerRelayUrl, location.origin);
+    const contentToken = relayUrl.searchParams.get("contentToken");
+    const cmd = relayUrl.searchParams.get("cmd");
+    if (!contentToken || !cmd) throw new Error("Compatibility relay control data is unavailable");
+    const grantResponse = await fetch(`${API}/stalker/relay-grant`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contentToken, cmd, confirm: true }),
+    });
+    const grant = await grantResponse.json();
+    if (!grantResponse.ok || !grant.relayGrant) throw new Error(grant.error || "Compatibility relay was not authorized");
+    relayUrl.searchParams.set("relayGrant", grant.relayGrant);
+    return { ...item, url: relayUrl.pathname + relayUrl.search, _direct: false, _stalkerRelayActive: true };
   }
 
   async function loadEPG(url, label) {
@@ -2992,11 +3053,16 @@ export default function App() {
     track("play", { name: item.name, type: item.type || "live" });
     track("history");
     if (conn?.type === "stalker" && item._stalkerCmd) {
-      const resolved = await resolveStalkerStream(item);
-      if (!resolved?.url) return;
-      const resolved_item = { ...item, ...resolved };
-      setPlaying(resolved_item);
-      addHistory(resolved_item);
+      try {
+        const resolved = await resolveStalkerStream(item);
+        if (!resolved?.url) return;
+        const resolved_item = { ...item, ...resolved };
+        setPlaying(resolved_item);
+        addHistory(resolved_item);
+      } catch (error) {
+        console.error("Stalker direct playback unavailable:", error);
+        setConnError(error?.message || "The provider did not return a direct browser-playable stream");
+      }
     } else if (shouldUseTokenPlayerForItem(conn, item, window.location)) {
       // Xtream and M3U streams play via token-gated redirect to HTTP player
       const streamUrl = item.url;
@@ -3057,9 +3123,9 @@ export default function App() {
     try {
       if (conn?.type === "stalker" && channel._stalkerCmd) {
         const resolved = await resolveStalkerStream(
-          { id: channel.id, _stalkerCmd: channel._stalkerCmd, type: "live" },
+          { id: channel.id, _stalkerCmd: program.cmd || channel._stalkerCmd, type: "live" },
           "live",
-          { start: startUTC, end: endUTC },
+          { start: startUTC, end: endUTC, duration: Math.max(1, endUTC - startUTC), programId: program.id || program.programId },
         );
         Object.assign(catchupItem, resolved);
       } else if (conn?.type === "xtream" && channel.url) {
@@ -3133,10 +3199,19 @@ export default function App() {
     setEpisodeLoading(episodeNum);
     try {
       if (conn?.type === "stalker") {
+        const episode = season.episodes?.find(ep => ep.num == episodeNum || ep.id == episodeNum) || {};
         const resolved = await resolveStalkerStream(
-          { _stalkerCmd: season.cmd, type: "series" },
+          { _stalkerCmd: episode.cmd || season.cmd, type: "series" },
           "series",
-          { episode: episodeNum },
+          {
+            episode: episode.num ?? episodeNum,
+            episodeMeta: {
+              episodeId: episode.id,
+              seasonId: season.id,
+              seriesNumber: episode.series_number ?? episode.seriesNumber ?? episode.num ?? episodeNum,
+              videoId: episode.video_id ?? episode.videoId,
+            },
+          },
         );
         const epItem = {
           id: `${seriesDetail.item.id}-s${seriesDetail.activeSeason}-e${episodeNum}`,
@@ -4418,6 +4493,7 @@ export default function App() {
           epgData={epgData}
           onClose={() => setPlaying(null)}
           onRefreshStream={refreshStalkerStream}
+          onRequestRelay={requestStalkerRelay}
           onPlayCatchup={playCatchup}
           onProgress={updateHistoryProgress}
           toggleFav={toggleFav}

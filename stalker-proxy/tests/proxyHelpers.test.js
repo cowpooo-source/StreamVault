@@ -102,6 +102,18 @@ describe("redirect targets", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("drops portal credentials when a redirect changes hosts", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ status: 302, headers: { get: name => name.toLowerCase() === "location" ? "http://cdn.example/media" : null } })
+      .mockResolvedValueOnce({ status: 200, headers: { get: () => null } });
+    const helpers = createProxyHelpers({ fetch, isUrlAllowed: vi.fn().mockResolvedValue(true) });
+    await helpers.fetchWithRedirectCheck("http://portal.example/start", {
+      headers: { Authorization: "Bearer secret", Cookie: "mac=secret", Accept: "*/*" },
+    });
+    expect(fetch.mock.calls[0][1].headers).toMatchObject({ Authorization: "Bearer secret", Cookie: "mac=secret" });
+    expect(fetch.mock.calls[1][1].headers).toEqual({ Accept: "*/*" });
+  });
+
   it("limits redirect chains", async () => {
     const fetch = vi.fn().mockResolvedValue({
       status: 302,
