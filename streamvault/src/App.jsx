@@ -15,7 +15,7 @@ import Setup from './components/Setup.jsx';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 import { useStreamVault } from "./useStreamVault.js";
-import { lifecycleFailureMessage } from "./connection-lifecycle.js";
+import { lifecycleFailureMessage, mergeConnectionSnapshots } from "./connection-lifecycle.js";
 import {
   clearContentSessionToken,
   contentSessionToken,
@@ -3668,14 +3668,13 @@ export default function App() {
 
     // 1. Import connections
     if (data.connections?.length) {
-      const existing = await db.get("sv-connections", []);
+      const storedConnections = await db.get("sv-connections", []);
+      const existing = mergeConnectionSnapshots(storedConnections, connections);
       const existingIds = new Set(existing.map(c => c.id));
       const newConns = data.connections.filter(c => !existingIds.has(c.id));
-      if (newConns.length) {
-        const merged = [...existing, ...newConns];
-        setConnections(merged);
-        parts.push(`${data.connections.length} connections`);
-      }
+      const merged = [...existing, ...newConns];
+      if (newConns.length || merged.length !== storedConnections.length) setConnections(merged);
+      parts.push(`${newConns.length} new of ${data.connections.length} connections`);
     }
 
     // 2. Import preferences

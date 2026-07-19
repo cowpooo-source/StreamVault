@@ -5,6 +5,7 @@ import React from "react";
 import {
   getConnectionLifecycle,
   lifecycleFailureMessage,
+  mergeConnectionSnapshots,
   normalizeConnections,
 } from "../src/connection-lifecycle.js";
 import { classifyStreamUrl } from "../src/stream-classifier.js";
@@ -67,6 +68,20 @@ describe("connection and playback hardening", () => {
     ]);
   });
 
+  it("merges persisted and in-memory connection snapshots without losing entries", () => {
+    const stored = [
+      { id: "one", type: "xtream", label: "stale", config: { server: "http://old" } },
+    ];
+    const current = [
+      { id: "one", type: "xtream", label: "current", config: { server: "http://new" } },
+      { id: "two", type: "stalker", config: { server: "http://portal", mac: "00:11:22:33:44:55" } },
+    ];
+
+    const merged = mergeConnectionSnapshots(stored, current);
+    expect(merged).toHaveLength(2);
+    expect(merged.find(connection => connection.id === "one")?.label).toBe("current");
+    expect(merged.map(connection => connection.id)).toEqual(["one", "two"]);
+  });
   it("recognizes disabled and expired provider accounts", () => {
     const expired = { type: "xtream", config: { accountInfo: { exp_date: "1700000000" } } };
     const disabled = { type: "xtream", config: { accountInfo: { status: "Disabled" } } };

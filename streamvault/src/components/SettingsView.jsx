@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { API } from '../utils.js';
 import { db } from '../app-runtime.js';
+import { mergeConnectionSnapshots } from '../connection-lifecycle.js';
 
 export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore }) {
   const [tab, setTab] = useState("general");
@@ -32,12 +33,13 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
   }
 
   async function exportData() {
+    const storedConnections = await db.get("sv-connections", []);
     const data = {
       _portal_heaven_export: true,
       version: 1,
       exported_at: new Date().toISOString(),
       user: authUser ? { username: authUser.username, role: authUser.role } : { guest: true },
-      connections: await db.get("sv-connections", []),
+      connections: mergeConnectionSnapshots(storedConnections, connections),
       theme: await db.get("sv-theme", "Dark"),
       language: localStorage.getItem("sv-lang") || "en",
       hiddenCats: await db.get("sv-hiddenCats", {}),

@@ -29,6 +29,14 @@ export function normalizeConnections(value) {
   });
 }
 
+export function mergeConnectionSnapshots(...snapshots) {
+  const merged = new Map();
+  for (const snapshot of snapshots) {
+    for (const connection of normalizeConnections(snapshot)) merged.set(connection.id, connection);
+  }
+  return [...merged.values()];
+}
+
 export function getConnectionLifecycle(connection, now = Date.now()) {
   const config = connection?.config || connection || {};
   const accountInfo = config.accountInfo || config.user_info || config.info || {};
