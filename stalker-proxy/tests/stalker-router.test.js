@@ -820,4 +820,35 @@ describe('createStalkerRouter - unit', () => {
     const res = await request(app).get('/stalker/epg?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&ch_id=123');
     expect(res.status).toBe(502);
   });
+
+  it('GET /stalker/play preserves the provider channel command when catalog and stream IDs differ', async () => {
+    const portalCommand = 'ffrt http://localhost/ch/480452';
+    const edgeUrl = 'http://192.101.68.254/stream/tracks-v1a1/mono.m3u8?token=fresh';
+    const portalFetchRetry = vi.fn().mockResolvedValue({ js: { cmd: edgeUrl } });
+    const fetchWithRedirectCheck = vi.fn().mockResolvedValue({
+      response: { ok: true, status: 206, body: { cancel: vi.fn() } },
+      url: edgeUrl,
+    });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'http://nawaabexpress.me/stalker_portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+      fetchWithRedirectCheck,
+    });
+
+    const res = await request(makeApp(deps)).get(
+      '/stalker/play?portal=http://nawaabexpress.me/stalker_portal/c/&mac=00:1a:79:aa:bb:cc&cmd='
+      + encodeURIComponent(portalCommand)
+      + '&content_type=live&channel_id=76815&resolve=1',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ url: edgeUrl, streamKind: 'hls', direct: true });
+    expect(portalFetchRetry).toHaveBeenCalledTimes(1);
+    expect(portalFetchRetry.mock.calls[0][1]).toMatchObject({
+      type: 'itv',
+      action: 'create_link',
+      cmd: portalCommand,
+    });
+    expect(fetchWithRedirectCheck).toHaveBeenCalledWith(edgeUrl, expect.any(Object));
+  });
 });

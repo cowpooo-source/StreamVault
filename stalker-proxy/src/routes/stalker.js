@@ -83,7 +83,7 @@ function createStalkerRouter(deps) {
   }
   function normalizeResolvedUrl(streamUrl, portal) {
     if (!streamUrl) return streamUrl;
-    let cleanUrl = String(streamUrl).replace(/^ffmpeg\s+/, "").trim();
+    let cleanUrl = String(streamUrl).replace(/^(?:ffmpeg|ffrt)\s+/i, "").trim();
     if (cleanUrl.includes("localhost") || cleanUrl.includes("127.0.0.1")) {
       try {
         const portalHost = new URL(portal).host;
@@ -186,7 +186,15 @@ function createStalkerRouter(deps) {
       }
     } else if (contentType === "live" && numericChannelId) {
       try {
-        const channelData = await requestLink("ffrt http:///ch/" + numericChannelId);
+        // The catalog channel ID and the provider's internal /ch/ ID are often
+        // different. Preserve the command supplied by get_all_channels instead
+        // of fabricating a URL from the catalog ID.
+        const originalCommand = String(cmd || "").trim();
+        const hasPortalChannelCommand = /^(?:ffmpeg|ffrt)\s+/i.test(originalCommand)
+          && /(?:(?:localhost|127\.0\.0\.1).*\/ch\/\d+|\/{2,3}ch\/\d+)/i.test(originalCommand);
+        const channelData = await requestLink(hasPortalChannelCommand
+          ? originalCommand
+          : "ffrt http:///ch/" + numericChannelId);
         const freshLiveUrl = playableLiveUrl(channelData?.js?.cmd);
         if (freshLiveUrl) {
           return { ...channelData, js: { ...channelData.js, cmd: freshLiveUrl } };
