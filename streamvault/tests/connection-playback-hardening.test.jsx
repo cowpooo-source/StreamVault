@@ -364,6 +364,36 @@ describe("connection and playback hardening", () => {
     await waitFor(() => expect(onRefreshStream).toHaveBeenCalledTimes(2));
   });
 
+  it("refreshes native Stalker VOD before browser retries can stall playback", async () => {
+    vi.useFakeTimers();
+    try {
+      const onRefreshStream = vi.fn().mockResolvedValue({
+        url: "http://provider.example/new-vod-url",
+        type: "vod",
+        streamKind: "file",
+        _direct: true,
+        _stalkerCmd: "/media/movie.mpg",
+      });
+      render(<Player
+        item={{
+          id: "stalker-vod-timeout",
+          name: "Stalker VOD",
+          url: "http://provider.example/extensionless-vod-url",
+          type: "vod",
+          streamKind: "unknown",
+          _direct: true,
+          _stalkerCmd: "/media/movie.mpg",
+        }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        onRefreshStream={onRefreshStream} connType="stalker" t={key => key} isAdEligible={false}
+      />);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      expect(onRefreshStream).toHaveBeenCalledWith(expect.objectContaining({ id: "stalker-vod-timeout" }), "initial_load_timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("refreshes a direct Stalker stream when playback silently stalls", async () => {
     vi.useFakeTimers();
     try {

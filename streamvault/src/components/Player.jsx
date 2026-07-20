@@ -341,12 +341,21 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     video.removeAttribute("src");
 
     const loadStartTime = Date.now();
-    loadingTimerRef.current = window.setTimeout(() => {
-      if (video.readyState < 3 && !streamErr) {
-        showStreamError({ icon: "!", title: "Playback Timeout", body: "The stream did not provide playable media within 20 seconds. Try again or choose another stream." });
+    const initialStreamKind = current.streamKind || classifyStreamUrl(url, current.type);
+    const isNativeStalkerInitialLoad = current._stalkerCmd
+      && (initialStreamKind === "file" || initialStreamKind === "unknown");
+    loadingTimerRef.current = window.setTimeout(async () => {
+      if (video.readyState >= 3) return;
+
+      if (isNativeStalkerInitialLoad) {
+        // Abort Chrome's internal retries before resolving one fresh direct URL.
         destroyPlayers();
+        if (await requestStalkerRefresh("initial_load_timeout")) return;
       }
-    }, 20_000);
+
+      showStreamError({ icon: "!", title: "Playback Timeout", body: "The stream did not provide playable media within 20 seconds. Try again or choose another stream." });
+      destroyPlayers();
+    }, isNativeStalkerInitialLoad ? 8_000 : 20_000);
 
 
     function tryCorsProxyFallback(reason, responseCode) {
