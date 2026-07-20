@@ -344,17 +344,36 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     const initialStreamKind = current.streamKind || classifyStreamUrl(url, current.type);
     const isNativeStalkerInitialLoad = current._stalkerCmd
       && (initialStreamKind === "file" || initialStreamKind === "unknown");
+    const loadGeneration = playbackGenerationRef.current;
+    const isCurrentLoad = () => loadGeneration === playbackGenerationRef.current
+      && video === videoRef.current;
+    const failInitialLoad = () => {
+      if (!isCurrentLoad() || video.readyState >= 3) return;
+      showStreamError({ icon: "!", title: "Playback Timeout", body: "The stream did not provide playable media. Try again or choose another stream." });
+      destroyPlayers();
+    };
     loadingTimerRef.current = window.setTimeout(async () => {
-      if (video.readyState >= 3) return;
+      if (!isCurrentLoad() || video.readyState >= 3) return;
 
-      if (isNativeStalkerInitialLoad) {
-        // Abort Chrome's internal retries before resolving one fresh direct URL.
-        destroyPlayers();
-        if (await requestStalkerRefresh("initial_load_timeout")) return;
+      if (!isNativeStalkerInitialLoad) {
+        failInitialLoad();
+        return;
       }
 
-      showStreamError({ icon: "!", title: "Playback Timeout", body: "The stream did not provide playable media within 20 seconds. Try again or choose another stream." });
-      destroyPlayers();
+      if (video.readyState === 0) {
+        if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
+          recoveryPositionRef.current = video.currentTime;
+        }
+        // Abort Chrome's internal retries before resolving one fresh direct URL.
+        destroyPlayers();
+        const refreshed = await requestStalkerRefresh("initial_load_timeout");
+        if (!isCurrentLoad() || refreshed) return;
+        failInitialLoad();
+        return;
+      }
+
+      // Metadata or media data arrived, so allow the normal 20-second budget.
+      loadingTimerRef.current = window.setTimeout(failInitialLoad, 12_000);
     }, isNativeStalkerInitialLoad ? 8_000 : 20_000);
 
 
@@ -385,16 +404,19 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     }
 
     async function requestStalkerRefresh(reason) {
-      if (!current._direct || autoRecoveryRef.current.stalkerRefreshInFlight || typeof onRefreshStream !== "function") return false;
+      const recovery = autoRecoveryRef.current;
+      if (!current._direct || recovery.stalkerRefreshInFlight || typeof onRefreshStream !== "function") return false;
       const now = Date.now();
-      const recentRefreshes = (autoRecoveryRef.current.stalkerRefreshTimes || []).filter(time => time > now - 60_000);
+      const recentRefreshes = (recovery.stalkerRefreshTimes || []).filter(time => time > now - 60_000);
       if (recentRefreshes.length >= 3) return false;
       recentRefreshes.push(now);
-      autoRecoveryRef.current.stalkerRefreshTimes = recentRefreshes;
-      autoRecoveryRef.current.stalkerRefreshInFlight = true;
+      recovery.stalkerRefreshTimes = recentRefreshes;
+      recovery.stalkerRefreshInFlight = true;
       const generation = playbackGenerationRef.current;
       try {
-        if (current.type !== "live" && Number.isFinite(video.currentTime)) recoveryPositionRef.current = video.currentTime;
+        if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
+          recoveryPositionRef.current = video.currentTime;
+        }
         const refreshed = await onRefreshStream(current, reason);
         if (!refreshed?.url || generation !== playbackGenerationRef.current) return false;
         destroyPlayers();
@@ -408,7 +430,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         console.warn("Stalker stream refresh failed:", error?.message || error);
         return false;
       } finally {
-        autoRecoveryRef.current.stalkerRefreshInFlight = false;
+        recovery.stalkerRefreshInFlight = false;
       }
     }
 
@@ -440,7 +462,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
         if (hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
         if (mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
-        if (current.type !== "live" && Number.isFinite(video.currentTime)) recoveryPositionRef.current = video.currentTime;
+        if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
+          recoveryPositionRef.current = video.currentTime;
+        }
         setStreamRevision(value => value + 1);
         return true;
       } catch (error) {

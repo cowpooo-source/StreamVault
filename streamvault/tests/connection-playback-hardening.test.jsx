@@ -394,6 +394,100 @@ describe("connection and playback hardening", () => {
       vi.useRealTimers();
     }
   });
+  it("does not refresh native Stalker VOD that has started receiving media", async () => {
+    vi.useFakeTimers();
+    try {
+      const onRefreshStream = vi.fn();
+      render(<Player
+        item={{
+          id: "slow-stalker-vod",
+          name: "Slow Stalker VOD",
+          url: "http://provider.example/slow-vod-url",
+          type: "vod",
+          streamKind: "unknown",
+          _direct: true,
+          _stalkerCmd: "/media/slow.mpg",
+        }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        onRefreshStream={onRefreshStream} connType="stalker" t={key => key} isAdEligible={false}
+      />);
+      const video = document.querySelector("video");
+      Object.defineProperty(video, "readyState", { configurable: true, value: 2 });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+
+      expect(onRefreshStream).not.toHaveBeenCalled();
+      expect(screen.queryByText("Playback Timeout")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a stale VOD refresh stop a newly selected channel", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveRefresh;
+      const onRefreshStream = vi.fn(() => new Promise(resolve => { resolveRefresh = resolve; }));
+      const first = {
+        id: "old-channel", name: "Old Channel", url: "http://provider.example/old",
+        type: "live", streamKind: "unknown", _direct: true, _stalkerCmd: "old",
+      };
+      const second = {
+        id: "new-channel", name: "New Channel", url: "http://provider.example/new.mp4",
+        type: "live", streamKind: "file", _direct: true, _stalkerCmd: "new",
+      };
+      render(<Player
+        item={first} channelList={[first, second]} epgData={null} onClose={vi.fn()}
+        onFav={vi.fn()} isFav={() => false} onRefreshStream={onRefreshStream}
+        connType="stalker" t={key => key} isAdEligible={false}
+      />);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      await act(async () => {});
+      await act(async () => {
+        resolveRefresh({ ...first, url: "http://provider.example/refreshed-old" });
+        await Promise.resolve();
+      });
+
+      expect(document.querySelector("video").src).toContain(second.url);
+      expect(screen.queryByText("Playback Timeout")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves VOD position when initial-load recovery aborts the source", async () => {
+    vi.useFakeTimers();
+    try {
+      const onRefreshStream = vi.fn().mockResolvedValue({
+        url: "http://provider.example/refreshed-vod",
+        type: "vod",
+        streamKind: "file",
+        _direct: true,
+        _stalkerCmd: "/media/movie.mpg",
+      });
+      render(<Player
+        item={{
+          id: "positioned-vod", name: "Positioned VOD", url: "http://provider.example/original-vod",
+          type: "vod", streamKind: "unknown", _direct: true, _stalkerCmd: "/media/movie.mpg",
+        }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        onRefreshStream={onRefreshStream} connType="stalker" t={key => key} isAdEligible={false}
+      />);
+      const video = document.querySelector("video");
+      Object.defineProperty(video, "duration", { configurable: true, value: 600 });
+      video.currentTime = 120;
+      video.load.mockImplementation(() => { video.currentTime = 0; });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      fireEvent.loadedMetadata(video);
+
+      expect(video.currentTime).toBe(120);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("refreshes a direct Stalker stream when playback silently stalls", async () => {
     vi.useFakeTimers();
     try {
