@@ -416,6 +416,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       try {
         if (recovery.stall === 1 && hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
         if (recovery.stall === 1 && mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
+        // Native video has no engine-level reload API. Refresh a direct Stalker URL
+        // first; otherwise rebuild the native element while retaining VOD position.
+        if (!hlsRef.current && !mpegtsRef.current) {
+          const savedPosition = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+          if (current._direct && await requestStalkerRefresh(reason)) return true;
+          if (current.type !== "live" && savedPosition > 0.1) {
+            recoveryPositionRef.current = savedPosition;
+          }
+          setStreamRevision(value => value + 1);
+          return true;
+        }
         if (current._direct && await requestStalkerRefresh(reason)) return true;
 
         if (hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
@@ -434,6 +445,11 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     video.onerror = async () => {
       // Skip if HLS.js or mpegts.js is handling (they have their own error handlers)
       if (hlsRef.current || mpegtsRef.current) return;
+      // Save position before refresh attempt for VOD/series recovery
+      if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
+        recoveryPositionRef.current = video.currentTime;
+      }
+      // For Stalker direct streams, try refresh
       if (current._direct && await requestStalkerRefresh("native_error")) return;
 
       const e = video.error;
@@ -449,7 +465,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         content_id: String(current.id || ""),
         content_type: current.type || "live",
         provider_type: current.type || "unknown",
-        latency_ms: Date.now() - loadStartTime
+        latency_ms: Date.now() - loadStartTime,
       });
     };
 
@@ -688,7 +704,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     const isStalkerVod = (current.type === "vod" || current.type === "series")
       && (url.includes("/play/movie.php") || url.includes("/play/live.php") || url.includes("play_token="));
     if (isStalkerVod) {
-      if (url.includes(".m3u8")) {
+      const vodStreamKind = classifyStreamUrl(url, "vod");
+      if (url.includes(".m3u8") || vodStreamKind === "hls") {
         if (window.Hls) startHls(url);
         else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
                           () => startHls(url));
@@ -1056,6 +1073,14 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     showOSD();
   }
 
+  // Preserve VOD position when the user explicitly retries native playback.
+  function retryNativeStream() {
+    if (recoveryPositionRef.current == null && videoRef.current?.currentTime > 0.1) {
+      recoveryPositionRef.current = videoRef.current.currentTime;
+    }
+    setRetryKey(key => key + 1);
+  }
+
   async function activateCompatibilityRelay() {
     if (typeof onRequestRelay !== "function" || relayLoading) return;
     if (!window.confirm("Use compatibility relay? Media will temporarily pass through the VPS and may be subject to limits.")) return;
@@ -1132,7 +1157,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
                 <div style={{width:"2.2rem",height:"2.2rem",margin:"0 auto .75rem",border:"2px solid currentColor",borderRadius:"50%",display:"grid",placeItems:"center",fontSize:"1.35rem",fontWeight:800}}>{streamErr.icon}</div>
                 <div style={{fontSize:".9rem",color:"var(--t1)",fontWeight:600,marginBottom:".5rem"}}>{streamErr.title}</div>
                 <div style={{fontSize:".78rem",color:"var(--t2)",lineHeight:1.6}}>{streamErr.body}</div>
-                <button className="btn-primary" style={{marginTop:"1rem"}} onClick={() => setRetryKey(key => key + 1)}>Try Again</button>
+                <button className="btn-primary" style={{marginTop:"1rem"}} onClick={retryNativeStream}>Try Again</button>
                 {current._stalkerRelayAvailable && !current._stalkerRelayActive && typeof onRequestRelay === "function" && (
                   <button className="btn-secondary" style={{marginTop:".65rem",marginLeft:".5rem"}} disabled={relayLoading} onClick={activateCompatibilityRelay}>
                     {relayLoading ? "Starting Relay..." : "Use Compatibility Relay"}

@@ -304,6 +304,28 @@ describe("connection and playback hardening", () => {
     expect(video.src).not.toContain(fallbackUrl);
   });
 
+  it("keeps direct Stalker VOD files out of the stream relay", () => {
+    const directUrl = "http://provider.example/movie.mp4?token=opaque";
+    render(<Player
+      item={{
+        id: "stalker-vod-direct",
+        name: "Stalker VOD",
+        url: directUrl,
+        type: "vod",
+        streamKind: "file",
+        _direct: true,
+        _stalkerCmd: "/media/movie.mpg",
+        _stalkerDirectOnly: true,
+      }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      connType="stalker" t={key => key} isAdEligible={false}
+    />);
+
+    const video = document.querySelector("video");
+    expect(video.src).toContain(directUrl);
+    expect(video.src).not.toContain("/stream?url=");
+  });
+
   it("reinitializes playback when Stalker refresh returns the same URL", async () => {
     const directUrl = "http://provider.example/direct/channel.ts";
     const onRefreshStream = vi.fn().mockResolvedValue({
@@ -394,5 +416,21 @@ describe("connection and playback hardening", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it("restores VOD position after an explicit native retry", () => {
+    render(<Player
+      item={{ id: "vod-retry", name: "VOD Retry", url: "http://provider.example/movie.mp4", type: "vod", streamKind: "file" }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      connType="xtream" t={key => key} isAdEligible={false}
+    />);
+    const video = document.querySelector("video");
+    Object.defineProperty(video, "duration", { configurable: true, value: 600 });
+    video.currentTime = 120;
+    fireEvent.error(video);
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+    video.currentTime = 0;
+    fireEvent.loadedMetadata(video);
+
+    expect(video.currentTime).toBe(120);
   });
 });
