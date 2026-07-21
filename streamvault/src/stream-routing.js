@@ -19,6 +19,13 @@ export function shouldProxyStreamUrl(url, {
   return !direct;
 }
 
+export function xtreamHlsCandidate(url) {
+  const value = String(url || "");
+  return /\.ts(?=([?#]|$))/i.test(value)
+    ? value.replace(/\.ts(?=([?#]|$))/i, ".m3u8")
+    : null;
+}
+
 function stripPlaybackTokens(command) {
   const value = String(command || "");
   const prefix = value.match(/^(?:ffmpeg|ffrt)\s+/i)?.[0] || "";

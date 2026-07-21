@@ -3,14 +3,13 @@ import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalyti
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 import { classifyStreamUrl } from "../stream-classifier.js";
-import { shouldProxyStreamUrl } from "../stream-routing.js";
+import { shouldProxyStreamUrl, xtreamHlsCandidate } from "../stream-routing.js";
 
 function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, onRequestRelay, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
   const mpegtsRef  = useRef(null);
-  const mpegtsReconnectRef = useRef(null);
   const adPlayedRef = useRef(false);
   const adSessionRef = useRef(0);
   const adFinishRef = useRef(null);
@@ -128,7 +127,6 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     loadingTimerRef.current = null;
     if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
     if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
-    mpegtsReconnectRef.current = null;
     resetTrackState();
     const video = videoRef.current;
     if (video) {
@@ -259,7 +257,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const [relayLoading, setRelayLoading] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [streamRevision, setStreamRevision] = useState(0);
-  const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0, tsReconnectTimes: [] });
+  const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0 });
   const playbackGenerationRef = useRef(0);
   const stallRecoveryRef = useRef(null);
   const recoveryPositionRef = useRef(null);
@@ -322,7 +320,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const origin = API || location.origin;
   const pageProtocol = location.protocol;
   const needsProxy = (u, kind = "unknown") => {
-    if (current?._stalkerCmd) return false;
+    if (current?._stalkerCmd || ["xtream", "m3u", "hls"].includes(connType)) return false;
     return shouldProxyStreamUrl(u, {
       origin,
       pageProtocol,
@@ -337,7 +335,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     setIsLoading(true);
     clearTimeout(loadingTimerRef.current);
     if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
-      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, tsReconnectTimes: [], stall: 0, recoveryInFlight: false, corsProxyFallback: false, stalkerRefreshInFlight: false, stalkerRefreshTimes: [] };
+      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stall: 0, recoveryInFlight: false, stalkerRefreshInFlight: false, stalkerRefreshTimes: [] };
     }
     destroyPlayers();
     video.removeAttribute("src");
@@ -379,29 +377,21 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     }, isNativeStalkerInitialLoad ? 8_000 : 20_000);
 
 
-    function tryCorsProxyFallback(reason, responseCode) {
-      // Stalker direct-only playback must never turn a browser error into a VPS relay.
-      if (current._stalkerCmd || current._stalkerDirectOnly) return false;
-      const streamKind = current.streamKind || classifyStreamUrl(current.url, current.type);
-      if (streamKind !== "hls" || !current._direct || current._corsProxyFallbackUsed) return false;
-      if (responseCode && Number(responseCode) > 0) return false;
-      if (autoRecoveryRef.current.corsProxyFallback || !current.url || current.url.startsWith("/stream?")) return false;
+    const xtreamHlsUrl = connType === "xtream" && current.type === "live" && !current._xtreamHlsFailed
+      ? xtreamHlsCandidate(url)
+      : null;
 
-      autoRecoveryRef.current.corsProxyFallback = true;
-      trackAnalytics("direct_cors_proxy_fallback", {
+    function tryXtreamTsFallback(reason) {
+      if (!xtreamHlsUrl || current._xtreamHlsFailed) return false;
+      trackAnalytics("xtream_hls_ts_fallback", {
         content_id: String(current.id || ""),
-        content_type: current.type || "live",
         reason,
       });
       destroyPlayers();
       setStreamErr(null);
-      setCurrent(prev => ({
-        ...prev,
-        url: streamProxy(prev.url),
-        _direct: false,
-        _corsProxyFallbackUsed: true,
-        streamKind: "hls",
-      }));
+      setIsLoading(true);
+      setCurrent(prev => ({ ...prev, _xtreamHlsFailed: true, streamKind: "ts" }));
+      setStreamRevision(value => value + 1);
       return true;
     }
 
@@ -438,8 +428,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     stallRecoveryRef.current = async (reason = "playback_stalled") => {
       const recovery = autoRecoveryRef.current;
-      const liveEnded = current.type === "live" && video.ended;
-      if (recovery.recoveryInFlight || (video.ended && !liveEnded) || (video.paused && !liveEnded) || playbackPhaseRef.current !== "content") return false;
+      if (recovery.recoveryInFlight || video.ended || video.paused || playbackPhaseRef.current !== "content") return false;
       if ((recovery.stall || 0) >= 3) {
         showStreamError({ icon: "!", title: "Playback Stalled", body: "The stream stopped responding after several reconnect attempts. Try again or choose another stream." });
         return false;
@@ -449,9 +438,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       trackAnalytics("playback_stall_recovery", { content_id: String(current.id || ""), content_type: current.type || "live", attempt: recovery.stall, reason });
       try {
         if (recovery.stall === 1 && hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
-        if (mpegtsRef.current && mpegtsReconnectRef.current) {
-          return await mpegtsReconnectRef.current(reason);
-        }
+        if (recovery.stall === 1 && mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
         // Native video has no engine-level reload API. Refresh a direct Stalker URL
         // first; otherwise rebuild the native element while retaining VOD position.
         if (!hlsRef.current && !mpegtsRef.current) {
@@ -466,7 +453,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         if (current._direct && await requestStalkerRefresh(reason)) return true;
 
         if (hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
-
+        if (mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
         if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
           recoveryPositionRef.current = video.currentTime;
         }
@@ -551,7 +538,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             if (index >= 0) hls.subtitleTrack = index;
           }
         };
+        let manifestParsed = false;
         hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+          manifestParsed = true;
           video.play().catch(()=>{});
           syncHlsTracks();
         });
@@ -575,14 +564,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           const recovery = autoRecoveryRef.current;
           const code = data.response?.code;
 
-          // Browser CORS failures appear as manifest network errors without a status.
-          // Switch to the same-origin relay immediately instead of retrying forever.
-          if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR
-              && !code
-              && /manifest|level/i.test(String(data.details || ""))) {
-            const reason = "hls_" + (data.details || "manifest_network_error");
-            if (tryCorsProxyFallback(reason)) return;
-          }
+          // Many Xtream providers expose HLS beside the advertised TS URL. If that
+          // capability probe fails, fall back once to direct TS without using the VPS.
+          if (!manifestParsed && tryXtreamTsFallback("hls_" + (data.details || data.type || "manifest_error"))) return;
 
           if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && recovery.hls < 2) {
             recovery.hls += 1;
@@ -599,8 +583,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             return;
           }
           if (current._direct && await requestStalkerRefresh(`hls_${data.type || data.details || "error"}`)) return;
-          if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR
-              && tryCorsProxyFallback("hls_" + (data.details || "network_error"), code)) return;
+
           let title = "Playback Error";
           let body;
           if (code === 404) {
@@ -652,46 +635,26 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       if (!window.mpegts?.isSupported()) {
         video.src = u; video.play().catch(()=>{}); return;
       }
-      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: u },
-        { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
+      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: u }, {
+        enableWorker: false,
+        lazyLoad: false,
+        seekType: "range",
+        autoCleanupSourceBuffer: true,
+        autoCleanupMaxBackwardDuration: 60,
+        autoCleanupMinBackwardDuration: 30,
+      });
       mpegtsRef.current = player;
-
-      async function reconnectMpegts(reason) {
-        if (mpegtsRef.current !== player || current.type !== "live") return false;
-        if (current._stalkerCmd && await requestStalkerRefresh(reason)) return true;
-
-        const recovery = autoRecoveryRef.current;
-        const now = Date.now();
-        const reconnectTimes = (recovery.tsReconnectTimes || []).filter(time => time > now - 60_000);
-        if (reconnectTimes.length >= 3) {
-          showStreamError({ icon: "!", title: "Stream Disconnected", body: "The provider repeatedly closed the live stream. Try again later or choose another channel." });
-          destroyPlayers();
-          return true;
-        }
-        reconnectTimes.push(now);
-        recovery.tsReconnectTimes = reconnectTimes;
-        const generation = playbackGenerationRef.current;
-        const delay = 500 * (2 ** (reconnectTimes.length - 1));
-        trackAnalytics("mpegts_reconnect", {
-          content_id: String(current.id || ""),
-          attempt: reconnectTimes.length,
-          reason,
-        });
-        setIsLoading(true);
-        destroyPlayers();
-        window.setTimeout(() => {
-          if (generation !== playbackGenerationRef.current) return;
-          setStreamRevision(value => value + 1);
-        }, delay);
-        return true;
-      }
-      mpegtsReconnectRef.current = reconnectMpegts;
-
-
       player.on(window.mpegts.Events.ERROR, async (errType, errDetail, errInfo) => {
-        if (mpegtsRef.current !== player) return;
-        const isNetworkFailure = errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network");
-        if (isNetworkFailure && await reconnectMpegts(`mpegts_${errType || errDetail || "network_error"}`)) return;
+        const recovery = autoRecoveryRef.current;
+        if (recovery.ts < 2 && (errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network"))) {
+          recovery.ts += 1;
+          const delay = 500 * (2 ** (recovery.ts - 1));
+          window.setTimeout(() => {
+            if (mpegtsRef.current !== player) return;
+            try { player.unload(); player.load(); player.play().catch(() => {}); } catch { /* Recovery is best effort. */ }
+          }, delay);
+          return;
+        }
         if (current._direct && await requestStalkerRefresh(`mpegts_${errType || errDetail || "error"}`)) return;
         const code = errInfo?.code;
         let title = "Playback Error";
@@ -738,7 +701,6 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         showStreamError({ icon: "!", title, body });
         destroyPlayers();
       });
-
       player.attachMediaElement(video);
       player.load();
       player.play().catch(()=>{});
@@ -759,7 +721,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     }
 
     // Direct video files (MP4, MKV, AVI, etc.) — play natively, not via mpegts/HLS
-    const streamKind = current.streamKind || classifyStreamUrl(url, current.type);
+    const streamKind = xtreamHlsUrl ? "hls" : (current.streamKind || classifyStreamUrl(url, current.type));
     if (streamKind === "file") {
       video.src = needsProxy(url, "file") ? streamProxy(url) : url; video.play().catch(()=>{});
       return;
@@ -780,6 +742,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       return;
     }
 
+    const playbackUrl = xtreamHlsUrl || url;
     const needTs = streamKind === "ts";
     const needHls = streamKind === "hls";
 
@@ -798,9 +761,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       else loadScript("https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js",
                         () => startMpegts(url));
     } else if (needHls) {
-      if (window.Hls) startHls(url);
+      if (window.Hls) startHls(playbackUrl);
       else loadScript("https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js",
-                        () => startHls(url));
+                        () => startHls(playbackUrl));
     } else {
       video.src = needsProxy(url, "file") ? streamProxy(url) : url; video.play().catch(()=>{});
     }
@@ -857,23 +820,12 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     let lastMediaTime = video.currentTime || 0;
     let lastMediaProgressAt = Date.now();
-    let lastBufferedEnd = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
-    let stablePlaybackSince = null;
-    const notePlaybackProgress = (now = Date.now()) => {
-      if (stablePlaybackSince === null) stablePlaybackSince = now;
-      if (now - stablePlaybackSince < 30_000) return;
+    const handleTimeUpdate = () => {
+      lastMediaTime = video.currentTime;
+      lastMediaProgressAt = Date.now();
       autoRecoveryRef.current.hls = 0;
       autoRecoveryRef.current.ts = 0;
       autoRecoveryRef.current.stall = 0;
-      autoRecoveryRef.current.tsReconnectTimes = [];
-    };
-    const handleTimeUpdate = () => {
-      const now = Date.now();
-      if (video.currentTime > lastMediaTime + 0.01) {
-        lastMediaProgressAt = now;
-        notePlaybackProgress(now);
-      }
-      lastMediaTime = video.currentTime;
       if (Date.now() - lastProgressTime < 5000) return;
       lastProgressTime = Date.now();
       reportProgress(false, 'interval');
@@ -921,7 +873,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
       lastMediaTime = video.currentTime;
       lastMediaProgressAt = Date.now();
-      stablePlaybackSince = null;
+      autoRecoveryRef.current.hls = 0;
+      autoRecoveryRef.current.ts = 0;
+      autoRecoveryRef.current.stall = 0;
       clearTimeout(debounceTimer);
       if (!isTracking) {
         isTracking = true;
@@ -934,26 +888,25 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     };
 
     const stallCheckTimer = window.setInterval(() => {
-      const liveEnded = current.type === "live" && video.ended;
-      if (cancelled || playbackPhaseRef.current !== "content" || (video.paused && !liveEnded) || (video.ended && !liveEnded) || document.hidden) return;
-      const now = Date.now();
-      const bufferedEnd = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
-      const mediaAdvanced = video.currentTime > lastMediaTime + 0.05;
-      const bufferAdvanced = bufferedEnd > lastBufferedEnd + 0.05;
-      lastBufferedEnd = bufferedEnd;
-      if (mediaAdvanced || bufferAdvanced) {
+      if (cancelled || playbackPhaseRef.current !== "content" || video.paused || video.ended || document.hidden) return;
+      if (video.currentTime > lastMediaTime + 0.05) {
         lastMediaTime = video.currentTime;
-        lastMediaProgressAt = now;
-        notePlaybackProgress(now);
+        lastMediaProgressAt = Date.now();
+        if (autoRecoveryRef.current) autoRecoveryRef.current.stall = 0;
         return;
       }
-      if (now - lastMediaProgressAt < 7_000) return;
-      stablePlaybackSince = null;
-      lastMediaProgressAt = now;
+      if (Date.now() - lastMediaProgressAt < 15_000) return;
+      const bufferedAhead = video.buffered.length
+        ? video.buffered.end(video.buffered.length - 1) - video.currentTime
+        : 0;
+      if (bufferedAhead > 2) return;
+      lastMediaProgressAt = Date.now();
       stallRecoveryRef.current?.("playback_progress_timeout");
-    }, 1000);
+    }, 5000);
     const handleStalled = () => {
-      stablePlaybackSince = null;
+      if (!video.paused && !video.ended && video.currentTime > 0.05) {
+        lastMediaProgressAt = Math.min(lastMediaProgressAt, Date.now() - 10_000);
+      }
     };
     const handlePauseOrWait = () => {
       clearTimeout(debounceTimer);
@@ -970,16 +923,17 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     const handleEnd = () => {
       clearTimeout(debounceTimer);
+      isTracking = false;
       clearInterval(heartbeatTimer);
       if (current.type === "live" && playbackPhaseRef.current === "content") {
-        if (isTracking) sendHeartbeat(false);
-        isTracking = false;
-        stablePlaybackSince = null;
-        lastMediaProgressAt = Date.now();
-        setIsLoading(true);
+        sendHeartbeat(false);
+        showStreamError({
+          icon: "!",
+          title: "Stream Ended",
+          body: "The provider closed the direct stream. Select Try Again to reconnect.",
+        });
         return;
       }
-      isTracking = false;
       sendHeartbeat(true);
       reportProgress(true, 'ended');
     };

@@ -10,11 +10,35 @@ import {
   normalizeConnections,
 } from "../src/connection-lifecycle.js";
 import { classifyStreamUrl } from "../src/stream-classifier.js";
-import { shouldProxyStreamUrl, stripTransientStreamFields } from "../src/stream-routing.js";
+import { shouldProxyStreamUrl, stripTransientStreamFields, xtreamHlsCandidate } from "../src/stream-routing.js";
 
 vi.mock("../src/vast.js", () => ({ fetchVastAd: vi.fn(() => null) }));
 vi.mock("../src/epg.js", () => ({ getEPGNow: vi.fn(() => null) }));
 import Player from "../src/components/Player.jsx";
+
+function installMockMpegts() {
+  const instances = [];
+  window.mpegts = {
+    isSupported: () => true,
+    Events: { ERROR: "error" },
+    createPlayer: vi.fn((mediaDataSource, config) => {
+      const player = {
+        mediaDataSource,
+        config,
+        handlers: {},
+        on(event, handler) { this.handlers[event] = handler; },
+        attachMediaElement: vi.fn(),
+        load: vi.fn(),
+        play: vi.fn(() => Promise.resolve()),
+        unload: vi.fn(),
+        destroy: vi.fn(),
+      };
+      instances.push(player);
+      return player;
+    }),
+  };
+  return { instances };
+}
 
 function installMockHls() {
   const instances = [];
@@ -49,29 +73,6 @@ function installMockHls() {
   return { instances, MockHls };
 }
 
-function installMockMpegts() {
-  const instances = [];
-  const Events = { ERROR: "error", LOADING_COMPLETE: "loadingComplete" };
-  window.mpegts = {
-    Events,
-    isSupported: () => true,
-    createPlayer: vi.fn(config => {
-      const player = {
-        config,
-        handlers: {},
-        on: vi.fn((event, handler) => { player.handlers[event] = handler; }),
-        attachMediaElement: vi.fn(),
-        load: vi.fn(),
-        play: vi.fn(() => Promise.resolve()),
-        unload: vi.fn(),
-        destroy: vi.fn(),
-      };
-      instances.push(player);
-      return player;
-    }),
-  };
-  return { instances, Events };
-}
 describe("connection and playback hardening", () => {
   beforeEach(() => {
     window.Hls = { isSupported: () => false, Events: {}, ErrorTypes: {} };
@@ -135,6 +136,13 @@ describe("connection and playback hardening", () => {
     expect(classifyStreamUrl("http://provider/playlist?extension=ts", "live")).toBe("ts");
     expect(classifyStreamUrl("http://provider/live/index.m3u8", "live")).toBe("hls");
   });
+
+  it("derives an Xtream HLS capability URL without changing tokens", () => {
+    expect(xtreamHlsCandidate("http://provider/live/user/pass/42.ts?token=abc"))
+      .toBe("http://provider/live/user/pass/42.m3u8?token=abc");
+    expect(xtreamHlsCandidate("http://provider/live/user/pass/42")).toBeNull();
+    expect(xtreamHlsCandidate("http://provider/movie/user/pass/42.mp4")).toBeNull();
+  });
   it("forces secure-page direct playback through the proxy for HTTP HLS and TS streams", () => {
     const options = {
       origin: "https://media.portalheaven.stream",
@@ -184,192 +192,57 @@ describe("connection and playback hardening", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
     expect(video.load.mock.calls.length).toBeGreaterThan(loadsBeforeRetry);
   });
-  it("falls back through /stream after direct HLS network retries fail without an HTTP status", async () => {
+  it("tries Xtream HLS first, then falls back once to the original direct TS URL", async () => {
+    const { instances: hlsInstances, MockHls } = installMockHls();
+    const { instances: mpegtsInstances } = installMockMpegts();
+    const directUrl = "http://provider.example/live/user/pass/channel.ts?token=test";
+
+    render(<Player
+      item={{ id: "xtream-live", name: "Xtream Live", url: directUrl, type: "live" }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      connType="xtream" t={key => key} isAdEligible={false}
+    />);
+
+    await waitFor(() => expect(hlsInstances).toHaveLength(1));
+    const hlsUrl = hlsInstances[0].loadSource.mock.calls[0][0];
+    expect(hlsUrl).toContain("/channel.m3u8");
+    expect(hlsUrl).not.toContain("/stream?url=");
+
+    await act(async () => {
+      await hlsInstances[0].handlers.error(null, {
+        fatal: true,
+        type: MockHls.ErrorTypes.NETWORK_ERROR,
+        details: "manifestLoadError",
+        response: { code: 404 },
+      });
+    });
+
+    await waitFor(() => expect(mpegtsInstances).toHaveLength(1));
+    expect(mpegtsInstances[0].mediaDataSource.url).toBe(directUrl);
+    expect(mpegtsInstances[0].mediaDataSource.url).not.toContain("/stream?");
+    expect(hlsInstances).toHaveLength(1);
+  });
+
+  it("does not turn a direct HLS CORS failure into an automatic VPS relay", async () => {
     const { instances, MockHls } = installMockHls();
-
-
     const directUrl = "http://provider.example/live/channel.m3u8?token=test";
     render(<Player
       item={{ id: "cors-hls", name: "CORS HLS", url: directUrl, type: "live", streamKind: "hls", _direct: true }}
-      channelList={[]}
-      epgData={null}
-      onClose={vi.fn()}
-      onFav={vi.fn()}
-      isFav={() => false}
-      connType="xtream"
-      t={key => key}
-      isAdEligible={false}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      connType="hls" t={key => key} isAdEligible={false}
     />);
 
     await waitFor(() => expect(instances).toHaveLength(1));
-    const directPlayer = instances[0];
-    expect(directPlayer.loadSource).toHaveBeenCalledWith(expect.stringContaining("_sv_live="));
-    const fatalNetworkError = { fatal: true, type: MockHls.ErrorTypes.NETWORK_ERROR, details: "manifestLoadError" };
-
+    const failure = { fatal: true, type: MockHls.ErrorTypes.NETWORK_ERROR, details: "manifestLoadError" };
     await act(async () => {
-      await directPlayer.handlers.error(null, fatalNetworkError);
-      await directPlayer.handlers.error(null, fatalNetworkError);
-      await directPlayer.handlers.error(null, fatalNetworkError);
+      await instances[0].handlers.error(null, failure);
+      await instances[0].handlers.error(null, failure);
+      await instances[0].handlers.error(null, failure);
     });
 
-    await waitFor(() => {
-      expect(instances.some(instance => instance.loadSource.mock.calls.some(([url]) =>
-        url.startsWith("/stream?url=") && decodeURIComponent(url).includes(directUrl)
-      ))).toBe(true);
-    });
-    expect(screen.queryByText(/Playback Error/i)).not.toBeInTheDocument();
+    expect(instances[0].loadSource.mock.calls.every(([url]) => !url.includes("/stream?"))).toBe(true);
+    expect(await screen.findByText("Network Error")).toBeInTheDocument();
   });
-  it("does not reconnect a direct MPEG-TS stream only because its loader completes", async () => {
-    vi.useFakeTimers();
-    try {
-      const { instances, Events } = installMockMpegts();
-      const directUrl = "http://provider.example/live/channel.ts";
-      render(<Player
-        item={{ id: "closing-ts", name: "Closing TS", url: directUrl, type: "live", streamKind: "ts", _direct: true }}
-        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
-        connType="xtream" t={key => key} isAdEligible={false}
-      />);
-
-      expect(instances).toHaveLength(1);
-      expect(instances[0].handlers[Events.LOADING_COMPLETE]).toBeUndefined();
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-      expect(instances).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("reconnects direct MPEG-TS only after playback makes no progress for seven seconds", async () => {
-    vi.useFakeTimers();
-    try {
-      const { instances } = installMockMpegts();
-      const { container } = render(<Player
-        item={{ id: "stalled-ts", name: "Stalled TS", url: "http://provider.example/live/channel.ts", type: "live", streamKind: "ts", _direct: true }}
-        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
-        connType="xtream" t={key => key} isAdEligible={false}
-      />);
-      const video = container.querySelector("video");
-      Object.defineProperty(video, "paused", { configurable: true, get: () => false });
-      Object.defineProperty(video, "ended", { configurable: true, get: () => false });
-
-      await act(async () => {
-        fireEvent.playing(video);
-        await vi.advanceTimersByTimeAsync(6_999);
-      });
-      expect(instances).toHaveLength(1);
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_001); });
-      expect(instances).toHaveLength(2);
-      expect(instances[1].config.url).toBe("http://provider.example/live/channel.ts");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("reconnects an ended live MPEG-TS stream only after seven seconds", async () => {
-    vi.useFakeTimers();
-    try {
-      const { instances } = installMockMpegts();
-      const { container } = render(<Player
-        item={{ id: "ended-live-ts", name: "Ended Live TS", url: "http://provider.example/live/channel.ts", type: "live", streamKind: "ts", _direct: true }}
-        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
-        connType="xtream" t={key => key} isAdEligible={false}
-      />);
-      const video = container.querySelector("video");
-      Object.defineProperty(video, "paused", { configurable: true, get: () => true });
-      Object.defineProperty(video, "ended", { configurable: true, get: () => true });
-
-      await act(async () => {});
-      fireEvent.ended(video);
-      await act(async () => { await vi.advanceTimersByTimeAsync(6_999); });
-      expect(instances).toHaveLength(1);
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_001); });
-      expect(instances).toHaveLength(2);
-      expect(instances[1].config.url).toBe("http://provider.example/live/channel.ts");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("treats an ended VOD as completed without reconnecting", async () => {
-    vi.useFakeTimers();
-    try {
-      installMockMpegts();
-      const onProgress = vi.fn();
-      const { container } = render(<Player
-        item={{ id: "ended-vod", name: "Ended VOD", url: "http://provider.example/movie.mp4", type: "vod", streamKind: "file" }}
-        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
-        onProgress={onProgress} connType="xtream" t={key => key} isAdEligible={false}
-      />);
-      const video = container.querySelector("video");
-
-      await act(async () => {});
-      fireEvent.ended(video);
-      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
-
-      expect(onProgress).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "ended-vod" }),
-        expect.objectContaining({ completed: true, reason: "ended" }),
-      );
-      expect(window.mpegts.createPlayer).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-  it("ignores duplicate network errors from a replaced MPEG-TS player", async () => {
-    vi.useFakeTimers();
-    try {
-      const { instances, Events } = installMockMpegts();
-      render(<Player
-        item={{ id: "duplicate-error-ts", name: "Duplicate Error TS", url: "http://provider.example/live/channel.ts", type: "live", streamKind: "ts", _direct: true }}
-        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
-        connType="xtream" t={key => key} isAdEligible={false}
-      />);
-      const failedPlayer = instances[0];
-
-      await act(async () => {
-        await failedPlayer.handlers[Events.ERROR]("NetworkError", "network disconnected", {});
-        await failedPlayer.handlers[Events.ERROR]("NetworkError", "duplicate disconnect", {});
-        await vi.advanceTimersByTimeAsync(500);
-      });
-
-      expect(instances).toHaveLength(2);
-      expect(screen.queryByText("Playback Error")).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-  it("stops reconnecting MPEG-TS after three network failures per minute", async () => {
-    vi.useFakeTimers();
-    try {
-      const { instances, Events } = installMockMpegts();
-      render(<Player
-        item={{ id: "looping-ts", name: "Looping TS", url: "http://provider.example/live/channel.ts", type: "live", streamKind: "ts", _direct: true }}
-        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
-        connType="xtream" t={key => key} isAdEligible={false}
-      />);
-
-      for (const delay of [500, 1000, 2000]) {
-        const player = instances.at(-1);
-        await act(async () => {
-          await player.handlers[Events.ERROR]("NetworkError", "network disconnected", {});
-          await vi.advanceTimersByTimeAsync(delay);
-        });
-      }
-      expect(instances).toHaveLength(4);
-
-      await act(async () => {
-        await instances.at(-1).handlers[Events.ERROR]("NetworkError", "network disconnected", {});
-      });
-
-      expect(instances).toHaveLength(4);
-      expect(screen.getByText("Stream Disconnected")).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("resets accumulated HLS errors after a fragment loads successfully", async () => {
     const { instances, MockHls } = installMockHls();
     const onRefreshStream = vi.fn();
@@ -680,7 +553,7 @@ describe("connection and playback hardening", () => {
       video.currentTime = 0.1;
       fireEvent.playing(video);
       fireEvent.stalled(video);
-      await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
 
       expect(onRefreshStream).toHaveBeenCalledOnce();
       expect(onRefreshStream).toHaveBeenCalledWith(expect.objectContaining({ id: "silent-stall" }), "playback_progress_timeout");
@@ -706,7 +579,7 @@ describe("connection and playback hardening", () => {
       await act(async () => {});
       fireEvent.playing(video);
       fireEvent.stalled(video);
-      await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
       video.currentTime = 0;
       fireEvent.loadedMetadata(video);
 
@@ -714,6 +587,17 @@ describe("connection and playback hardening", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it("shows a manual retry when a live source ends cleanly", async () => {
+    render(<Player
+      item={{ id: "ended-live", name: "Ended Live", url: "http://provider/live/channel", type: "live" }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      connType="xtream" t={key => key} isAdEligible={false}
+    />);
+    await act(async () => {});
+    fireEvent.ended(document.querySelector("video"));
+    expect(await screen.findByText("Stream Ended")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try Again" })).toBeInTheDocument();
   });
   it("restores VOD position after an explicit native retry", () => {
     render(<Player
