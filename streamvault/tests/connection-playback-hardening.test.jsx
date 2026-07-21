@@ -49,6 +49,29 @@ function installMockHls() {
   return { instances, MockHls };
 }
 
+function installMockMpegts() {
+  const instances = [];
+  const Events = { ERROR: "error", LOADING_COMPLETE: "loadingComplete" };
+  window.mpegts = {
+    Events,
+    isSupported: () => true,
+    createPlayer: vi.fn(config => {
+      const player = {
+        config,
+        handlers: {},
+        on: vi.fn((event, handler) => { player.handlers[event] = handler; }),
+        attachMediaElement: vi.fn(),
+        load: vi.fn(),
+        play: vi.fn(() => Promise.resolve()),
+        unload: vi.fn(),
+        destroy: vi.fn(),
+      };
+      instances.push(player);
+      return player;
+    }),
+  };
+  return { instances, Events };
+}
 describe("connection and playback hardening", () => {
   beforeEach(() => {
     window.Hls = { isSupported: () => false, Events: {}, ErrorTypes: {} };
@@ -195,6 +218,63 @@ describe("connection and playback hardening", () => {
       ))).toBe(true);
     });
     expect(screen.queryByText(/Playback Error/i)).not.toBeInTheDocument();
+  });
+  it("reconnects a direct MPEG-TS stream when the provider closes it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { instances, Events } = installMockMpegts();
+      const directUrl = "http://provider.example/live/channel.ts";
+      render(<Player
+        item={{ id: "closing-ts", name: "Closing TS", url: directUrl, type: "live", streamKind: "ts", _direct: true }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        connType="xtream" t={key => key} isAdEligible={false}
+      />);
+      expect(instances).toHaveLength(1);
+
+      await act(async () => {
+        instances[0].handlers[Events.LOADING_COMPLETE]();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      expect(instances).toHaveLength(2);
+      expect(instances[1].config.url).toBe(directUrl);
+      expect(instances[1].config.url).not.toContain("/stream?url=");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops reconnecting MPEG-TS after three provider disconnects per minute", async () => {
+    vi.useFakeTimers();
+    try {
+      const { instances, Events } = installMockMpegts();
+      render(<Player
+        item={{ id: "looping-ts", name: "Looping TS", url: "http://provider.example/live/channel.ts", type: "live", streamKind: "ts", _direct: true }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        connType="xtream" t={key => key} isAdEligible={false}
+      />);
+
+      for (const delay of [500, 1000, 2000]) {
+        const player = instances.at(-1);
+        await act(async () => {
+          player.handlers[Events.LOADING_COMPLETE]();
+          await Promise.resolve();
+          await vi.advanceTimersByTimeAsync(delay);
+        });
+      }
+      expect(instances).toHaveLength(4);
+
+      await act(async () => {
+        instances.at(-1).handlers[Events.LOADING_COMPLETE]();
+        await Promise.resolve();
+      });
+
+      expect(instances).toHaveLength(4);
+      expect(screen.getByText("Stream Disconnected")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("resets accumulated HLS errors after a fragment loads successfully", async () => {
     const { instances, MockHls } = installMockHls();

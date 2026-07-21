@@ -257,7 +257,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const [relayLoading, setRelayLoading] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [streamRevision, setStreamRevision] = useState(0);
-  const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0 });
+  const autoRecoveryRef = useRef({ key: null, hls: 0, ts: 0, tsReconnectTimes: [] });
   const playbackGenerationRef = useRef(0);
   const stallRecoveryRef = useRef(null);
   const recoveryPositionRef = useRef(null);
@@ -335,7 +335,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     setIsLoading(true);
     clearTimeout(loadingTimerRef.current);
     if (autoRecoveryRef.current.key !== `${current.id || current.url || ""}:${retryKey}`) {
-      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, stall: 0, recoveryInFlight: false, corsProxyFallback: false, stalkerRefreshInFlight: false, stalkerRefreshTimes: [] };
+      autoRecoveryRef.current = { key: `${current.id || current.url || ""}:${retryKey}`, hls: 0, ts: 0, tsReconnectTimes: [], stall: 0, recoveryInFlight: false, corsProxyFallback: false, stalkerRefreshInFlight: false, stalkerRefreshTimes: [] };
     }
     destroyPlayers();
     video.removeAttribute("src");
@@ -650,17 +650,40 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: u },
         { enableWorker: false, lazyLoadMaxDuration: 3 * 60, seekType: "range" });
       mpegtsRef.current = player;
-      player.on(window.mpegts.Events.ERROR, async (errType, errDetail, errInfo) => {
+
+      async function reconnectMpegts(reason) {
+        if (mpegtsRef.current !== player || current.type !== "live") return false;
+        if (current._stalkerCmd && await requestStalkerRefresh(reason)) return true;
+
         const recovery = autoRecoveryRef.current;
-        if (recovery.ts < 2 && (errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network"))) {
-          recovery.ts += 1;
-          const delay = 500 * (2 ** (recovery.ts - 1));
-          window.setTimeout(() => {
-            if (mpegtsRef.current !== player) return;
-            try { player.unload(); player.load(); player.play().catch(() => {}); } catch { /* Recovery is best effort. */ }
-          }, delay);
-          return;
+        const now = Date.now();
+        const reconnectTimes = (recovery.tsReconnectTimes || []).filter(time => time > now - 60_000);
+        if (reconnectTimes.length >= 3) {
+          showStreamError({ icon: "!", title: "Stream Disconnected", body: "The provider repeatedly closed the live stream. Try again later or choose another channel." });
+          destroyPlayers();
+          return true;
         }
+        reconnectTimes.push(now);
+        recovery.tsReconnectTimes = reconnectTimes;
+        const generation = playbackGenerationRef.current;
+        const delay = 500 * (2 ** (reconnectTimes.length - 1));
+        trackAnalytics("mpegts_reconnect", {
+          content_id: String(current.id || ""),
+          attempt: reconnectTimes.length,
+          reason,
+        });
+        setIsLoading(true);
+        destroyPlayers();
+        window.setTimeout(() => {
+          if (generation !== playbackGenerationRef.current) return;
+          setStreamRevision(value => value + 1);
+        }, delay);
+        return true;
+      }
+
+      player.on(window.mpegts.Events.ERROR, async (errType, errDetail, errInfo) => {
+        const isNetworkFailure = errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network");
+        if (isNetworkFailure && await reconnectMpegts(`mpegts_${errType || errDetail || "network_error"}`)) return;
         if (current._direct && await requestStalkerRefresh(`mpegts_${errType || errDetail || "error"}`)) return;
         const code = errInfo?.code;
         let title = "Playback Error";
@@ -707,6 +730,14 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         showStreamError({ icon: "!", title, body });
         destroyPlayers();
       });
+      if (window.mpegts.Events.LOADING_COMPLETE) {
+        player.on(window.mpegts.Events.LOADING_COMPLETE, () => {
+          // A live MPEG-TS response reaching EOF means the provider closed it.
+          window.queueMicrotask(() => {
+            if (mpegtsRef.current === player) reconnectMpegts("mpegts_loading_complete");
+          });
+        });
+      }
       player.attachMediaElement(video);
       player.load();
       player.play().catch(()=>{});
