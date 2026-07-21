@@ -1920,6 +1920,7 @@ export default function App() {
   const historyRef = useRef(history);
   const lastHistoryLocalWriteRef = useRef(0);
   const lastHistoryServerSyncRef = useRef(0);
+  const restoredSyncRef = useRef(null);
   useEffect(() => { historyRef.current = history; }, [history]);
   const setHistory = svActions.setHistory;
 
@@ -2307,7 +2308,10 @@ export default function App() {
 
   // ── restore from server when local favs/history are empty (fires after useStreamVault loads from db)
   useEffect(() => {
-    if (!activeConnId) return;
+    if (!activeConnId || !sv.hydrated) return;
+    const restoreKey = `${authUser?.id || (isGuest ? GUEST_ID : "guest")}:${activeConnId}`;
+    if (restoredSyncRef.current === restoreKey) return;
+    restoredSyncRef.current = restoreKey;
     let cancelled = false;
     (async () => {
       // Check if local favs/history are empty — if so, restore from server
@@ -2328,7 +2332,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeConnId, sv.favorites, sv.history]);
+  }, [activeConnId, sv.hydrated, authUser?.id, isGuest]);
 
   // ── load cached content from IDB for a connection
   async function loadFromCache(id, connObj) {
