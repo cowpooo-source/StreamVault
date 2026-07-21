@@ -10,6 +10,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
   const mpegtsRef  = useRef(null);
+  const mpegtsReconnectRef = useRef(null);
   const adPlayedRef = useRef(false);
   const adSessionRef = useRef(0);
   const adFinishRef = useRef(null);
@@ -127,6 +128,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     loadingTimerRef.current = null;
     if (hlsRef.current)    { hlsRef.current.destroy();  hlsRef.current = null; }
     if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
+    mpegtsReconnectRef.current = null;
     resetTrackState();
     const video = videoRef.current;
     if (video) {
@@ -446,7 +448,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       trackAnalytics("playback_stall_recovery", { content_id: String(current.id || ""), content_type: current.type || "live", attempt: recovery.stall, reason });
       try {
         if (recovery.stall === 1 && hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
-        if (recovery.stall === 1 && mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
+        if (mpegtsRef.current && mpegtsReconnectRef.current) {
+          return await mpegtsReconnectRef.current(reason);
+        }
         // Native video has no engine-level reload API. Refresh a direct Stalker URL
         // first; otherwise rebuild the native element while retaining VOD position.
         if (!hlsRef.current && !mpegtsRef.current) {
@@ -461,7 +465,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         if (current._direct && await requestStalkerRefresh(reason)) return true;
 
         if (hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
-        if (mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
+
         if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
           recoveryPositionRef.current = video.currentTime;
         }
@@ -680,8 +684,10 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         }, delay);
         return true;
       }
+      mpegtsReconnectRef.current = reconnectMpegts;
 
       player.on(window.mpegts.Events.ERROR, async (errType, errDetail, errInfo) => {
+        if (mpegtsRef.current !== player) return;
         const isNetworkFailure = errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network");
         if (isNetworkFailure && await reconnectMpegts(`mpegts_${errType || errDetail || "network_error"}`)) return;
         if (current._direct && await requestStalkerRefresh(`mpegts_${errType || errDetail || "error"}`)) return;
@@ -730,14 +736,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         showStreamError({ icon: "!", title, body });
         destroyPlayers();
       });
-      if (window.mpegts.Events.LOADING_COMPLETE) {
-        player.on(window.mpegts.Events.LOADING_COMPLETE, () => {
-          // A live MPEG-TS response reaching EOF means the provider closed it.
-          window.queueMicrotask(() => {
-            if (mpegtsRef.current === player) reconnectMpegts("mpegts_loading_complete");
-          });
-        });
-      }
+
       player.attachMediaElement(video);
       player.load();
       player.play().catch(()=>{});
@@ -856,12 +855,23 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     let lastMediaTime = video.currentTime || 0;
     let lastMediaProgressAt = Date.now();
-    const handleTimeUpdate = () => {
-      lastMediaTime = video.currentTime;
-      lastMediaProgressAt = Date.now();
+    let lastBufferedEnd = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+    let stablePlaybackSince = null;
+    const notePlaybackProgress = (now = Date.now()) => {
+      if (stablePlaybackSince === null) stablePlaybackSince = now;
+      if (now - stablePlaybackSince < 30_000) return;
       autoRecoveryRef.current.hls = 0;
       autoRecoveryRef.current.ts = 0;
       autoRecoveryRef.current.stall = 0;
+      autoRecoveryRef.current.tsReconnectTimes = [];
+    };
+    const handleTimeUpdate = () => {
+      const now = Date.now();
+      if (video.currentTime > lastMediaTime + 0.01) {
+        lastMediaProgressAt = now;
+        notePlaybackProgress(now);
+      }
+      lastMediaTime = video.currentTime;
       if (Date.now() - lastProgressTime < 5000) return;
       lastProgressTime = Date.now();
       reportProgress(false, 'interval');
@@ -909,9 +919,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
       lastMediaTime = video.currentTime;
       lastMediaProgressAt = Date.now();
-      autoRecoveryRef.current.hls = 0;
-      autoRecoveryRef.current.ts = 0;
-      autoRecoveryRef.current.stall = 0;
+      stablePlaybackSince = null;
       clearTimeout(debounceTimer);
       if (!isTracking) {
         isTracking = true;
@@ -925,24 +933,24 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     const stallCheckTimer = window.setInterval(() => {
       if (cancelled || playbackPhaseRef.current !== "content" || video.paused || video.ended || document.hidden) return;
-      if (video.currentTime > lastMediaTime + 0.05) {
+      const now = Date.now();
+      const bufferedEnd = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+      const mediaAdvanced = video.currentTime > lastMediaTime + 0.05;
+      const bufferAdvanced = bufferedEnd > lastBufferedEnd + 0.05;
+      lastBufferedEnd = bufferedEnd;
+      if (mediaAdvanced || bufferAdvanced) {
         lastMediaTime = video.currentTime;
-        lastMediaProgressAt = Date.now();
-        if (autoRecoveryRef.current) autoRecoveryRef.current.stall = 0;
+        lastMediaProgressAt = now;
+        notePlaybackProgress(now);
         return;
       }
-      if (Date.now() - lastMediaProgressAt < 15_000) return;
-      const bufferedAhead = video.buffered.length
-        ? video.buffered.end(video.buffered.length - 1) - video.currentTime
-        : 0;
-      if (bufferedAhead > 2) return;
-      lastMediaProgressAt = Date.now();
+      if (now - lastMediaProgressAt < 7_000) return;
+      stablePlaybackSince = null;
+      lastMediaProgressAt = now;
       stallRecoveryRef.current?.("playback_progress_timeout");
-    }, 5000);
+    }, 1000);
     const handleStalled = () => {
-      if (!video.paused && !video.ended && video.currentTime > 0.05) {
-        lastMediaProgressAt = Math.min(lastMediaProgressAt, Date.now() - 10_000);
-      }
+      stablePlaybackSince = null;
     };
     const handlePauseOrWait = () => {
       clearTimeout(debounceTimer);
