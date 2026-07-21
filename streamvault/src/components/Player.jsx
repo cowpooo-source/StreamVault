@@ -438,7 +438,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     stallRecoveryRef.current = async (reason = "playback_stalled") => {
       const recovery = autoRecoveryRef.current;
-      if (recovery.recoveryInFlight || video.ended || video.paused || playbackPhaseRef.current !== "content") return false;
+      const liveEnded = current.type === "live" && video.ended;
+      if (recovery.recoveryInFlight || (video.ended && !liveEnded) || (video.paused && !liveEnded) || playbackPhaseRef.current !== "content") return false;
       if ((recovery.stall || 0) >= 3) {
         showStreamError({ icon: "!", title: "Playback Stalled", body: "The stream stopped responding after several reconnect attempts. Try again or choose another stream." });
         return false;
@@ -686,6 +687,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       }
       mpegtsReconnectRef.current = reconnectMpegts;
 
+
       player.on(window.mpegts.Events.ERROR, async (errType, errDetail, errInfo) => {
         if (mpegtsRef.current !== player) return;
         const isNetworkFailure = errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network");
@@ -932,7 +934,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     };
 
     const stallCheckTimer = window.setInterval(() => {
-      if (cancelled || playbackPhaseRef.current !== "content" || video.paused || video.ended || document.hidden) return;
+      const liveEnded = current.type === "live" && video.ended;
+      if (cancelled || playbackPhaseRef.current !== "content" || (video.paused && !liveEnded) || (video.ended && !liveEnded) || document.hidden) return;
       const now = Date.now();
       const bufferedEnd = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
       const mediaAdvanced = video.currentTime > lastMediaTime + 0.05;
@@ -967,8 +970,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     const handleEnd = () => {
       clearTimeout(debounceTimer);
-      isTracking = false;
       clearInterval(heartbeatTimer);
+      if (current.type === "live" && playbackPhaseRef.current === "content") {
+        if (isTracking) sendHeartbeat(false);
+        isTracking = false;
+        stablePlaybackSince = null;
+        lastMediaProgressAt = Date.now();
+        setIsLoading(true);
+        return;
+      }
+      isTracking = false;
       sendHeartbeat(true);
       reportProgress(true, 'ended');
     };

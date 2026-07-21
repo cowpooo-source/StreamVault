@@ -266,6 +266,57 @@ describe("connection and playback hardening", () => {
     }
   });
 
+  it("reconnects an ended live MPEG-TS stream only after seven seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const { instances } = installMockMpegts();
+      const { container } = render(<Player
+        item={{ id: "ended-live-ts", name: "Ended Live TS", url: "http://provider.example/live/channel.ts", type: "live", streamKind: "ts", _direct: true }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        connType="xtream" t={key => key} isAdEligible={false}
+      />);
+      const video = container.querySelector("video");
+      Object.defineProperty(video, "paused", { configurable: true, get: () => true });
+      Object.defineProperty(video, "ended", { configurable: true, get: () => true });
+
+      await act(async () => {});
+      fireEvent.ended(video);
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_999); });
+      expect(instances).toHaveLength(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_001); });
+      expect(instances).toHaveLength(2);
+      expect(instances[1].config.url).toBe("http://provider.example/live/channel.ts");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats an ended VOD as completed without reconnecting", async () => {
+    vi.useFakeTimers();
+    try {
+      installMockMpegts();
+      const onProgress = vi.fn();
+      const { container } = render(<Player
+        item={{ id: "ended-vod", name: "Ended VOD", url: "http://provider.example/movie.mp4", type: "vod", streamKind: "file" }}
+        channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+        onProgress={onProgress} connType="xtream" t={key => key} isAdEligible={false}
+      />);
+      const video = container.querySelector("video");
+
+      await act(async () => {});
+      fireEvent.ended(video);
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+
+      expect(onProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "ended-vod" }),
+        expect.objectContaining({ completed: true, reason: "ended" }),
+      );
+      expect(window.mpegts.createPlayer).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("ignores duplicate network errors from a replaced MPEG-TS player", async () => {
     vi.useFakeTimers();
     try {
