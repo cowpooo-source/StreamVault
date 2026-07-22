@@ -4,6 +4,9 @@
   "description": "Personal IPTV client — Xtream Codes, M3U, Stalker Portal and direct HLS",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

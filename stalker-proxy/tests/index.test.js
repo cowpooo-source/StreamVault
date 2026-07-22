@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import request from 'supertest';
+import { Readable } from 'node:stream';
 
 // Mock node-fetch BEFORE importing app
 vi.mock('node-fetch', () => ({
@@ -119,15 +120,13 @@ describe('Backend Integration Tests (index.js)', () => {
         status: 200,
         ok: true,
         headers: new Map([['content-type', 'application/json']]),
-        body: { pipe: (res) => res.send(JSON.stringify({ ok: true })) },
+        body: Readable.from([JSON.stringify({ ok: true })]),
       });
 
-      const res = await request(app).get('/proxy?url=https://example.com/data');
-      if (res.status === 200) {
-        expect(res.body.ok).toBe(true);
-      } else {
-        expect([200, 403]).toContain(res.status);
-      }
+      // A public literal IP keeps SSRF validation deterministic without DNS.
+      const res = await request(app).get('/proxy?url=https://192.0.2.1/data');
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
     });
   });
 });

@@ -15,6 +15,7 @@ services:
       - ALLOWED_ORIGIN=*
       - ADMIN_PASS=Mango!123
       - PLAYER_BASE=http://localhost:3201
+      - APP_URL=http://localhost:3201/app
       - CONTENT_BASE_URL=http://localhost:3201
       - CONTENT_SESSION_TTL_MINUTES=30
       - CONTENT_SESSION_MAX_PER_USER=5
@@ -31,7 +32,7 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_URL=
-      - VITE_SECURE_APP_BASE_URL=http://localhost:3201
+      - VITE_SECURE_APP_BASE_URL=http://localhost:3201/app
     networks:
       - streamvault-feature-net
 

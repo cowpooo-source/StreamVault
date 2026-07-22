@@ -1,1 +1,0 @@
-import'data:text/javascript,"assets/landing-CPNW0R_9.js";if(!import.meta.resolve)throw Error("import.meta.resolve not supported")';export function __vite_legacy_guard(){import(`_`).catch(()=>1),(async function*(){})().next()}

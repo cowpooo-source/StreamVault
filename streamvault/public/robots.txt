@@ -1,0 +1,19 @@
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /content
+Disallow: /api/
+Disallow: /stalker/
+Disallow: /proxy
+Disallow: /stream
+
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /app
+Disallow: /content
+Disallow: /api/
+Disallow: /stalker/
+Disallow: /proxy
+Disallow: /stream
+
+Sitemap: https://portalheaven.stream/sitemap.xml

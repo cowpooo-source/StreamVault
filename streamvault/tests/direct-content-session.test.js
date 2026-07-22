@@ -107,7 +107,7 @@ describe("direct-content-session helpers", () => {
   it("builds the HTTPS app home URL from the configured secure origin", () => {
     setSecureBase("https://media.portalheaven.stream");
     expect(getAppHomeUrl()).toBe("https://media.portalheaven.stream/");
-    expect(getAppHomeUrl({ baseUrl: "https://portal.example/app/" })).toBe("https://portal.example/");
+    expect(getAppHomeUrl({ baseUrl: "https://portal.example/app/" })).toBe("https://portal.example/app");
   });
 
   it("rejects an invalid secure app origin", () => {

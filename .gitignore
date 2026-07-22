@@ -77,6 +77,14 @@ update-app.js
 *.html
 !streamvault/index.html
 !streamvault/landing.html
+!streamvault/app.html
+!streamvault/404.html
+!streamvault/features.html
+!streamvault/security.html
+!streamvault/self-host.html
+!streamvault/faq.html
+!streamvault/privacy.html
+!streamvault/terms.html
 !stalker-proxy/src/analytics.html
 *.json
 !package.json

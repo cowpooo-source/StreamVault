@@ -19,7 +19,19 @@ function normalizeBaseUrl(baseUrl, fallback, name = "URL") {
   }
 }
 
-// Secure (HTTPS) app origin. Configured at build time via VITE_SECURE_APP_BASE_URL.
+function normalizeSecureAppUrl(baseUrl, fallback) {
+  try {
+    const url = new URL(String(baseUrl || fallback));
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    const pathname = trimTrailingSlash(url.pathname);
+    const appPath = pathname === "/app" || pathname.startsWith("/app/") ? pathname : "/";
+    return appPath === "/" ? `${url.origin}/` : `${url.origin}${appPath}`;
+  } catch {
+    throw new Error("Secure app URL must be configured with an HTTP or HTTPS URL");
+  }
+}
+
+// Secure (HTTPS) app URL. Configured at build time via VITE_SECURE_APP_BASE_URL.
 // Falls back to the current origin in development so tests and local builds work.
 function secureAppBaseUrl() {
   const fromEnv = import.meta.env?.VITE_SECURE_APP_BASE_URL;
@@ -95,7 +107,7 @@ export function clearContentSessionToken() {
 }
 
 export function getAppHomeUrl(options = {}) {
-  return `${normalizeBaseUrl(options.baseUrl, secureAppBaseUrl(), "Secure app URL")}/`;
+  return normalizeSecureAppUrl(options.baseUrl, secureAppBaseUrl());
 }
 
 export function navigateToAppHome(options = {}) {

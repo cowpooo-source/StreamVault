@@ -18,7 +18,7 @@ describe("service worker cache policy", () => {
     expect(source).not.toContain("cache.addAll(APP_SHELL)");
   });
 
-  it("prefers the requested cached document before the SPA fallback", () => {
-    expect(source).toContain('(await caches.match(e.request)) || caches.match("/")');
+  it("prefers the requested cached document before the app fallback", () => {
+    expect(source).toContain('return caches.match("/app")');
   });
 });

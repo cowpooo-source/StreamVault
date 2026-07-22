@@ -1,5 +1,5 @@
 const CACHE = "sv-v4";
-const APP_SHELL = ['/', '/index.html', '/landing.html'];
+const APP_SHELL = ['/app'];
 
 self.addEventListener("install", e => {
   // Precache is best-effort: a single missing shell asset must not break install.
@@ -68,7 +68,12 @@ self.addEventListener("fetch", e => {
     e.respondWith(fetch(e.request).then(res => {
       if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cache => cache.put(e.request, c)); }
       return res;
-    }).catch(async () => (await caches.match(e.request)) || caches.match("/") || new Response("", { status: 503, statusText: "Offline" })));
+    }).catch(async () => {
+      const cached = await caches.match(e.request);
+      if (cached) return cached;
+      if (url.pathname === "/app" || url.pathname.startsWith("/app/")) return caches.match("/app");
+      return new Response("", { status: 503, statusText: "Offline" });
+    }));
   } else if (e.request.destination === "script" || e.request.destination === "style" ||
              e.request.destination === "image" || e.request.destination === "font") {
     e.respondWith(caches.match(e.request).then(r => r || fetch(e.request).then(res => {
