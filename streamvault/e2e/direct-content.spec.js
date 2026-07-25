@@ -1,14 +1,14 @@
-import { expect, test } from "@playwright/test";
+import { test, expect } from "./fixtures/app.fixture.js";
 
 test.describe("Direct content session", () => {
-  test("validates an HTTP session without persisting provider credentials", async ({ page }) => {
+  test("validates an HTTP session without persisting provider credentials", async ({ appPage }) => {
     const providerRequests = [];
     let authMeRequests = 0;
-    page.on("request", request => {
+    appPage.on("request", request => {
       if (request.url().includes("/api/auth/me")) authMeRequests += 1;
     });
 
-    await page.route("**/api/content-session/validate?token=direct-session", async (route) => {
+    await appPage.route("**/api/content-session/validate?token=direct-session", async (route) => {
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
@@ -28,7 +28,7 @@ test.describe("Direct content session", () => {
       });
     });
 
-    await page.route("**/proxy?url=**", async (route) => {
+    await appPage.route("**/proxy?url=**", async (route) => {
       const proxiedUrl = new URL(route.request().url());
       const requestUrl = new URL(proxiedUrl.searchParams.get("url"));
       providerRequests.push(requestUrl.toString());
@@ -45,13 +45,14 @@ test.describe("Direct content session", () => {
       });
     });
 
-    await page.goto("/content?token=direct-session");
+    await appPage.goto("/content?token=direct-session");
 
-    await expect(page).toHaveURL(/\/content$/);
-    expect(authMeRequests).toBe(0);    await expect(page.getByText("Direct Channel", { exact: false })).toBeVisible();
-    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("sv-content-session-token"))).toBe("direct-session");
+    await expect(appPage).toHaveURL(/\/content$/);
+    expect(authMeRequests).toBe(0);
+    await expect(appPage.getByText("Direct Channel", { exact: false })).toBeVisible();
+    await expect.poll(() => appPage.evaluate(() => sessionStorage.getItem("sv-content-session-token"))).toBe("direct-session");
 
-    const persisted = await page.evaluate(() => ({
+    const persisted = await appPage.evaluate(() => ({
       localStorage: Object.values(localStorage),
       sessionStorage: Object.entries(sessionStorage).filter(([key]) => key !== "sv-content-session-token"),
     }));

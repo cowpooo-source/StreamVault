@@ -601,6 +601,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           } else if (code === 459 || code === 462) {
             title = `Token Expired (${code})`;
             body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
+          } else if (code >= 400 && code < 500) {
+            title = `Client Error (${code})`;
+            body = `The stream request was rejected with HTTP ${code}.`;
           } else if (code >= 500) {
             title = `Server Error (${code})`;
             body = "The stream server returned an error. It may be overloaded or temporarily down.";
@@ -867,6 +870,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     };
 
     const handlePlay = () => {
+      handleReady();
       if (current._stalkerCmd && reportedDirectGenerationRef.current !== current.streamGeneration) {
         reportedDirectGenerationRef.current = current.streamGeneration || current.url;
         reportStalkerAudit("direct_success");
