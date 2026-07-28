@@ -153,6 +153,13 @@ describe('Integration Tests - Routes', () => {
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+    expect(res.body.requests).toMatchObject({
+      active: 0,
+      requestsLastMinute: expect.any(Number),
+      errorsLastMinute: expect.any(Number),
+      averageLatencyMs: expect.any(Number),
+    });
+    expect(res.body.memory.rssMb).toBeGreaterThan(0);
   });
 
 
@@ -2001,7 +2008,6 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.error).toContain('503');
   });
 });
-
 
 
 

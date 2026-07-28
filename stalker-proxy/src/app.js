@@ -8,10 +8,12 @@ const passport = require("passport");
 const path = require("path");
 
 const { createProxyHelpers } = require("./utils/proxyHelpers");
+const { createOperationalMetrics } = require("./services/operationalMetrics");
 
 function createApp(deps) {
   const { cache, auth, fetch, system, email, pool } = deps;
   const app = express();
+  const operationalMetrics = createOperationalMetrics();
 
   const helpers = createProxyHelpers({ fetch, isUrlAllowed: deps.isUrlAllowed });
   const { 
@@ -72,15 +74,23 @@ function createApp(deps) {
     const p = req.path;
     const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
     const start = Date.now();
+    const shouldTrack = p !== "/health" && p !== "/analytics" && p !== "/api/analytics";
+    let type = "other";
+    if (p.startsWith("/stalker/")) type = "stalker";
+    else if (p === "/stream") type = "stream";
+    else if (p === "/proxy") type = "proxy";
+    let operationalFinished = false;
+    if (shouldTrack) operationalMetrics.begin();
+    const finishOperational = status => {
+      if (!shouldTrack || operationalFinished) return;
+      operationalFinished = true;
+      operationalMetrics.finish(type, status, Date.now() - start);
+    };
 
     res.on("finish", () => {
       const duration = Date.now() - start;
-      if (p !== "/health" && p !== "/analytics" && p !== "/api/analytics") {
-        let type = "other";
-        if (p.startsWith("/stalker/")) type = "stalker";
-        else if (p === "/stream") type = "stream";
-        else if (p === "/proxy") type = "proxy";
-        
+      finishOperational(res.statusCode);
+      if (shouldTrack) {
         cache.trackRequest(type, res.statusCode, duration);
         cache.trackVisitor(ip, req.headers["user-agent"]);
         
@@ -95,6 +105,9 @@ function createApp(deps) {
         }
       }
     });
+    res.on("close", () => {
+      if (!res.writableEnded) finishOperational(499);
+    });
 
     if (p.startsWith("/stalker/") && req.query.portal && req.query.mac) {
       const type = p.includes("/vod") ? "vod" : p.includes("/series") ? "series" : p.includes("/epg") ? "epg" : "live";
@@ -103,7 +116,12 @@ function createApp(deps) {
     next();
   });
 
-  app.get("/health", (req, res) => res.json({ status: "ok", uptime: process.uptime() }));
+  app.get("/health", (req, res) => res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    requests: operationalMetrics.snapshot(),
+    memory: { rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024) },
+  }));
 
   // SSRF Protection for Stalker
   const MAC_RE = /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/;

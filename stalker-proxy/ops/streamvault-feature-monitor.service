@@ -1,0 +1,9 @@
+[Unit]
+Description=Monitor StreamVault non-production service
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+EnvironmentFile=-/home/opc/StreamVault-Feature/stalker-proxy/ops/monitor.env
+ExecStart=/usr/bin/bash /home/opc/StreamVault-Feature/stalker-proxy/ops/monitor-feature-service.sh
