@@ -251,4 +251,124 @@ describe("redirect targets", () => {
       else process.env.STALKER_CHANNELS_MAX_BYTES = previousChannelLimit;
     }
   });
+
+  it('deduplicates identical in-flight metadata requests', async () => {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const fetch = vi.fn().mockImplementation(async () => {
+      await pending;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ js: [{ id: '1' }] }),
+      };
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = {
+      base: 'http://portal.example/',
+      portal: 'http://portal.example/c/',
+      apiPath: 'load.php',
+      mac: '00:11:22:33:44:55',
+      opts: {},
+      headers: {},
+    };
+
+    const first = helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' });
+    const second = helpers.portalFetchRetry(session, { action: 'get_genres', type: 'itv' });
+    release();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { js: [{ id: '1' }] },
+      { js: [{ id: '1' }] },
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies a provider-wide cooldown after a metadata 429', async () => {
+    const previousCooldown = process.env.STALKER_PROVIDER_COOLDOWN_MS;
+    process.env.STALKER_PROVIDER_COOLDOWN_MS = '5000';
+    const fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      text: async () => '',
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = {
+      base: 'http://portal.example/',
+      portal: 'http://portal.example/c/',
+      apiPath: 'load.php',
+      mac: '00:11:22:33:44:55',
+      opts: {},
+      headers: {},
+    };
+
+    try {
+      await expect(helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' }))
+        .rejects.toThrow('rate limited');
+      const callsAfterRateLimit = fetch.mock.calls.length;
+      await expect(helpers.getSession('http://portal.example/c/', '00:11:22:33:44:66'))
+        .rejects.toThrow('Cooldown active');
+      expect(fetch).toHaveBeenCalledTimes(callsAfterRateLimit);
+    } finally {
+      if (previousCooldown === undefined) delete process.env.STALKER_PROVIDER_COOLDOWN_MS;
+      else process.env.STALKER_PROVIDER_COOLDOWN_MS = previousCooldown;
+    }
+  });
+
+  it('enforces the configured metadata concurrency limit for distinct requests', async () => {
+    const previousLimit = process.env.STALKER_METADATA_MAX_CONCURRENCY;
+    process.env.STALKER_METADATA_MAX_CONCURRENCY = '1';
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const fetch = vi.fn().mockImplementation(async () => {
+      await pending;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ js: [] }) };
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = {
+      base: 'http://portal.example/',
+      portal: 'http://portal.example/c/',
+      apiPath: 'load.php',
+      mac: '00:11:22:33:44:55',
+      opts: {},
+      headers: {},
+    };
+
+    try {
+      const first = helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' });
+      await expect(helpers.portalFetchRetry(session, { type: 'itv', action: 'get_all_channels' }))
+        .rejects.toThrow('concurrency limit');
+      release();
+      await expect(first).resolves.toEqual({ js: [] });
+    } finally {
+      if (previousLimit === undefined) delete process.env.STALKER_METADATA_MAX_CONCURRENCY;
+      else process.env.STALKER_METADATA_MAX_CONCURRENCY = previousLimit;
+    }
+  });
+
+  it('stops authentication recovery when device auth is rate limited', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => 'Authorization failed',
+      })
+      .mockResolvedValueOnce({ ok: false, status: 429 });
+    const refresh = vi.fn();
+    const helpers = createProxyHelpers({ fetch });
+    const session = {
+      base: 'http://portal.example/',
+      portal: 'http://portal.example/c/',
+      apiPath: 'load.php',
+      mac: '00:11:22:33:44:55',
+      opts: {},
+      headers: {},
+      refresh,
+    };
+
+    await expect(helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' }))
+      .rejects.toThrow('rate limited');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(refresh).not.toHaveBeenCalled();
+  });
 });

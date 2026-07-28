@@ -222,12 +222,32 @@ function createProxyHelpers(deps) {
   const PATH_CACHE_MAX = 500;
   const sessionCache = new Map();
   const inFlightSessions = new Map();
+  const inFlightMetadataRequests = new Map();
   const portalCooldowns = new Map();
+  const providerCooldowns = new Map();
   const activeMetadataRequests = new Map();
   const handshakeFailureCache = new Map();
   const HANDSHAKE_FAILURE_CACHE_MAX = 500;
+  const COOLDOWN_CACHE_MAX = 500;
   const SESSION_TTL_MS = 30 * 1000;
-  const RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
+  function boundedEnvInt(name, fallback, min, max) {
+    const configured = Number.parseInt(process.env[name] || '', 10);
+    return Number.isFinite(configured)
+      ? Math.min(max, Math.max(min, configured))
+      : fallback;
+  }
+
+  function rateLimitCooldownMs() {
+    return boundedEnvInt('STALKER_PROVIDER_COOLDOWN_MS', 60 * 1000, 5 * 1000, 5 * 60 * 1000);
+  }
+
+  function providerKey(portal) {
+    try {
+      return new URL(portal).host.toLowerCase();
+    } catch {
+      return String(portal || '').replace(/\/+$/, '').toLowerCase();
+    }
+  }
   const HANDSHAKE_FAILURE_COOLDOWN_MS = 90 * 1000; // 90s — prevents cascade when portal is down
 
   function setPathCache(key, value) {
@@ -286,18 +306,35 @@ function createProxyHelpers(deps) {
   }
 
   function setPortalCooldown(portal, mac, opts = {}) {
-    portalCooldowns.set(sessionCacheKey(portal, mac, opts), Date.now() + RATE_LIMIT_COOLDOWN_MS);
+    const expiresAt = Date.now() + rateLimitCooldownMs();
+    const sessionKey = sessionCacheKey(portal, mac, opts);
+    const provider = providerKey(portal);
+    if (portalCooldowns.size >= COOLDOWN_CACHE_MAX && !portalCooldowns.has(sessionKey)) {
+      portalCooldowns.delete(portalCooldowns.keys().next().value);
+    }
+    if (providerCooldowns.size >= COOLDOWN_CACHE_MAX && !providerCooldowns.has(provider)) {
+      providerCooldowns.delete(providerCooldowns.keys().next().value);
+    }
+    portalCooldowns.set(sessionKey, expiresAt);
+    providerCooldowns.set(provider, expiresAt);
   }
 
   function getPortalCooldown(portal, mac, opts = {}) {
     const key = sessionCacheKey(portal, mac, opts);
-    const expiresAt = portalCooldowns.get(key);
-    if (!expiresAt) return 0;
-    if (expiresAt <= Date.now()) {
+    const provider = providerKey(portal);
+    const sessionExpiresAt = portalCooldowns.get(key) || 0;
+    const providerExpiresAt = providerCooldowns.get(provider) || 0;
+    const now = Date.now();
+    if (sessionExpiresAt && sessionExpiresAt <= now) {
       portalCooldowns.delete(key);
-      return 0;
     }
-    return expiresAt;
+    if (providerExpiresAt && providerExpiresAt <= now) {
+      providerCooldowns.delete(provider);
+    }
+    return Math.max(
+      sessionExpiresAt > now ? sessionExpiresAt : 0,
+      providerExpiresAt > now ? providerExpiresAt : 0,
+    );
   }
 
   // ── Handshake failure cache: prevent hammering a portal that's down ──
@@ -434,6 +471,9 @@ function createProxyHelpers(deps) {
       const url = `${session.base}${session.apiPath}?JsHttpRequest=1-xml`;
       const headers = { ...session.headers, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" };
       const response = await fetch(url, { method: "POST", headers, body: qs, timeout: 8000, signal: requestOptions.signal, agent: agentFor(url) });
+      if (response.status === 429) {
+        throw Object.assign(new Error('Portal rate limited (429). Try again later.'), { code: 'RATE_LIMITED' });
+      }
       const body = await readBoundedText(response);
       if (!response.ok || /Authorization failed|Device not found|Access denied|not supported|missing metrics/i.test(body)) {
         console.warn("Stalker device authentication was rejected");
@@ -442,6 +482,7 @@ function createProxyHelpers(deps) {
       return true;
     } catch (error) {
       if (requestOptions.signal?.aborted) throw error;
+      if (error?.code === 'RATE_LIMITED') throw error;
       console.warn("Stalker device authentication failed:", sanitizeStalkerUrl(error.message));
       return false;
     }
@@ -501,7 +542,7 @@ function createProxyHelpers(deps) {
         } catch (e) {
           if (e.code === "RATE_LIMITED") {
             setPortalCooldown(portal, mac, normalized);
-            throw new Error("Portal rate limited (429). Try again in a minute.");
+            throw Object.assign(new Error('Portal rate limited (429). Try again later.'), { code: 'RATE_LIMITED' });
           }
         }
       }
@@ -536,7 +577,7 @@ function createProxyHelpers(deps) {
           } catch(e) {
             if (e.code === "RATE_LIMITED") {
               setPortalCooldown(portal, mac, normalized);
-              throw new Error("Portal rate limited (429). Try again in a minute.");
+              throw Object.assign(new Error('Portal rate limited (429). Try again later.'), { code: 'RATE_LIMITED' });
             }
             throw e;
           }
@@ -567,16 +608,35 @@ function createProxyHelpers(deps) {
     }
   }
 
-  // portalFetch with automatic token refresh on auth failure
-  async function portalFetchRetry(session, params, timeout, requestOptions = {}) {
+  function metadataRequestKey(session, params) {
+    const sortedParams = Object.fromEntries(
+      Object.entries(params || {}).sort(([left], [right]) => left.localeCompare(right)),
+    );
+    return JSON.stringify([
+      String(session.base || session.portal || '').replace(/\/+$/, ''),
+      session.apiPath || '',
+      session.mac || '',
+      session.opts?.serial || '',
+      sortedParams,
+    ]);
+  }
+
+  async function portalFetchRetryInternal(session, params, timeout, requestOptions) {
+    const cooldownUntil = getPortalCooldown(session.portal || session.base, session.mac, session.opts);
+    if (cooldownUntil) {
+      const waitSeconds = Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 1000));
+      throw new Error(`Portal rate limited (429). Cooldown active for ${waitSeconds}s.`);
+    }
+
     let result = await portalFetch(session, params, timeout, requestOptions);
-    if (result === null) {
+    const maxRecoveries = boundedEnvInt('STALKER_METADATA_MAX_AUTH_RECOVERIES', 2, 0, 2);
+    if (result === null && maxRecoveries >= 1) {
       // Authenticate lazily because some legacy portals invalidate an otherwise
       // valid handshake token when they receive the optional second step.
       const authenticated = await completeDeviceAuth(session, session.opts || {}, requestOptions);
       if (authenticated) result = await portalFetch(session, params, timeout, requestOptions);
     }
-    if (result === null) {
+    if (result === null && maxRecoveries >= 2) {
       // Restore a clean token if optional device authentication was rejected.
       const fresh = await session.refresh();
       Object.assign(session, fresh);
@@ -586,15 +646,37 @@ function createProxyHelpers(deps) {
     return result;
   }
 
+  // Deduplicate identical catalog requests. The shared request deliberately
+  // does not inherit one browser's abort signal, which could cancel work still
+  // needed by other callers; the upstream timeout remains the hard bound.
+  async function portalFetchRetry(session, params, timeout, requestOptions = {}) {
+    const key = metadataRequestKey(session, params);
+    const existing = inFlightMetadataRequests.get(key);
+    if (existing) return existing;
+
+    const sharedOptions = { ...requestOptions };
+    delete sharedOptions.signal;
+    const request = portalFetchRetryInternal(session, params, timeout, sharedOptions)
+      .catch(error => {
+        if (error?.code === 'RATE_LIMITED' || /\b429\b|rate limited/i.test(error?.message || '')) {
+          setPortalCooldown(session.portal || session.base, session.mac, session.opts);
+        }
+        throw error;
+      })
+      .finally(() => inFlightMetadataRequests.delete(key));
+    inFlightMetadataRequests.set(key, request);
+    return request;
+  }
+
   // Make an API call using the resolved session
   async function portalFetch(session, params, timeout = 12000, requestOptions = {}) {
     const qs = new URLSearchParams({ ...params, JsHttpRequest: "1-xml" }).toString();
     const url = `${session.base}${session.apiPath}?${qs}`;
-    const providerKey = new URL(session.base).host;
-    const active = activeMetadataRequests.get(providerKey) || 0;
-    const maxConcurrent = Math.max(1, Math.min(20, Number.parseInt(process.env.STALKER_METADATA_MAX_CONCURRENCY || "6", 10) || 6));
+    const metadataProviderKey = providerKey(session.base);
+    const active = activeMetadataRequests.get(metadataProviderKey) || 0;
+    const maxConcurrent = boundedEnvInt('STALKER_METADATA_MAX_CONCURRENCY', 6, 1, 20);
     if (active >= maxConcurrent) throw new Error("Portal metadata concurrency limit reached");
-    activeMetadataRequests.set(providerKey, active + 1);
+    activeMetadataRequests.set(metadataProviderKey, active + 1);
     try {
 
     function parseResponse(text, res) {
@@ -615,7 +697,7 @@ function createProxyHelpers(deps) {
         const text = await readBoundedText(res, params.action);
         return parseResponse(text, res);
       }
-      if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
+      if (res.status === 429) throw Object.assign(new Error('Portal rate limited (429). Try again later.'), { code: 'RATE_LIMITED' });
       if (res.status >= 500) throw new Error(`Portal server error (${res.status})`);
     } catch (e) {
       if (requestOptions.signal?.aborted || e.message.includes("Portal")) throw e; // re-throw aborts and our own errors
@@ -628,15 +710,15 @@ function createProxyHelpers(deps) {
         const text = await readBoundedText(res, params.action);
         return parseResponse(text, res);
       }
-      if (res.status === 429) throw new Error("Portal rate limited (429). Try again in a minute.");
+      if (res.status === 429) throw Object.assign(new Error('Portal rate limited (429). Try again later.'), { code: 'RATE_LIMITED' });
     } catch (e) {
       if (requestOptions.signal?.aborted || e.message.includes("Portal")) throw e;
     }
 
     throw new Error(`Portal request failed: ${params.action || "unknown"}`);
     } finally {
-      const remaining = (activeMetadataRequests.get(providerKey) || 1) - 1;
-      if (remaining > 0) activeMetadataRequests.set(providerKey, remaining); else activeMetadataRequests.delete(providerKey);
+      const remaining = (activeMetadataRequests.get(metadataProviderKey) || 1) - 1;
+      if (remaining > 0) activeMetadataRequests.set(metadataProviderKey, remaining); else activeMetadataRequests.delete(metadataProviderKey);
     }
   }
 
@@ -644,7 +726,9 @@ function createProxyHelpers(deps) {
     pathCache.clear();
     sessionCache.clear();
     inFlightSessions.clear();
+    inFlightMetadataRequests.clear();
     portalCooldowns.clear();
+    providerCooldowns.clear();
     activeMetadataRequests.clear();
     handshakeFailureCache.clear();
   }
