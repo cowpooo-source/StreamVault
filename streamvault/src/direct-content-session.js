@@ -9,23 +9,13 @@ function trimTrailingSlash(pathname) {
   return pathname.replace(/\/+$/, "") || "/";
 }
 
-function normalizeBaseUrl(baseUrl, fallback, name = "URL") {
-  try {
-    const url = new URL(String(baseUrl || fallback));
-    if (!["http:", "https:"].includes(url.protocol)) throw new Error();
-    return url.origin;
-  } catch {
-    throw new Error(`${name} must be configured with an HTTP or HTTPS origin`);
-  }
-}
-
 function normalizeSecureAppUrl(baseUrl, fallback) {
   try {
     const url = new URL(String(baseUrl || fallback));
     if (!["http:", "https:"].includes(url.protocol)) throw new Error();
     const pathname = trimTrailingSlash(url.pathname);
-    const appPath = pathname === "/app" || pathname.startsWith("/app/") ? pathname : "/";
-    return appPath === "/" ? `${url.origin}/` : `${url.origin}${appPath}`;
+    const appPath = pathname === "/app" || pathname.startsWith("/app/") ? pathname : "/app";
+    return `${url.origin}${appPath}`;
   } catch {
     throw new Error("Secure app URL must be configured with an HTTP or HTTPS URL");
   }
@@ -111,7 +101,9 @@ export function getAppHomeUrl(options = {}) {
 }
 
 export function navigateToAppHome(options = {}) {
-  const url = getAppHomeUrl(options);
+  const target = new URL(getAppHomeUrl(options));
+  if (options.reason) target.searchParams.set("reason", options.reason);
+  const url = target.toString();
 
   if (typeof options.navigate === "function") {
     options.navigate(url);

@@ -19,7 +19,7 @@ test.describe("HTTPS host checks", () => {
   test("/ returns marketing page", async ({ page }) => {
     const response = await page.goto("/");
     expect(response.status()).toBe(200);
-    await expect(page.getByText(/Portal Heaven|personal IPTV/i)).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open Portal Heaven", exact: true })).toBeVisible();
   });
 
   test("/app returns application document", async ({ page }) => {

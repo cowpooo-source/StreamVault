@@ -106,7 +106,7 @@ describe("direct-content-session helpers", () => {
 
   it("builds the HTTPS app home URL from the configured secure origin", () => {
     setSecureBase("https://media.portalheaven.stream");
-    expect(getAppHomeUrl()).toBe("https://media.portalheaven.stream/");
+    expect(getAppHomeUrl()).toBe("https://media.portalheaven.stream/app");
     expect(getAppHomeUrl({ baseUrl: "https://portal.example/app/" })).toBe("https://portal.example/app");
   });
 
@@ -117,20 +117,31 @@ describe("direct-content-session helpers", () => {
   it("falls back to the current origin when no secure origin is configured", () => {
     clearSecureBase();
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    expect(getAppHomeUrl()).toBe(`${origin}/`);
+    expect(getAppHomeUrl()).toBe(`${origin}/app`);
   });
 
   it("navigates back to the HTTPS app home through a callback or window.location", () => {
     setSecureBase("https://media.portalheaven.stream");
     const navigate = vi.fn();
-    expect(navigateToAppHome({ navigate })).toBe("https://media.portalheaven.stream/");
-    expect(navigate).toHaveBeenCalledWith("https://media.portalheaven.stream/");
+    expect(navigateToAppHome({ navigate })).toBe("https://media.portalheaven.stream/app");
+    expect(navigate).toHaveBeenCalledWith("https://media.portalheaven.stream/app");
 
     const assign = vi.fn();
     vi.stubGlobal("window", { location: { assign } });
-    expect(navigateToAppHome({ location: window.location, baseUrl: "https://portal.example/content?token=abc123" })).toBe("https://portal.example/");
-    expect(assign).toHaveBeenCalledWith("https://portal.example/");
+    expect(navigateToAppHome({ location: window.location, baseUrl: "https://portal.example/content?token=abc123" })).toBe("https://portal.example/app");
+    expect(assign).toHaveBeenCalledWith("https://portal.example/app");
   });
+
+  it("includes the authentication reason when returning from an invalid content session", () => {
+    const navigate = vi.fn();
+    expect(navigateToAppHome({
+      baseUrl: "https://media.portalheaven.stream/app",
+      reason: "auth",
+      navigate,
+    })).toBe("https://media.portalheaven.stream/app?reason=auth");
+    expect(navigate).toHaveBeenCalledWith("https://media.portalheaven.stream/app?reason=auth");
+  });
+
   it("rejects missing content session tokens", async () => {
     await expect(validateContentSession(null)).rejects.toThrow("Missing content session token");
   });
