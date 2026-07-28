@@ -5,6 +5,25 @@ import { getEPGNow } from "../epg.js";
 import { classifyStreamUrl } from "../stream-classifier.js";
 import { shouldProxyStreamUrl, xtreamHlsCandidate } from "../stream-routing.js";
 
+const NO_AUTOMATIC_RETRY_HTTP_STATUS = new Set([
+  400, 401, 402, 403, 404, 405, 406, 410, 423, 429, 451, 456, 459, 462,
+]);
+
+export function shouldStopAutomaticRecovery(status) {
+  const code = Number(status);
+  return Number.isInteger(code) && NO_AUTOMATIC_RETRY_HTTP_STATUS.has(code);
+}
+
+export function playbackHttpError(status) {
+  const code = Number(status);
+  if (code === 404) return { icon: "!", title: "Stream Not Found (404)", body: "The channel may be offline, or its URL may have changed. Try reconnecting to refresh the channel list." };
+  if (code === 401 || code === 403) return { icon: "!", title: `Access Denied (${code})`, body: "The stream server rejected the request. Your IP may be blocked or your credentials lack access." };
+  if (code === 429) return { icon: "!", title: "Rate Limited (429)", body: "The provider is rate limiting requests. Wait before trying again." };
+  if (code === 456) return { icon: "!", title: "Account Blocked (456)", body: "The provider rejected the stream. Your account may be expired, in use elsewhere, or blocked by the provider." };
+  if (code === 459 || code === 462) return { icon: "!", title: `Token Expired (${code})`, body: "The stream token expired or was rejected. Try again to request a fresh token." };
+  return { icon: "!", title: `Stream Rejected (${code})`, body: `The provider rejected the stream with HTTP ${code}. Automatic retries were stopped.` };
+}
+
 function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, onRequestRelay, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
@@ -560,13 +579,28 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           setActiveSub(data.id);
         });
         hls.on(window.Hls.Events.ERROR, async (_, data) => {
+          if (hlsRef.current !== hls) return;
           if (!data.fatal) return;
           const recovery = autoRecoveryRef.current;
-          const code = data.response?.code;
+          const code = Number(data.response?.code || data.response?.status) || null;
 
-          // Many Xtream providers expose HLS beside the advertised TS URL. If that
-          // capability probe fails, fall back once to direct TS without using the VPS.
-          if (!manifestParsed && tryXtreamTsFallback("hls_" + (data.details || data.type || "manifest_error"))) return;
+          if ((code === 459 || code === 462) && current._direct
+              && await requestStalkerRefresh(`hls_http_${code}`)) return;
+          // A missing optional Xtream HLS endpoint may still have a working TS
+          // stream. HTTP 456 rejection and 429 throttling are not probes.
+          if (!manifestParsed && code !== 456 && code !== 429
+              && tryXtreamTsFallback("hls_" + (data.details || data.type || "manifest_error"))) return;
+          if (shouldStopAutomaticRecovery(code)) {
+            showStreamError(playbackHttpError(code));
+            trackAnalytics("playback_error", {
+              error_type: `hls_${data.type}`,
+              error_code: String(code),
+              content_id: String(current.id || ""),
+              provider_type: current.type || "live",
+            });
+            destroyPlayers();
+            return;
+          }
 
           if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && recovery.hls < 2) {
             recovery.hls += 1;
@@ -586,25 +620,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
           let title = "Playback Error";
           let body;
-          if (code === 404) {
-            title = "Stream Not Found (404)";
-            body = "The stream URL returned 404. The channel may be offline, or its URL may have changed. Try reconnecting to refresh the channel list.";
-          } else if (code === 401 || code === 403) {
-            title = `Access Denied (${code})`;
-            body = "The stream server rejected the request. Your IP may be blocked or your credentials lack access.";
-          } else if (code === 429) {
-            title = "Rate Limited (429)";
-            body = "Too many requests to the provider. Please wait a minute before trying again.";
-          } else if (code === 456) {
-            title = "Account Blocked (456)";
-            body = "The provider rejected the stream (HTTP 456). Your account may be expired, in use elsewhere, or your IP is blocked by the provider's firewall.";
-          } else if (code === 459 || code === 462) {
-            title = `Token Expired (${code})`;
-            body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
-          } else if (code >= 400 && code < 500) {
-            title = `Client Error (${code})`;
-            body = `The stream request was rejected with HTTP ${code}.`;
-          } else if (code >= 500) {
+          if (code >= 500) {
             title = `Server Error (${code})`;
             body = "The stream server returned an error. It may be overloaded or temporarily down.";
           } else if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
@@ -648,7 +664,22 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       });
       mpegtsRef.current = player;
       player.on(window.mpegts.Events.ERROR, async (errType, errDetail, errInfo) => {
+        if (mpegtsRef.current !== player) return;
         const recovery = autoRecoveryRef.current;
+        const code = Number(errInfo?.code || errInfo?.status) || null;
+        if ((code === 459 || code === 462) && current._direct
+            && await requestStalkerRefresh(`mpegts_http_${code}`)) return;
+        if (shouldStopAutomaticRecovery(code)) {
+          showStreamError(playbackHttpError(code));
+          trackAnalytics("playback_error", {
+            error_type: `mpegts_${errType || "error"}`,
+            error_code: String(code),
+            content_id: String(current.id || ""),
+            provider_type: current.type || "live",
+          });
+          destroyPlayers();
+          return;
+        }
         if (recovery.ts < 2 && (errType === "NetworkError" || errDetail?.toLowerCase?.().includes("network"))) {
           recovery.ts += 1;
           const delay = 500 * (2 ** (recovery.ts - 1));
@@ -659,28 +690,9 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
           return;
         }
         if (current._direct && await requestStalkerRefresh(`mpegts_${errType || errDetail || "error"}`)) return;
-        const code = errInfo?.code;
         let title = "Playback Error";
         let body;
-        if (code === 404) {
-          title = "Stream Not Found (404)";
-          body = "The stream URL returned 404. The channel may be offline or the URL has changed.";
-        } else if (code === 401 || code === 403) {
-          title = `Access Denied (${code})`;
-          body = "The stream server rejected the request. Your IP may be blocked or your credentials lack access.";
-        } else if (code === 429) {
-          title = "Rate Limited (429)";
-          body = "Too many requests to the provider. Please wait a minute before trying again.";
-        } else if (code === 456) {
-          title = "Account Blocked (456)";
-          body = "The provider rejected the stream (HTTP 456). Your account may be expired, in use elsewhere, or your IP is blocked by the provider's firewall.";
-        } else if (code === 459 || code === 462) {
-          title = `Token Expired (${code})`;
-          body = "The stream token has expired or was rejected. Click play again to get a fresh token.";
-        } else if (code >= 400 && code < 500) {
-          title = `Client Error (${code})`;
-          body = `The stream request was rejected with HTTP ${code}.`;
-        } else if (code >= 500) {
+        if (code >= 500) {
           title = `Server Error (${code})`;
           body = "The stream server returned an error. It may be overloaded or temporarily down.";
         } else if (errType === "NetworkError") {

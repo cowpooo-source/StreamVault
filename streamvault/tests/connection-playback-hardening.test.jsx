@@ -257,6 +257,48 @@ describe("connection and playback hardening", () => {
     expect(instances[0].loadSource.mock.calls.every(([url]) => !url.includes("/stream?"))).toBe(true);
     expect(await screen.findByText("Network Error")).toBeInTheDocument();
   });
+
+  it("stops HLS recovery immediately when the provider returns 456", async () => {
+    const { instances, MockHls } = installMockHls();
+    render(<Player
+      item={{ id: "blocked-hls", name: "Blocked HLS", url: "http://provider.example/live.m3u8", type: "live", streamKind: "hls" }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      connType="hls" t={key => key} isAdEligible={false}
+    />);
+
+    await waitFor(() => expect(instances).toHaveLength(1));
+    await act(async () => {
+      await instances[0].handlers.error(null, {
+        fatal: true,
+        type: MockHls.ErrorTypes.NETWORK_ERROR,
+        details: "manifestLoadError",
+        response: { code: 456 },
+      });
+    });
+
+    expect(instances[0].startLoad).not.toHaveBeenCalled();
+    expect(instances[0].destroy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Account Blocked (456)")).toBeInTheDocument();
+  });
+
+  it("stops MPEG-TS recovery immediately when the provider returns 456", async () => {
+    const { instances } = installMockMpegts();
+    render(<Player
+      item={{ id: "blocked-ts", name: "Blocked TS", url: "http://provider.example/live.ts", type: "live", streamKind: "ts" }}
+      channelList={[]} epgData={null} onClose={vi.fn()} onFav={vi.fn()} isFav={() => false}
+      connType="m3u" t={key => key} isAdEligible={false}
+    />);
+
+    await waitFor(() => expect(instances).toHaveLength(1));
+    await act(async () => {
+      await instances[0].handlers.error("NetworkError", "networkError", { code: 456 });
+    });
+
+    expect(instances[0].load).toHaveBeenCalledTimes(1);
+    expect(instances[0].unload).not.toHaveBeenCalled();
+    expect(instances[0].destroy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Account Blocked (456)")).toBeInTheDocument();
+  });
   it("resets accumulated HLS errors after a fragment loads successfully", async () => {
     const { instances, MockHls } = installMockHls();
     const onRefreshStream = vi.fn();
