@@ -9,13 +9,15 @@ export const FAKE_USER = {
   username: "e2e-user",
   role: "regular",
   maxConnections: 5,
+  limits: { maxConnections: 5 },
 };
 
 export const FAKE_GUEST = {
   id: 9002,
   username: "guest",
   role: "guest",
-  maxConnections: 1,
+  maxConnections: 2,
+  limits: { maxConnections: 2 },
 };
 
 /**
@@ -84,16 +86,66 @@ export async function mockLoginFailure(page, message = "Invalid credentials") {
 }
 
 /**
+ * Mock POST /api/auth/register and retain the submitted request body.
+ */
+export async function mockRegistrationSuccess(page, overrides = {}) {
+  const user = {
+    ...FAKE_USER,
+    id: 9003,
+    username: "new-e2e-user",
+    email: "new-user@example.test",
+    role: "free",
+    maxConnections: 2,
+    limits: { maxConnections: 2 },
+    emailVerified: false,
+    ...overrides,
+  };
+  const requests = [];
+
+  await page.route("**/api/auth/register", (route) => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ user }),
+    });
+  });
+
+  return { user, requests };
+}
+
+/**
+ * Mock POST /api/auth/register to return a readable validation error.
+ */
+export async function mockRegistrationFailure(page, message = "Email already registered") {
+  const requests = [];
+
+  await page.route("**/api/auth/register", (route) => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ error: message }),
+    });
+  });
+
+  return { requests };
+}
+
+/**
  * Mock POST /api/auth/guest to succeed.
  */
 export async function mockGuestLoginSuccess(page) {
-  await page.route("**/api/auth/guest", (route) =>
-    route.fulfill({
+  const requests = [];
+  await page.route("**/api/auth/guest", (route) => {
+    requests.push(route.request().postDataJSON());
+    return route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ ok: true }),
-    }),
-  );
+    });
+  });
+  return { requests };
 }
 
 /**

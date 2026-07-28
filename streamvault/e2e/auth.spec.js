@@ -4,11 +4,15 @@ import {
   mockLoggedOutUser,
   mockLoginSuccess,
   mockLoginFailure,
+  mockRegistrationSuccess,
+  mockRegistrationFailure,
   mockGuestLoginSuccess,
   mockLogoutSuccess,
   mockResetPasswordSuccess,
   mockTurnstile,
+  mockAppBackend,
 } from "./fixtures/auth.fixture.js";
+import { installXtreamMock } from "./fixtures/provider-mocks.js";
 
 test.describe("Authentication flows", () => {
   test("displays login when /api/auth/me returns 401", async ({ appPage }) => {
@@ -48,15 +52,177 @@ test.describe("Authentication flows", () => {
     await expect(appPage.getByText("Invalid credentials")).toBeVisible();
   });
 
-  test("guest login reaches the setup screen", async ({ appPage }) => {
+  test("new user registration sends email data and receives the user response", async ({ appPage }) => {
     await mockLoggedOutUser(appPage);
-    await mockGuestLoginSuccess(appPage);
+    const registration = await mockRegistrationSuccess(appPage, {
+      username: "registered-user",
+      email: "registered@example.test",
+    });
+    await mockTurnstile(appPage);
     await appPage.goto("/app");
 
-    // The Guest button is below the login form.
-    await appPage.getByRole("button", { name: /guest/i }).click();
+    await appPage.getByRole("button", { name: "Register" }).click();
+    await appPage.getByPlaceholder("Username").fill("registered-user");
+    await appPage.getByPlaceholder("email@example.com").fill("registered@example.test");
+    await appPage.getByPlaceholder("Password").fill("correct-horse-battery-staple");
+    await appPage.getByRole("button", { name: "Create Account" }).click();
 
-    await expect(appPage.getByText("Portal Heaven")).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByText("Xtream Codes")).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByText(/free.*0\/2 connections/i)).toBeVisible();
+    expect(registration.user.role).toBe("free");
+    expect(registration.requests).toHaveLength(1);
+    expect(registration.requests[0]).toMatchObject({
+      username: "registered-user",
+      email: "registered@example.test",
+      password: "correct-horse-battery-staple",
+    });
+  });
+
+  test("registration displays a duplicate-email response", async ({ appPage, allowBrowserError }) => {
+    allowBrowserError(/^400 POST https?:\/\/[^/]+\/api\/auth\/register$/);
+    await mockLoggedOutUser(appPage);
+    const registration = await mockRegistrationFailure(appPage);
+    await mockTurnstile(appPage);
+    await appPage.goto("/app");
+
+    await appPage.getByRole("button", { name: "Register" }).click();
+    await appPage.getByPlaceholder("Username").fill("duplicate-user");
+    await appPage.getByPlaceholder("email@example.com").fill("existing@example.test");
+    await appPage.getByPlaceholder("Password").fill("correct-horse-battery-staple");
+    await appPage.getByRole("button", { name: "Create Account" }).click();
+
+    await expect(appPage.getByText("Email already registered")).toBeVisible();
+    expect(registration.requests).toHaveLength(1);
+    await expect(appPage.getByRole("button", { name: "Create Account" })).toBeVisible();
+  });
+
+  test("guest can enter setup, connect, and send a stable guest ID", async ({ appPage }) => {
+    await mockLoggedOutUser(appPage);
+    const guestLogin = await mockGuestLoginSuccess(appPage);
+    await mockAppBackend(appPage);
+    installXtreamMock(appPage, { auth: "valid" });
+    await appPage.addInitScript(() => localStorage.setItem("sv-disclaimer-accepted", "1"));
+
+    let contentSessionGuestId = null;
+    appPage.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/content-session") {
+        contentSessionGuestId = request.headers()["x-guest-id"] || null;
+      }
+    });
+
+    await appPage.goto("/app");
+    await appPage.getByRole("button", { name: /guest/i }).click();
+    await expect(appPage.getByText("Xtream Codes")).toBeVisible({ timeout: 10000 });
+    expect(guestLogin.requests).toEqual([{}]);
+
+    const guestState = await appPage.evaluate(() => ({
+      mode: localStorage.getItem("sv-guest-mode"),
+      id: localStorage.getItem("sv-guest-id"),
+    }));
+    expect(guestState.mode).toBe("1");
+    expect(guestState.id).toBeTruthy();
+
+    await appPage.getByPlaceholder("http://server.com:8080").fill("http://provider.test");
+    await appPage.getByPlaceholder("username").fill("guest-provider-user");
+    await appPage.getByPlaceholder("password").fill("guest-provider-pass");
+    await appPage.getByRole("button", { name: /Connect/ }).click();
+
+    await expect(appPage.getByText("News Channel")).toBeVisible({ timeout: 15000 });
+    expect(contentSessionGuestId).toBe(guestState.id);
+  });
+
+  test("guest mode survives a page reload without another guest login request", async ({ appPage }) => {
+    await mockLoggedOutUser(appPage);
+    const guestLogin = await mockGuestLoginSuccess(appPage);
+    await appPage.goto("/app");
+
+    await appPage.getByRole("button", { name: /guest/i }).click();
+    await expect(appPage.getByText("Xtream Codes")).toBeVisible({ timeout: 10000 });
+    const guestId = await appPage.evaluate(() => localStorage.getItem("sv-guest-id"));
+
+    await appPage.reload();
+
+    await expect(appPage.getByText("Xtream Codes")).toBeVisible({ timeout: 10000 });
+    expect(guestLogin.requests).toHaveLength(1);
+    expect(await appPage.evaluate(() => localStorage.getItem("sv-guest-mode"))).toBe("1");
+    expect(await appPage.evaluate(() => localStorage.getItem("sv-guest-id"))).toBe(guestId);
+  });
+
+  test("guest logout clears guest mode and returns to login", async ({ appPage }) => {
+    await mockLoggedOutUser(appPage);
+    await mockGuestLoginSuccess(appPage);
+    await mockLogoutSuccess(appPage);
+    await appPage.goto("/app");
+
+    await appPage.getByRole("button", { name: /guest/i }).click();
+    await expect(appPage.getByText("Xtream Codes")).toBeVisible({ timeout: 10000 });
+    await appPage.getByRole("button", { name: "Logout" }).click();
+
+    await expect(appPage.getByPlaceholder("Username")).toBeVisible({ timeout: 10000 });
+    expect(await appPage.evaluate(() => localStorage.getItem("sv-guest-mode"))).toBeNull();
+  });
+
+  test("guest remains on setup when provider validation fails", async ({ appPage }) => {
+    await mockLoggedOutUser(appPage);
+    await mockGuestLoginSuccess(appPage);
+    installXtreamMock(appPage, { auth: "invalid" });
+    await appPage.addInitScript(() => localStorage.setItem("sv-disclaimer-accepted", "1"));
+    await appPage.goto("/app");
+
+    await appPage.getByRole("button", { name: /guest/i }).click();
+    await appPage.getByPlaceholder("http://server.com:8080").fill("http://provider.test");
+    await appPage.getByPlaceholder("username").fill("invalid-guest");
+    await appPage.getByPlaceholder("password").fill("invalid-password");
+    await appPage.getByRole("button", { name: /Connect/ }).click();
+
+    await expect(appPage.getByText(/account is disabled/i)).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByRole("button", { name: /Connect/ })).toBeVisible();
+    expect(await appPage.evaluate(() => localStorage.getItem("sv-guest-mode"))).toBe("1");
+  });
+
+  test("guest cannot save more than two connections", async ({ appPage }) => {
+    await mockLoggedOutUser(appPage);
+    await mockGuestLoginSuccess(appPage);
+    installXtreamMock(appPage, { auth: "valid" });
+    await appPage.addInitScript(() => {
+      localStorage.setItem("sv-disclaimer-accepted", "1");
+      const connections = [
+        {
+          id: "xtream:http://one.provider.test:user-one",
+          type: "xtream",
+          label: "Provider One",
+          config: { type: "xtream", server: "http://one.provider.test", user: "user-one", pass: "pass-one" },
+        },
+        {
+          id: "xtream:http://two.provider.test:user-two",
+          type: "xtream",
+          label: "Provider Two",
+          config: { type: "xtream", server: "http://two.provider.test", user: "user-two", pass: "pass-two" },
+        },
+      ];
+      localStorage.setItem("sv-connections", JSON.stringify(connections));
+    });
+    await appPage.goto("/app");
+
+    await appPage.getByRole("button", { name: /guest/i }).click();
+    await expect(appPage.getByText("Provider One")).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByText("Provider Two")).toBeVisible();
+
+    await appPage.getByPlaceholder("http://server.com:8080").fill("http://provider.test");
+    await appPage.getByPlaceholder("username").fill("third-user");
+    await appPage.getByPlaceholder("password").fill("third-password");
+    const limitDialog = new Promise((resolve) => {
+      appPage.once("dialog", async (dialog) => {
+        const message = dialog.message();
+        await dialog.accept();
+        resolve(message);
+      });
+    });
+    await appPage.getByRole("button", { name: /Connect/ }).click();
+    const dialogMessage = await limitDialog;
+
+    expect(dialogMessage).toContain("Connection limit reached (2)");
+    await expect(appPage.getByText("News Channel")).not.toBeVisible();
   });
 
   test("logout returns to /app login screen", async ({ appPage }) => {

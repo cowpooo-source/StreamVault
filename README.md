@@ -144,7 +144,7 @@ The frontend build emits modern and legacy bundles together, so older smart TVs 
 | `ADMIN_PASS` | — | Admin account password (required, seeds on first start) |
 | `ADMIN_USER` | `admin` | Admin username |
 | `JWT_SECRET` | auto-generated | JWT signing secret (auto-stored in DB if not set) |
-| `DEFAULT_ROLE` | `regular` | Role assigned to new registrations |
+| `DEFAULT_ROLE` | `free` | Role assigned to new registrations; may be explicitly set to `free`, `regular`, or `pro` |
 | `REGISTRATION_OPEN` | `true` | Set `false` to disable public registration |
 | `ALLOWED_ORIGIN` | `*` | CORS allowed origins |
 | `TMDB_API_KEY` | — | TMDB v3 API key used by `/api/tmdb/*` for all users |

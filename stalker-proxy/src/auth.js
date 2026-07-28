@@ -17,7 +17,7 @@ const ROLE_LIMITS = {
 
 // Promo: new registrations get this role (validated against allowed set)
 const ALLOWED_DEFAULT_ROLES = new Set(["pro", "regular", "free"]);
-const DEFAULT_ROLE = ALLOWED_DEFAULT_ROLES.has(process.env.DEFAULT_ROLE) ? process.env.DEFAULT_ROLE : "regular";
+const DEFAULT_ROLE = ALLOWED_DEFAULT_ROLES.has(process.env.DEFAULT_ROLE) ? process.env.DEFAULT_ROLE : "free";
 
 let db;
 let jwtSecret;

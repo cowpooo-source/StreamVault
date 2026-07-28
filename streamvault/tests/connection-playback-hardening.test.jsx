@@ -121,6 +121,20 @@ describe("connection and playback hardening", () => {
     expect(result.skipped).toBe(1);
   });
 
+  it.each([
+    ["guest", 2], ["free", 2], ["regular", 5], ["pro", 10], ["admin", 999],
+  ])("enforces the %s connection limit during file import", (_role, limit) => {
+    const incoming = Array.from({ length: limit + 1 }, (_, index) => ({
+      id: `connection-${index}`,
+      type: "m3u",
+      config: { url: `http://provider.test/${index}.m3u8` },
+    }));
+    const result = mergeConnectionsWithinLimit([], incoming, limit);
+    expect(result.connections).toHaveLength(limit);
+    expect(result.added).toHaveLength(limit);
+    expect(result.skipped).toBe(1);
+  });
+
   it("recognizes disabled and expired provider accounts", () => {
     const expired = { type: "xtream", config: { accountInfo: { exp_date: "1700000000" } } };
     const disabled = { type: "xtream", config: { accountInfo: { status: "Disabled" } } };

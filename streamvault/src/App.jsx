@@ -16,6 +16,7 @@ import { setEncKeySource, encryptConnections, decryptConnections } from './auth-
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 import { useStreamVault } from "./useStreamVault.js";
 import { lifecycleFailureMessage, mergeConnectionSnapshots, mergeConnectionsWithinLimit } from "./connection-lifecycle.js";
+import { isAdEligibleRole } from "./account-policy.js";
 import {
   clearContentSessionToken,
   contentSessionToken,
@@ -1825,7 +1826,7 @@ export default function App() {
     }
   }
   const userRole = authUser?.role || (isGuest ? "guest" : null);
-  const isAdEligible = userRole === "guest" || userRole === "free" || userRole === "regular";
+  const isAdEligible = isAdEligibleRole(userRole);
   const userLimits = authUser?.limits || (isGuest ? { maxConnections: 2, maxVod: 500, epg: true, sync: false } : null);
 
   const upgradePromptShown = useRef(false);
@@ -2007,6 +2008,8 @@ export default function App() {
           const code = e?.code || e?.status;
           if (code === "unauthorized" || code === "invalid" || code === 401 || code === 403 || (!e?.code && /Missing content session token/.test(e?.message || ""))) {
             clearContentSessionToken();
+            navigateToAppHome({ location: window.location, reason: "auth" });
+            return;
           }
           setEphemeralConnection(null);
           setConn(null);

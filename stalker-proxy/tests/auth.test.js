@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import os from "os";
 
 // Use a temp DB for tests
-const TEST_DB = path.join(__dirname, "test-auth.db");
+const TEST_DB = path.join(os.tmpdir(), `streamvault-test-auth-${process.pid}.db`);
 
 let auth;
 let db;
@@ -24,7 +25,7 @@ beforeAll(async () => {
   process.env.ADMIN_PASS = "admin123";
   process.env.ADMIN_USER = "admin";
   process.env.JWT_SECRET = "test-secret-key";
-  process.env.DEFAULT_ROLE = "regular";
+  process.env.DEFAULT_ROLE = "free";
 
   // Import and init auth
   auth = require("../src/auth");
@@ -32,7 +33,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  db.close();
+  db?.close();
   try { fs.unlinkSync(TEST_DB); } catch {}
   try { fs.unlinkSync(TEST_DB + "-wal"); } catch {}
   try { fs.unlinkSync(TEST_DB + "-shm"); } catch {}
@@ -46,10 +47,10 @@ describe("Auth — User Creation", () => {
     expect(admin.role).toBe("admin");
   });
 
-  it("creates a regular user by default", async () => {
+  it("creates a free user by default", async () => {
     const user = await auth.createUser("testuser", "pass1234");
     expect(user.username).toBe("testuser");
-    expect(user.role).toBe("regular");
+    expect(user.role).toBe("free");
   });
 
   it("creates a user with specific role", async () => {
@@ -92,7 +93,7 @@ describe("Auth — Authentication", () => {
     const session = await auth.authenticate("testuser", "pass1234");
     expect(session.token).toBeDefined();
     expect(session.user.username).toBe("testuser");
-    expect(session.user.role).toBe("regular");
+    expect(session.user.role).toBe("free");
     expect(session.user.limits).toBeDefined();
   });
 
@@ -116,7 +117,8 @@ describe("Auth — Authentication", () => {
     expect(adminSession.user.limits.maxConnections).toBe(999);
     expect(adminSession.user.limits.maxVod).toBe(Infinity);
 
-    const regularSession = await auth.authenticate("testuser", "pass1234");
+    const regularUser = await auth.createUser("regularuser", "pass1234", "regular");
+    const regularSession = await auth.authenticate(regularUser.username, "pass1234");
     expect(regularSession.user.limits.maxConnections).toBe(5);
 
     const freeSession = await auth.authenticate("freeuser", "pass1234");
@@ -126,16 +128,21 @@ describe("Auth — Authentication", () => {
 });
 
 describe("Auth — JWT Tokens", () => {
+  let multiSessionUser;
+
+  beforeAll(async () => {
+    multiSessionUser = await auth.createUser("multisession", "pass1234", "regular");
+  });
+
   beforeEach(async () => {
-    const user = auth.listUsers().find(u => u.username === "testuser");
-    if (user) auth.revokeAllUserTokens(user.id);
+    auth.revokeAllUserTokens(multiSessionUser.id);
   });
 
   it("verifies a valid token", async () => {
-    const session = await auth.authenticate("testuser", "pass1234");
+    const session = await auth.authenticate(multiSessionUser.username, "pass1234");
     const user = auth.verifyToken(session.token);
     expect(user).not.toBeNull();
-    expect(user.username).toBe("testuser");
+    expect(user.username).toBe(multiSessionUser.username);
   });
 
   it("rejects an invalid token", () => {
@@ -144,21 +151,21 @@ describe("Auth — JWT Tokens", () => {
   });
 
   it("generates unique tokens for same user", async () => {
-    const s1 = await auth.authenticate("testuser", "pass1234");
-    const s2 = await auth.authenticate("testuser", "pass1234");
+    const s1 = await auth.authenticate(multiSessionUser.username, "pass1234");
+    const s2 = await auth.authenticate(multiSessionUser.username, "pass1234");
     expect(s1.token).not.toBe(s2.token);
   });
 
   it("revokes a token", async () => {
-    const session = await auth.authenticate("testuser", "pass1234");
+    const session = await auth.authenticate(multiSessionUser.username, "pass1234");
     expect(auth.verifyToken(session.token)).not.toBeNull();
     auth.revokeToken(session.token);
     expect(auth.verifyToken(session.token)).toBeNull();
   });
 
   it("revokes all user tokens", async () => {
-    const s1 = await auth.authenticate("testuser", "pass1234");
-    const s2 = await auth.authenticate("testuser", "pass1234");
+    const s1 = await auth.authenticate(multiSessionUser.username, "pass1234");
+    const s2 = await auth.authenticate(multiSessionUser.username, "pass1234");
     auth.revokeAllUserTokens(s1.user.id);
     expect(auth.verifyToken(s1.token)).toBeNull();
     expect(auth.verifyToken(s2.token)).toBeNull();
