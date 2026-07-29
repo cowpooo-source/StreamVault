@@ -18,9 +18,14 @@ Optional settings belong in `ops/monitor.env`:
 CPU_THRESHOLD=85
 CPU_CONSECUTIVE=3
 ALERT_COOLDOWN_SECONDS=900
-ALERT_WEBHOOK_URL=https://example.invalid/webhook
+ALERT_WEBHOOK_FORMAT=discord
+ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN
 ```
 
 The watchdog never restarts the service. It writes alerts to the system journal
 under `streamvault-feature-monitor` and posts the same message when a webhook is
 configured.
+
+For Discord, create the webhook in the target channel under **Edit Channel**,
+**Integrations**, **Webhooks**, and **New Webhook**. The server invite URL is not
+the webhook URL and must not be placed in ALERT_WEBHOOK_URL.

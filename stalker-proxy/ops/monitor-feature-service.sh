@@ -6,6 +6,7 @@ HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3201/health}"
 CPU_THRESHOLD="${CPU_THRESHOLD:-85}"
 CPU_CONSECUTIVE="${CPU_CONSECUTIVE:-3}"
 ALERT_COOLDOWN_SECONDS="${ALERT_COOLDOWN_SECONDS:-900}"
+ALERT_WEBHOOK_FORMAT="${ALERT_WEBHOOK_FORMAT:-auto}"
 STATE_DIR="${STATE_DIR:-$HOME/.local/state/streamvault-feature-monitor}"
 STATE_FILE="$STATE_DIR/state"
 mkdir -p "$STATE_DIR"
@@ -24,7 +25,15 @@ alert() {
   logger -t streamvault-feature-monitor -- "$message"
   if [[ -n "${ALERT_WEBHOOK_URL:-}" ]]; then
     local payload
-    payload="$(node -e 'process.stdout.write(JSON.stringify({text:process.argv[1]}))' "$message")"
+    local format="$ALERT_WEBHOOK_FORMAT"
+    if [[ "$format" == "auto" && "$ALERT_WEBHOOK_URL" == *discord.com/api/webhooks* ]]; then
+      format="discord"
+    fi
+    if [[ "$format" == "discord" ]]; then
+      payload="$(node -e 'process.stdout.write(JSON.stringify({content:process.argv[1]}))' "$message")"
+    else
+      payload="$(node -e 'process.stdout.write(JSON.stringify({text:process.argv[1]}))' "$message")"
+    fi
     curl -fsS --max-time 10 -H 'Content-Type: application/json' -d "$payload" "$ALERT_WEBHOOK_URL" >/dev/null || true
   fi
   last_alert="$now"
