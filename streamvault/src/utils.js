@@ -1,4 +1,10 @@
 // Utility functions for StreamVault
+export {
+  analyticsPlaybackRoute,
+  categorizeAnalyticsError,
+  trackAnalytics,
+  trackAnalyticsScreen,
+} from "./analytics.js";
 
 export const API = import.meta.env.VITE_API_URL || ""; // Proxy URL for API calls, empty for relative paths
 export const VAST_URL = import.meta.env.VITE_VAST_URL || "";
@@ -202,9 +208,6 @@ export function parseM3U(text) {
   return out;
 }
 
-// Google Analytics Tracking
-const GA_ID = import.meta.env.VITE_GA_MEASUREMENT_ID;
-
 export function debounce(func, wait) {
   let timeout;
   return function(...args) {
@@ -212,17 +215,6 @@ export function debounce(func, wait) {
     clearTimeout(timeout);
     timeout = setTimeout(() => func.apply(context, args), wait);
   };
-}
-
-export function trackAnalytics(eventName, payload) {
-  if (!GA_ID || typeof globalThis.gtag !== 'function') return;
-
-  try {
-    // Redundant event_name removed, gtag already takes eventName as 1st arg
-    globalThis.gtag('event', eventName, payload);
-  } catch (e) {
-    console.warn("Analytics event failed:", e.message);
-  }
 }
 
 // Generate CSS variables from theme object
