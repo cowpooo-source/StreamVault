@@ -31,6 +31,13 @@ describe("SettingsView", () => {
     expect(screen.getByText("Profile")).toBeInTheDocument();
   });
 
+  it("shows social account links in the Account tab for signed-in users", () => {
+    render(<SettingsView {...defaultProps} authUser={{ username: "cow", role: "regular" }} />);
+    fireEvent.click(screen.getByText("Account"));
+    expect(screen.getByRole("button", { name: "Link Google" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link GitHub" })).toBeInTheDocument();
+  });
+
   it("should switch to Data tab", () => {
     render(<SettingsView {...defaultProps} />);
     fireEvent.click(screen.getByText("Data"));

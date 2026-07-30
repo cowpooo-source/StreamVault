@@ -148,6 +148,16 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
               </div>
               <div className="fhint">Used for password recovery and account security.</div>
             </div>
+            {authUser && (
+              <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1.2rem",marginTop:"1rem"}}>
+                <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".35rem",fontWeight:600}}>Connected accounts</div>
+                <div style={{fontSize:".78rem",color:"var(--t3)",marginBottom:".8rem"}}>Link a social account for easier sign-in and account recovery.</div>
+                <div style={{display:"flex",gap:".6rem",flexWrap:"wrap"}}>
+                  <button type="button" className="btn-sm" onClick={() => { window.location.href = API + "/api/auth/google"; }}>Link Google</button>
+                  <button type="button" className="btn-sm" onClick={() => { window.location.href = API + "/api/auth/github"; }}>Link GitHub</button>
+                </div>
+              </div>
+            )}
             {emailMsg && <div style={{marginTop:".8rem",fontSize:".8rem",color:emailMsg.includes("⚠")?"var(--danger)":"var(--accent)"}}>{emailMsg}</div>}
           </div>
         </div>
