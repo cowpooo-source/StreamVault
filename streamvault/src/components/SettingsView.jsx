@@ -148,16 +148,16 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
               </div>
               <div className="fhint">Used for password recovery and account security.</div>
             </div>
-            {authUser && (
+            <>
               <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1.2rem",marginTop:"1rem"}}>
                 <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".35rem",fontWeight:600}}>Connected accounts</div>
                 <div style={{fontSize:".78rem",color:"var(--t3)",marginBottom:".8rem"}}>Link a social account for easier sign-in and account recovery.</div>
                 <div style={{display:"flex",gap:".6rem",flexWrap:"wrap"}}>
-                  <button type="button" className="btn-sm" onClick={() => { window.location.href = API + "/api/auth/google"; }}>Link Google</button>
-                  <button type="button" className="btn-sm" onClick={() => { window.location.href = API + "/api/auth/github"; }}>Link GitHub</button>
+                  <button type="button" className="btn-sm" onClick={() => { window.location.href = API + "/api/auth/google"; }}><span aria-hidden="true" style={{fontWeight:800,color:"#4285F4",fontSize:"1rem",lineHeight:1}}>G</span> Link Google</button>
+                  <button type="button" className="btn-sm" onClick={() => { window.location.href = API + "/api/auth/github"; }}><svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.44 9.8 8.21 11.39.6.11.82-.26.82-.57v-2.23c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.33-1.76-1.33-1.76-1.09-.75.08-.74.08-.74 1.2.08 1.83 1.23 1.83 1.23 1.07 1.83 2.8 1.3 3.49 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.34-5.47-5.94 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.53.12-3.19 0 0 1-.32 3.3 1.23.96-.27 1.98-.4 3-.41 1.02.01 2.04.14 3 .41 2.3-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.89.12 3.19.77.84 1.23 1.91 1.23 3.22 0 4.61-2.81 5.64-5.48 5.94.43.37.81 1.1.81 2.22v3.3c0 .32.22.69.83.57A12 12 0 0 0 24 12C24 5.37 18.63 0 12 0Z"/></svg> Link GitHub</button>
                 </div>
               </div>
-            )}
+            </>
             {emailMsg && <div style={{marginTop:".8rem",fontSize:".8rem",color:emailMsg.includes("⚠")?"var(--danger)":"var(--accent)"}}>{emailMsg}</div>}
           </div>
         </div>
