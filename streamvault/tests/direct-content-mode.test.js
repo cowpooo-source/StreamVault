@@ -162,7 +162,7 @@ describe("direct content mode — security & lifecycle", () => {
     try {
       // The App handles this by calling getAppHomeUrl() + location.assign with ?reason=auth.
       const home = getAppHomeUrl();
-      expect(home).toBe("https://media.portalheaven.stream/");
+      expect(home).toBe("https://media.portalheaven.stream/app");
     } finally {
       import.meta.env.VITE_SECURE_APP_BASE_URL = prev;
     }

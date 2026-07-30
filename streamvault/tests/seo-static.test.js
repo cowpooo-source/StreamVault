@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -124,8 +125,8 @@ describe("deployment route contract", () => {
   });
 
   it("documents app-aware redirects and uses Node 22 consistently", () => {
-    expect(read("../stalker-proxy/.env.example")).toContain("APP_URL=https://portalheaven.stream/app");
-    expect(read("../docker-compose.feature.yml")).toContain("APP_URL=http://localhost:3201/app");
+    expect(read("../stalker-proxy/.env.example")).toContain("APP_URL=https://media.portalheaven.stream/app");
+    expect(read("../docker-compose.feature.yml")).toContain("APP_URL=http://127.0.0.1:3201/app");
     expect(read("Dockerfile")).toContain("FROM node:22-slim");
     expect(read("../stalker-proxy/Dockerfile")).toContain("FROM node:22-slim");
     expect(JSON.parse(read("package.json")).engines.node).toBe(">=22");

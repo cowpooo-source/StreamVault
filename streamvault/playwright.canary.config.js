@@ -14,7 +14,7 @@ import { defineConfig, devices } from "@playwright/test";
  *   CANARY_M3U_URL
  */
 
-const baseURL = process.env.E2E_BASE_URL || "http://localhost:5173";
+const baseURL = process.env.E2E_BASE_URL || "http://localhost:3201";
 
 export default defineConfig({
   testDir: "./e2e/canary",
@@ -34,14 +34,7 @@ export default defineConfig({
     video: "off",
     viewport: { width: 1440, height: 900 },
   },
-  webServer: process.env.E2E_BASE_URL
-    ? undefined
-    : {
-        command: "npm run dev",
-        port: 5173,
-        reuseExistingServer: true,
-        timeout: 120000,
-      },
+  webServer: undefined,
   projects: [
     {
       name: "chromium",

@@ -1,4 +1,4 @@
-const CACHE = "sv-mrvicgxe";
+const CACHE = "sv-ms6s77xr";
 const APP_SHELL = ['/app'];
 
 self.addEventListener("install", e => {
@@ -36,6 +36,7 @@ self.addEventListener("fetch", e => {
   if (url.pathname.startsWith("/stalker") ||
       url.pathname.startsWith("/stream") ||
       url.pathname.startsWith("/proxy") ||
+      url.pathname.startsWith("/img") ||
       url.pathname.startsWith("/analytics") ||
       url.pathname.startsWith("/health")) return;
 

@@ -14,7 +14,11 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --configLoader native --pool threads",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
+    "e2e:debug": "playwright test --debug",
+    "e2e:report": "playwright show-report",
+    "verify": "npm run lint && npm test && npm run build && npm run e2e"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",

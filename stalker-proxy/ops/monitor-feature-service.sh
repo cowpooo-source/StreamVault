@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ERROR_401_THRESHOLD=${ERROR_401_THRESHOLD:-5}
+ERROR_456_THRESHOLD=${ERROR_456_THRESHOLD:-3}
+ERROR_502_THRESHOLD=${ERROR_502_THRESHOLD:-5}
 
 APP_NAME="${APP_NAME:-stalker-proxy-play}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3201/health}"
@@ -52,6 +55,15 @@ if ! health="$(curl -fsS --max-time 10 "$HEALTH_URL")"; then
   exit 1
 fi
 
+status_count() {
+  node -e 'const value=JSON.parse(process.argv[1]);process.stdout.write(String(value.requests?.byStatus?.[process.argv[2]] ?? 0))' $health $1
+}
+errors_401=$(status_count 401)
+errors_456=$(status_count 456)
+errors_502=$(status_count 502)
+if (( errors_401 >= ERROR_401_THRESHOLD )); then alert repeated_401_$errors_401; fi
+if (( errors_456 >= ERROR_456_THRESHOLD )); then alert repeated_provider_456_$errors_456; fi
+if (( errors_502 >= ERROR_502_THRESHOLD )); then alert repeated_502_$errors_502; fi
 cpu="$(ps -p "$pid" -o pcpu= | xargs)"
 rss_kb="$(ps -p "$pid" -o rss= | xargs)"
 if awk -v cpu="$cpu" -v threshold="$CPU_THRESHOLD" 'BEGIN { exit !(cpu >= threshold) }'; then

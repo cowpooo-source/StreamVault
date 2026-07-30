@@ -18,6 +18,7 @@ describe('operational metrics', () => {
       errorRate: 50,
       averageLatencyMs: 50,
       byType: { stalker: 1, proxy: 1 },
+      byStatus: { '200': 1, '502': 1 },
     });
 
     timestamp += 60_001;

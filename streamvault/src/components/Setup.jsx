@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { API, validateM3UChunk, trackAnalytics } from '../utils.js';
-import { makeXtreamAPI, track, GUEST_ID } from '../app-runtime.js';
+import { db, makeXtreamAPI, track, GUEST_ID } from '../app-runtime.js';
 import { XtreamForm } from './setup/XtreamForm.jsx';
 import { StalkerForm } from './setup/StalkerForm.jsx';
 import { M3UForm } from './setup/M3UForm.jsx';
@@ -34,6 +34,16 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
   const [diagLoading, setDiagLoading] = useState({});
   const [showSettings, setShowSettings] = useState(false);
   const set = (k,v) => setF(p => ({...p,[k]:v}));
+
+  function reportConnectionValidation(providerType, stage, success, startedAt, error = null) {
+    trackAnalytics("connection_validation", {
+      provider_type: providerType || "unknown",
+      validation_stage: stage,
+      success,
+      latency_ms: Date.now() - startedAt,
+      error_code: error,
+    });
+  }
 
   const handleFileImport = (e) => {
     setErr("");
@@ -69,20 +79,11 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
       const data = await res.json();
       setDiagResults(p => ({ ...p, [c.id]: data }));
 
-      trackAnalytics("portal_connect", {
-        provider_type: c.type,
-        success: data.reachable ? "true" : "false",
-        latency_ms: Date.now() - startTime,
-        error_code: String(data.details?.status || data.details?.error || "unknown").slice(0, 50)
-      });
+      reportConnectionValidation(c.type, "diagnose", Boolean(data.reachable), startTime,
+        data.reachable ? null : data.details?.status || data.details?.error || "unknown");
     } catch (e) {
       setDiagResults(p => ({ ...p, [c.id]: { reachable: false, details: { error: e.message } } }));
-      trackAnalytics("portal_connect", {
-        provider_type: c.type,
-        success: "false",
-        latency_ms: Date.now() - startTime,
-        error_code: String(e.message || "unknown").slice(0, 50)
-      });
+      reportConnectionValidation(c.type, "diagnose", false, startTime, e);
     }
     setDiagLoading(p => ({ ...p, [c.id]: false }));
   }
@@ -93,12 +94,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     const startTime = Date.now();
     const showValidationFailure = (reason, validation = {}) => {
       setExpiredPrompt({ conn, validation: { ...validation, status: "failed", reason } });
-      trackAnalytics("portal_connect", {
-        provider_type: conn.type || "unknown",
-        success: "false",
-        latency_ms: Date.now() - startTime,
-        error_code: String(reason || "validation_failed").slice(0, 50),
-      });
+      reportConnectionValidation(conn.type, "reconnect", false, startTime, reason || "validation_failed");
     };
 
     try {
@@ -117,11 +113,13 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
           showValidationFailure("Invalid credentials or disabled account", data?.user_info || {});
           return;
         }
+        reportConnectionValidation(conn.type, "reconnect", true, startTime);
         onReconnect(conn.id);
         return;
       }
 
       if (conn.type !== "stalker") {
+        reportConnectionValidation(conn.type, "reconnect", true, startTime);
         onReconnect(conn.id);
         return;
       }
@@ -146,6 +144,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         showValidationFailure(reason, v);
         return;
       }
+      reportConnectionValidation(conn.type, "reconnect", true, startTime);
       onReconnect(conn.id);
     } catch (e) {
       showValidationFailure(e.message || "Connection validation failed");
@@ -155,28 +154,30 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
   }
 
   useEffect(() => {
-    try {
-      const conns = localStorage.getItem("sv-connections");
-      if (conns) {
-        const connList = JSON.parse(conns);
-        if (!connList?.length) return;
-        const acId = localStorage.getItem("sv-activeConn");
-        const activeId = acId ? JSON.parse(acId) : null;
-        const active = (activeId && connList.find(c => c.id === activeId)) || connList[connList.length - 1];
-        if (active?.config) {
-          const c = active.config;
-          if (c.type) setType(c.type);
-          if (c.server) set("server", c.server);
-          if (c.user) set("user", c.user);
-          if (c.pass) set("pass", c.pass);
-          if (c.mac) set("mac", c.mac);
-          if (c.url) set("url", c.url);
-          if (c.serial) set("serial", c.serial);
-          if (c.deviceId) set("deviceId", c.deviceId);
-          if (c.deviceId2) set("deviceId2", c.deviceId2);
+    let cancelled = false;
+    (async () => {
+      try {
+        const connList = await db.get("sv-connections", []);
+        if (!cancelled && connList?.length) {
+          const acId = localStorage.getItem("sv-activeConn");
+          const activeId = acId ? JSON.parse(acId) : null;
+          const active = (activeId && connList.find(c => c.id === activeId)) || connList[connList.length - 1];
+          if (active?.config) {
+            const c = active.config;
+            if (c.type) setType(c.type);
+            if (c.server) set("server", c.server);
+            if (c.user) set("user", c.user);
+            if (c.pass) set("pass", c.pass);
+            if (c.mac) set("mac", c.mac);
+            if (c.url) set("url", c.url);
+            if (c.serial) set("serial", c.serial);
+            if (c.deviceId) set("deviceId", c.deviceId);
+            if (c.deviceId2) set("deviceId2", c.deviceId2);
+          }
         }
-      }
-    } catch (e) { console.warn("IDB/localStorage error:", e.message); }
+      } catch (e) { console.warn("IDB/localStorage error:", e.message); }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   function handleConnectClick() {
@@ -203,14 +204,14 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         const status = String(data?.user_info?.status ?? "").trim().toLowerCase();
         if (data?.user_info?.auth !== 1 || ["disabled", "expired", "blocked", "suspended", "0"].includes(status)) throw new Error("Invalid credentials or disabled account");
 
-        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        reportConnectionValidation(type, "create", true, startTime);
         onConnect({ type, server, user:f.user, pass:f.pass, info:data?.user_info });
       } else if (type === "m3u") {
         if (!f.url) throw new Error("Playlist URL required");
         const validation = await validateM3UChunk(f.url.trim());
         if (!validation.ok) throw new Error(validation.reason || "Playlist validation failed");
 
-        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        reportConnectionValidation(type, "create", true, startTime);
         onConnect({ type, url: f.url });
       } else if (type === "stalker") {
         if (!f.server||!f.mac) throw new Error("Portal URL and MAC required");
@@ -222,7 +223,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
 
         if (skipValidation) {
           track("connect");
-          trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
+          reportConnectionValidation(type, "create", true, startTime);
           onConnect({
             type, server, mac: macTrimmed,
             serial: serialTrimmed, deviceId: deviceIdTrimmed, deviceId2: deviceId2Trimmed,
@@ -251,7 +252,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
           }
 
           track("connect");
-          trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
+          reportConnectionValidation(type, "create", true, startTime);
           onConnect({
             type, server, mac: macTrimmed,
             serial: v.serial || serialTrimmed, deviceId: v.deviceId || deviceIdTrimmed,
@@ -266,19 +267,19 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
         if (!baseUrl || !username || !password) throw new Error("Server URL, username, and password required");
         const { userId, accessToken } = await JellyfinAdapter.authenticate(baseUrl, username, password);
         if (!userId) throw new Error("Jellyfin authentication failed");
-        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        reportConnectionValidation(type, "create", true, startTime);
         onConnect({ type, server: baseUrl, user: username, token: accessToken, userId });
       } else if (type === "plex") {
         throw new Error("Plex connection requires PIN pairing. Use the Plex setup screen.");
       } else if (type === "hls") {
-        trackAnalytics("portal_connect", { provider_type: type, success: "true", latency_ms: Date.now() - startTime, error_code: null });
+        reportConnectionValidation(type, "create", true, startTime);
         onConnect({ type:"hls" });
       } else {
         throw new Error(`Unsupported connection type: ${type || "unknown"}`);
       }
     } catch(e) {
       setErr(e.message||"Connection failed");
-      trackAnalytics("portal_connect", { provider_type: type, success: "false", latency_ms: Date.now() - startTime, error_code: e.message || "failed" });
+      reportConnectionValidation(type, "create", false, startTime, e);
     }
     finally { setLoading(false); }
   }

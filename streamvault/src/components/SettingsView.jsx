@@ -2,6 +2,12 @@ import React, { useState, useRef } from 'react';
 import { API } from '../utils.js';
 import { db } from '../app-runtime.js';
 import { mergeConnectionSnapshots } from '../connection-lifecycle.js';
+import {
+  getAnalyticsConsent,
+  isAnalyticsAvailable,
+  setAnalyticsConsent,
+  subscribeAnalyticsConsent,
+} from '../analytics.js';
 
 export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings, themeName, themeOptions = [], onThemeChange, language, languageOptions = {}, onLanguageChange, onFeedback, onLogout, maxConnections }) {
   const [tab, setTab] = useState(() => {
@@ -13,7 +19,10 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
   const [emailInput, setEmailInput] = useState(authUser?.email || "");
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
+  const [analyticsConsent, setAnalyticsConsentState] = useState(getAnalyticsConsent);
   const fileRef = useRef(null);
+
+  React.useEffect(() => subscribeAnalyticsConsent(setAnalyticsConsentState), []);
 
   async function updateProfile() {
     setEmailMsg(""); setEmailLoading(true);
@@ -185,6 +194,25 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
             <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem",letterSpacing:".05em"}}>Connections</div>
             <div style={{fontSize:".85rem",color:"var(--t1)"}}>{connections.length}{Number.isFinite(maxConnections) ? ` / ${maxConnections}` : ""} saved</div>
           </div>
+          {isAnalyticsAvailable() && <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
+            <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".7rem",letterSpacing:".05em"}}>Privacy</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"1rem"}}>
+              <div>
+                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:600}}>Anonymous product analytics</div>
+                <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem",lineHeight:1.45}}>
+                  Shares setup and playback reliability categories. Provider details, searches, titles, and account data are excluded.
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`c-btn ${analyticsConsent === "granted" ? "active" : ""}`}
+                style={{minWidth:"100px"}}
+                onClick={() => setAnalyticsConsent(analyticsConsent === "granted" ? "denied" : "granted")}
+              >
+                {analyticsConsent === "granted" ? "Enabled" : "Disabled"}
+              </button>
+            </div>
+          </div>}
           <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
             <div style={{fontSize:".7rem",textTransform:"uppercase",fontWeight:600,color:"var(--t3)",marginBottom:".5rem",letterSpacing:".05em"}}>Active Connection</div>
             <div style={{fontSize:".85rem",color:"var(--t1)"}}>

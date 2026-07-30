@@ -37,6 +37,12 @@ lerna-debug.log*
 # ── Test coverage ─────────────────────────────────────────────────
 coverage/
 
+# ── Playwright ───────────────────────────────────────────────────
+playwright-report/
+playwright-report-staging/
+playwright-report-canary/
+test-results/
+
 # ── OS ────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
@@ -59,6 +65,7 @@ Desktop.ini
 # SQLite temp files (test databases)
 *.db-shm
 *.db-wal
+stalker-proxy/tests/test-*.db
 
 # ── Temporary Dev Files ──────────────────────────────────────────
 # Ignore one-off scripts and data snapshots in the root

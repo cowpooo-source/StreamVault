@@ -3,26 +3,16 @@ import { createRoot } from 'react-dom/client'
 import ErrorBoundary from './ErrorBoundary.jsx'
 import './legacy-polyfills.js'
 import App from './App.jsx'
+import AnalyticsConsent from './components/AnalyticsConsent.jsx'
+import { initializeAnalytics } from './analytics.js'
 
-// Initialize Google Analytics 4
-(function() {
-  const gaId = import.meta.env.VITE_GA_MEASUREMENT_ID;
-  if (!gaId || gaId.startsWith('G-XXX')) return;
-  const s = document.createElement('script');
-  s.async = true;
-  s.src = `https://www.googletagmanager.com/gtag/js?id=${gaId}`;
-  document.head.appendChild(s);
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){window.dataLayer.push(arguments);}
-  window.gtag = gtag;
-  gtag('js', new Date());
-  gtag('config', gaId);
-})();
+initializeAnalytics()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary>
       <App />
+      <AnalyticsConsent />
     </ErrorBoundary>
   </StrictMode>,
 )

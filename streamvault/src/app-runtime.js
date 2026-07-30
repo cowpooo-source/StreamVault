@@ -1,5 +1,6 @@
 // Shared app-level helpers — used by App.jsx and extractable view components
 import { API } from "./utils.js";
+import { createIptvError } from "./iptv-errors.js";
 
 // Guest ID for analytics tracking
 export const GUEST_ID = (() => { let id = localStorage.getItem("sv-guest-id"); if (!id) { id = crypto.randomUUID?.() || Math.random().toString(36).slice(2); localStorage.setItem("sv-guest-id", id); } return id; })();
@@ -13,14 +14,28 @@ export function track(event, data = {}) { fetch(`${API}/api/track`, { method: "P
 export const db = {
   async get(key, fallback = null) {
     try {
-      if (window.storage) { const r = await window.storage.get(key); return r ? JSON.parse(r.value) : fallback; }
-      const v = localStorage.getItem(key); return v !== null ? JSON.parse(v) : fallback;
+      let value;
+      if (window.storage) { const r = await window.storage.get(key); value = r ? JSON.parse(r.value) : fallback; }
+      else {
+        const stored = localStorage.getItem(key);
+        value = stored !== null ? JSON.parse(stored) : fallback;
+      }
+      if (key === "sv-connections" && typeof value === "string") {
+        const { decryptConnections } = await import("./auth-utils.js");
+        return decryptConnections(value);
+      }
+      return value;
     } catch { return fallback; }
   },
   async set(key, value) {
     try {
-      if (window.storage) { await window.storage.set(key, JSON.stringify(value)); }
-      else localStorage.setItem(key, JSON.stringify(value));
+      let storedValue = value;
+      if (key === "sv-connections" && Array.isArray(value)) {
+        const { encryptConnections } = await import("./auth-utils.js");
+        storedValue = await encryptConnections(value);
+      }
+      if (window.storage) { await window.storage.set(key, JSON.stringify(storedValue)); }
+      else localStorage.setItem(key, JSON.stringify(storedValue));
     } catch (e) { console.warn("IDB/localStorage error:", e.message); }
   },
 };
@@ -34,17 +49,21 @@ export async function safeJsonFetch(res) {
   if (!res.ok) {
     try {
       const errData = JSON.parse(text);
-      if (errData.error) throw new Error(errData.error);
+      if (errData.error) throw createIptvError({ ...errData, status: res.status }, { category: errData.category });
     } catch (e) {
-      if (e.message.startsWith("Server returned")) throw e;
+      if (e.category || e.message.startsWith("Server returned")) throw e;
     }
-    throw new Error(`Server error (HTTP ${res.status})`);
+    throw createIptvError(new Error(`Server error (HTTP ${res.status})`), { terminal: res.status < 500 });
   }
   try {
     const data = JSON.parse(text);
-    // Xtream: auth 0 means invalid/expired credentials
+    // Preserve provider status so users can distinguish bad credentials from
+    // an account that needs renewal or reactivation.
     if (data?.user_info?.auth === 0) {
-      throw new Error("Xtream authentication failed. Check your username and password.");
+      const status = String(data.user_info.status || "").trim();
+      if (/expired/i.test(status)) throw createIptvError(new Error("Xtream account has expired."), { category: "expired" });
+      if (/disabled|banned/i.test(status)) throw createIptvError(new Error("Xtream account is disabled."), { category: "blocked" });
+      throw createIptvError(new Error("Xtream authentication failed. Check your username and password."), { category: "invalid_credentials" });
     }
     return data;
   } catch (e) {

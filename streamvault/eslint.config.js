@@ -5,9 +5,10 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', 'playwright-report', 'playwright-report-staging', 'playwright-report-canary', 'test-results', 'coverage']),
+  // ── Browser code (app, e2e) ──────────────────────────────────────────
   {
-    files: ['**/*.{js,jsx}'],
+    files: ['src/**/*.{js,jsx}', 'e2e/**/*.{js,jsx}'],
     extends: [
       js.configs.recommended,
       reactHooks.configs.flat.recommended,
@@ -24,6 +25,28 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+  // ── Node / Vitest files (tests, configs, scripts) ────────────────────
+  {
+    files: ['tests/**/*.{js,jsx}', 'vitest.config.js', 'eslint.config.js'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.vitest },
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+  // ── Playwright config files (use Node globals) ───────────────────────
+  {
+    files: ['playwright*.config.{js,ts}'],
+    languageOptions: {
+      globals: globals.node,
     },
   },
 ])

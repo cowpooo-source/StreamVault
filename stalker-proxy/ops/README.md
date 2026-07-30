@@ -18,6 +18,9 @@ Optional settings belong in `ops/monitor.env`:
 CPU_THRESHOLD=85
 CPU_CONSECUTIVE=3
 ALERT_COOLDOWN_SECONDS=900
+ERROR_401_THRESHOLD=5
+ERROR_456_THRESHOLD=3
+ERROR_502_THRESHOLD=5
 ALERT_WEBHOOK_FORMAT=discord
 ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN
 ```
@@ -29,3 +32,5 @@ configured.
 For Discord, create the webhook in the target channel under **Edit Channel**,
 **Integrations**, **Webhooks**, and **New Webhook**. The server invite URL is not
 the webhook URL and must not be placed in ALERT_WEBHOOK_URL.
+
+The error thresholds count responses in the rolling one-minute health window. HTTP 456 is treated as a provider rejection; HTTP 502 covers upstream or provider failures.

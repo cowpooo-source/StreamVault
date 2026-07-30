@@ -127,7 +127,10 @@ export function navigateToAppHome(options = {}) {
 export async function validateContentSession(token) {
   if (!token) throw new Error("Missing content session token");
 
-  const res = await fetch(`/api/content-session/validate?token=${encodeURIComponent(token)}`);
+  const { authHeaders } = await import("./app-runtime.js");
+  const res = await fetch(`/api/content-session/validate?token=${encodeURIComponent(token)}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     let message = "Content session expired or invalid";
     let code = "invalid";
@@ -157,9 +160,10 @@ export async function validateContentSession(token) {
 
 export async function refreshContentSession(token) {
   if (!token) throw new Error("Missing content session token");
+  const { authHeaders } = await import("./app-runtime.js");
   const res = await fetch("/api/content-session/refresh", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ token }),
   });
   if (!res.ok) {

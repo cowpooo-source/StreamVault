@@ -1,28 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from "react";
-import { imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalytics } from "../utils.js";
+import { analyticsPlaybackRoute, imgSrc, pingUrls, streamProxy, VAST_URL, API, ENABLE_VAST, trackAnalytics } from "../utils.js";
 import { fetchVastAd } from "../vast.js";
 import { getEPGNow } from "../epg.js";
 import { classifyStreamUrl } from "../stream-classifier.js";
 import { shouldProxyStreamUrl, xtreamHlsCandidate } from "../stream-routing.js";
-
-const NO_AUTOMATIC_RETRY_HTTP_STATUS = new Set([
-  400, 401, 402, 403, 404, 405, 406, 410, 423, 429, 451, 456, 459, 462,
-]);
-
-export function shouldStopAutomaticRecovery(status) {
-  const code = Number(status);
-  return Number.isInteger(code) && NO_AUTOMATIC_RETRY_HTTP_STATUS.has(code);
-}
-
-export function playbackHttpError(status) {
-  const code = Number(status);
-  if (code === 404) return { icon: "!", title: "Stream Not Found (404)", body: "The channel may be offline, or its URL may have changed. Try reconnecting to refresh the channel list." };
-  if (code === 401 || code === 403) return { icon: "!", title: `Access Denied (${code})`, body: "The stream server rejected the request. Your IP may be blocked or your credentials lack access." };
-  if (code === 429) return { icon: "!", title: "Rate Limited (429)", body: "The provider is rate limiting requests. Wait before trying again." };
-  if (code === 456) return { icon: "!", title: "Account Blocked (456)", body: "The provider rejected the stream. Your account may be expired, in use elsewhere, or blocked by the provider." };
-  if (code === 459 || code === 462) return { icon: "!", title: `Token Expired (${code})`, body: "The stream token expired or was rejected. Try again to request a fresh token." };
-  return { icon: "!", title: `Stream Rejected (${code})`, body: `The provider rejected the stream with HTTP ${code}. Automatic retries were stopped.` };
-}
+import { shouldStopAutomaticRecovery, playbackHttpError } from "../iptv-errors.js";
 
 function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, onRequestRelay, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
@@ -510,6 +492,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         content_type: current.type || "live",
         provider_type: current.type || "unknown",
         latency_ms: Date.now() - loadStartTime,
+        playback_route: analyticsPlaybackRoute(current),
       });
     };
 
@@ -597,6 +580,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
               error_code: String(code),
               content_id: String(current.id || ""),
               provider_type: current.type || "live",
+              playback_route: analyticsPlaybackRoute(current),
             });
             destroyPlayers();
             return;
@@ -639,7 +623,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             error_type: `hls_${data.type}`,
             error_code: String(code || data.details || "unknown"),
             content_id: String(current.id || ""),
-            provider_type: current.type || "live"
+            provider_type: current.type || "live",
+            playback_route: analyticsPlaybackRoute(current),
           });
           destroyPlayers();
         });
@@ -676,6 +661,7 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
             error_code: String(code),
             content_id: String(current.id || ""),
             provider_type: current.type || "live",
+            playback_route: analyticsPlaybackRoute(current),
           });
           destroyPlayers();
           return;
@@ -797,6 +783,8 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     let isTracking = false;
     let lastHeartbeatTime = 0;
     let lastProgressTime = 0;
+    let playbackSuccessReported = false;
+    const playbackAttemptStartedAt = Date.now();
 
     const reportProgress = (completed = false, reason = 'interval') => {
       if (!onProgress || current.type === "live" || playbackPhaseRef.current !== "content") return;
@@ -883,6 +871,16 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     const handlePlay = () => {
       handleReady();
+      if (!playbackSuccessReported && playbackPhaseRef.current === "content") {
+        playbackSuccessReported = true;
+        trackAnalytics("playback_start", {
+          provider_type: connType || "unknown",
+          content_type: current.type || "live",
+          stream_kind: current.streamKind || classifyStreamUrl(current.url, current.type),
+          playback_route: analyticsPlaybackRoute(current),
+          latency_ms: Date.now() - playbackAttemptStartedAt,
+        });
+      }
       if (current._stalkerCmd && reportedDirectGenerationRef.current !== current.streamGeneration) {
         reportedDirectGenerationRef.current = current.streamGeneration || current.url;
         reportStalkerAudit("direct_success");

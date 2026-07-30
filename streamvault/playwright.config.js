@@ -1,24 +1,55 @@
+/* global process */
 import { defineConfig, devices } from "@playwright/test";
+
+const baseURL = process.env.E2E_BASE_URL || "http://localhost:5173";
+const externalTestIgnore = [
+  "**/canary/**",
+  "**/deployment-smoke.spec.js",
+];
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: externalTestIgnore,
   timeout: 60000,
+  fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
-  baseURL: "http://127.0.0.1:5173",
+  workers: process.env.CI ? 2 : undefined,
+  outputDir: "test-results/playwright",
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "playwright-report", open: "never" }],
+  ],
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL,
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
+    video: "retain-on-failure",
     viewport: { width: 1440, height: 900 },
   },
-  webServer: {
-    command: "npm run dev",
-    port: 5173,
-    reuseExistingServer: true,
-    timeout: 120000,
-  },
+  webServer: process.env.E2E_BASE_URL
+    ? undefined
+    : {
+        command: "npm run dev -- --host localhost",
+        url: "http://localhost:5173",
+        reuseExistingServer: true,
+        timeout: 120000,
+      },
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      testIgnore: [...externalTestIgnore, "**/service-worker.spec.js"],
+      use: {
+        ...devices["Desktop Chrome"],
+        serviceWorkers: "block",
+      },
+    },
+    {
+      name: "service-worker",
+      testMatch: /service-worker\.spec\.js/,
+      use: {
+        ...devices["Desktop Chrome"],
+        serviceWorkers: "allow",
+      },
     },
   ],
 });

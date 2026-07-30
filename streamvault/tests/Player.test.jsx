@@ -55,6 +55,7 @@ vi.mock("../src/utils.js", async () => {
 import { fetchVastAd } from "../src/vast.js";
 
 import Player from "../src/components/Player.jsx";
+import { analyticsPlaybackRoute } from "../src/analytics.js";
 
 describe("Player", () => {
   const defaultProps = {
@@ -75,6 +76,12 @@ describe("Player", () => {
 
   it("should be defined as a function/component", () => {
     expect(Player).toBeDefined();
+  });
+
+  it("classifies direct and compatibility-relay playback for analytics", () => {
+    expect(analyticsPlaybackRoute({ url: "http://provider.example/live.ts", _direct: true })).toBe("direct");
+    expect(analyticsPlaybackRoute({ url: "/stream?url=opaque" })).toBe("relay");
+    expect(analyticsPlaybackRoute({ url: "/stalker/play?contentToken=opaque", _stalkerRelayActive: true })).toBe("relay");
   });
 
   it("should render without crashing", () => {

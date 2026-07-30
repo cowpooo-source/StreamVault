@@ -53,13 +53,7 @@ export async function decryptData(ciphertext) {
 }
 
 export async function encryptConnections(conns) {
-  const stripped = conns.map(c => {
-    const safe = { ...c };
-    if (safe.type === "xtream" && safe.pass) { safe._encPass = true; delete safe.pass; }
-    if (safe.type === "stalker" && safe.mac) { safe._encMac = true; }
-    return safe;
-  });
-  return await encryptData(JSON.stringify(stripped));
+  return encryptData(JSON.stringify(conns));
 }
 
 export async function decryptConnections(data) {

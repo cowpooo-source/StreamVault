@@ -219,3 +219,27 @@ npx playwright show-trace test-results/playwright/path-to-trace.zip
 ## Static Hosting
 
 If you host this frontend on a VPS or any static server, point it at `dist/` after running `npm run build`. No extra runtime switch is required for the legacy bundle.
+
+## Google Analytics 4
+
+Set `VITE_GA_MEASUREMENT_ID` at build time to enable the optional GA4 integration. The Google tag is not downloaded until the visitor explicitly allows analytics. Visitors can change that choice later under **Settings > General > Privacy**.
+
+The frontend reports a privacy-safe product funnel:
+
+| Event | Purpose | Useful dimensions |
+|---|---|---|
+| `screen_view` | Auth, setup, and content navigation | `screen`, `account_tier`, `provider_type`, `content_mode` |
+| `connection_validation` | Create, reconnect, and diagnose outcomes | `provider_type`, `validation_stage`, `success`, `failure_category`, `latency_ms` |
+| `play_item` | A user requested playback | `content_type`, `provider_type`, `category_scope`, `is_favorite` |
+| `playback_start` | Media actually started | `provider_type`, `content_type`, `stream_kind`, `playback_route`, `latency_ms` |
+| `playback_error` | Playback failed after recovery | `provider_type`, `content_type`, `error_type`, `failure_category`, `playback_route` |
+| `playback_stall_recovery` | Automatic recovery was attempted | `content_type`, `attempt`, `reason` |
+
+Register the listed string parameters as event-scoped custom dimensions in GA4, and register `latency_ms` as a custom metric. Recommended explorations:
+
+- Funnel: `screen_view(setup)` -> `connection_validation(success)` -> `play_item` -> `playback_start`.
+- Reliability: `playback_start` divided by `play_item`, broken down by provider, content type, and playback route.
+- Provider health: connection and playback failures broken down by `failure_category`.
+- Direct-play audit: compare `playback_route=direct` with `playback_route=relay`.
+
+The analytics sanitizer drops provider URLs, credentials, tokens, MAC/device identifiers, account identifiers, content IDs/titles, and search text. Page locations are sent without query strings so reset and content-session tokens cannot reach GA.
