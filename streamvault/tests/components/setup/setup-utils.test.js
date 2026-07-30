@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { normalizeUnicode, detectFromText } from "../../../src/components/setup/setup-utils.js";
 

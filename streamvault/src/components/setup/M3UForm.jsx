@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React from "react";
 
 /**
  * M3UForm - M3U playlist URL + raw text import with detection
  * @param {{ form: object, setForm: function, rawText: string, setRawText: function, loading: boolean, err: string, detected: array, selected: Set, setSelected: function, onSubmit: function, onFileImport: function, onDetect: function }} props
  */
-export function M3UForm({ form, setForm, rawText, setRawText, loading, err, detected, selected, setSelected, onSubmit, onFileImport, onImportMultiple, onDetect }) {
+export function M3UForm({ form, setForm, rawText, setRawText, detected, selected, setSelected, onSubmit, onFileImport, onImportMultiple, onDetect }) {
   const set = (k, v) => setForm(k, v);
 
   const handleTextChange = (e) => {

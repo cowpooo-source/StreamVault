@@ -1,36 +1,13 @@
-import { useState, useEffect, useMemo, useRef, useCallback, memo, forwardRef } from "react";
+import { useState, useEffect, useMemo, useCallback, memo, forwardRef } from "react";
 import { imgSrc } from "../utils.js";
 import { epgLookup, PX_PER_MIN, TOTAL_HOURS, TOTAL_MS, TOTAL_PX, CH_COL_W, ROW_H, msToPx, fmtT } from "../epg.js";
 
-// Helper: format start and stop times once
 function fmtProgTimes(start, stop) {
   return { startLabel: fmtT(start), stopLabel: fmtT(stop) };
 }
 
-// Single delegated click handler — avoids per-block arrow function allocation
-// Uses data attributes set on each program block
-function buildProgClickHandler(progs, channels, onPlay, onPlayCatchup) {
-  return (e) => {
-    const block = e.target.closest("[data-prog-idx]");
-    if (!block) return;
-    const chIdx = parseInt(block.dataset.chIdx, 10);
-    const progIdx = parseInt(block.dataset.progIdx, 10);
-    const isPast = block.dataset.isPast === "1";
-    const ch = channels[chIdx];
-    const p = progs[chIdx]?.[progIdx];
-    if (!ch || !p) return;
-    if (isPast && onPlayCatchup) {
-      onPlayCatchup(ch, p);
-    } else {
-      onPlay(ch);
-    }
-  };
-}
-
 const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, onPlay, onPlayCatchup, hasMore, onLoadMore, loadText, showCatchup }, outerRef) {
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const nowMsRef = useRef(nowMs);
-  nowMsRef.current = nowMs;
 
   // Update nowMs every 60s — grid only re-renders when channels/epgData/window changes
   useEffect(() => {
@@ -166,7 +143,7 @@ const TimelineGrid = memo(forwardRef(function TimelineGrid({ channels, epgData, 
                             {p.startLabel} – {p.stopLabel}
                             {p.isNow && (
                               <span className="epg-prog-left">
-                                {Math.max(0, Math.ceil((p.stop - nowMsRef.current)/60000))}m left
+                                {Math.max(0, Math.ceil((p.stop - nowMs)/60000))}m left
                               </span>
                             )}
                           </div>

@@ -159,7 +159,7 @@ function createApiRouter(deps) {
 
   router.post("/sync/migrate-guest", auth.requireAuth, (req, res) => {
     const { guestId } = req.body;
-    if (!guestId || req.headers["x-guest-id"] !== guestId) return res.status(403).end();
+    if (!guestId || req.headers["x-guest-id"] !== guestId) return res.status(403).json({ error: 'Guest ID mismatch', code: 'guest_mismatch' });
     // Connection ciphertext is bound to the guest encryption key and cannot
     // be copied into a registered account. The frontend decrypts and re-saves
     // those connections using the authenticated user's key.

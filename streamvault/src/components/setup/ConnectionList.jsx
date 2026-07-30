@@ -6,7 +6,7 @@ const CONN_ICONS = { xtream: "📡", stalker: "📺", m3u: "📋", hls: "🔗" }
  * ConnectionList - Saved connections list (no diagnostics)
  * @param {{ connections: array, activeConnId: string|null, onReconnect: function, onEdit: function, onRemoveConn: function }} props
  */
-export function ConnectionList({ connections, activeConnId, onReconnect, onEdit, onRemoveConn }) {
+export function ConnectionList({ connections, onReconnect, onEdit, onRemoveConn }) {
   if (!connections || connections.length === 0) return null;
 
   return (

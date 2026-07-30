@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { encryptToken, decryptToken } from '../../src/services/tokenManager.js';
 
 // Mock crypto.subtle
@@ -78,7 +78,7 @@ describe('tokenManager', () => {
       await encryptToken(TEST_PLAINTEXT);
 
       expect(mockEncrypt).toHaveBeenCalled();
-      const [alg, key, data] = mockEncrypt.mock.calls[0];
+      const [alg, , data] = mockEncrypt.mock.calls[0];
       expect(alg.name).toBe('AES-GCM');
       expect(alg.iv).toBeInstanceOf(Uint8Array);
       expect(alg.iv.length).toBe(12);
@@ -105,7 +105,7 @@ describe('tokenManager', () => {
       await decryptToken(btoa(String.fromCharCode(...encryptedBytes)));
 
       expect(mockDecrypt).toHaveBeenCalled();
-      const [alg, key, data] = mockDecrypt.mock.calls[0];
+      const [alg, , data] = mockDecrypt.mock.calls[0];
       expect(alg.name).toBe('AES-GCM');
       expect(alg.iv).toBeInstanceOf(Uint8Array);
       expect(alg.iv.length).toBe(12);

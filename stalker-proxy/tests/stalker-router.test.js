@@ -18,7 +18,7 @@ function makeDeps(overrides = {}) {
       trackPortalHealth: vi.fn(),
       trackRequest: vi.fn(),
     },
-    auth: {},
+    auth: { verifyToken: vi.fn().mockReturnValue({ id: 1, username: 'testuser', role: 'regular' }) },
     fetch: vi.fn(),
     fetchWithRedirectCheck: vi.fn(),
     isUrlAllowed: vi.fn(() => true),
@@ -35,6 +35,13 @@ function makeApp(deps) {
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json());
+  // Inject a test authentication cookie so every request passes the auth check.
+  // The verifyToken mock ignores the token value and returns a fixed user.
+  app.use((req, res, next) => {
+    if (!req.cookies) req.cookies = {};
+    req.cookies.sv_auth = req.cookies.sv_auth || 'test-auth-token';
+    next();
+  });
   app.use('/stalker', createStalkerRouter(deps));
   return app;
 }
@@ -43,7 +50,7 @@ function relayGrant(cmd = 'ABC') {
   const expires = Date.now() + 60_000;
   const commandHash = crypto.createHash('sha256').update(cmd).digest('hex');
   const signature = crypto.createHmac('sha256', process.env.STALKER_RELAY_GRANT_SECRET)
-    .update(`authenticated:${expires}:${commandHash}`)
+    .update(`1:${expires}:${commandHash}`)
     .digest('base64url');
   return `${expires}.${signature}`;
 }
@@ -83,14 +90,15 @@ describe('createStalkerRouter - unit', () => {
     expect(res.status).toBe(400);
   });
 
-  it('POST /stalker/handshake returns 502 when getSession throws', async () => {
+  it('POST /stalker/handshake returns 403 when getSession throws auth error', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockRejectedValue(new Error('Portal auth failed')),
     });
     const app = makeApp(deps);
     const res = await request(app).post('/stalker/handshake').send({ portal: 'http://p.com/c/', mac: '00:1a:79:aa:bb:cc' });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(403);
     expect(res.body.error).toBe('Portal auth failed');
+    expect(res.body.code).toBe('authorization_failure');
   });
 
   // --- validate ---
@@ -216,6 +224,7 @@ describe('createStalkerRouter - unit', () => {
     const app = makeApp(deps);
     const res = await request(app).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
     expect(res.status).toBe(502);
+    expect(res.body.code).toBe('provider_failure');
     expect(res.body.error).toBe('Session failed');
   });
 
@@ -518,6 +527,152 @@ describe('createStalkerRouter - unit', () => {
     expect(contentSessionStore.deleteByTokenHash).toHaveBeenCalledTimes(1);
   });
 
+  // ── Authentication tests ──────────────────────────────────────────────
+
+  it('GET /stalker/play returns 503 when auth dependency is missing entirely', async () => {
+    const app = makeApp(makeDeps({ auth: undefined }));
+
+    const res = await request(app).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain('Authentication service unavailable');
+    expect(res.body.code).toBe('auth_unavailable');
+  });
+
+  it('GET /stalker/play returns 503 when auth.verifyToken is missing from the object', async () => {
+    const app = makeApp(makeDeps({ auth: {} }));
+
+    // For this test only, remove the injected cookie so we exercise the
+    // missing-verifyToken path rather than falling through to token=null.
+    const miniApp = express();
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(makeDeps({ auth: {} })));
+    const res = await request(miniApp).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('auth_unavailable');
+  });
+
+  it('GET /stalker/play returns 401 when the token is missing and no cookie exists', async () => {
+    // Bypass the test cookie injector.
+    const miniApp = express();
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(
+      makeDeps({ auth: { verifyToken: vi.fn().mockReturnValue(null) } }),
+    ));
+    const res = await request(miniApp).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('unauthorized');
+  });
+
+  it('GET /stalker/play returns 503 when verifyToken throws an exception', async () => {
+    const app = makeApp(makeDeps({
+      auth: { verifyToken: vi.fn().mockImplementation(() => { throw new Error('DB connection lost'); }) },
+    }));
+    const res = await request(app).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('auth_unavailable');
+  });
+
+  it('GET /stalker/play succeeds with a valid Bearer token', async () => {
+    const miniApp = express();
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(makeDeps({
+      auth: { verifyToken: vi.fn().mockReturnValue({ id: 1, username: 'bearer-user', role: 'regular' }) },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://portal.example/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'https://cdn.example/live.ts' } }),
+    })));
+    const res = await request(miniApp)
+      .get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&resolve=1')
+      .set('authorization', 'Bearer valid-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toMatch(/^https:/);
+  });
+
+  it('GET /stalker/play with content-session still works alongside mandatory auth', async () => {
+    const encryptedConnection = encryptToken(JSON.stringify({
+      id: 'stalker-1',
+      type: 'stalker',
+      config: { type: 'stalker', server: 'http://portal.example/c', mac: '00:1A:79:AA:BB:CC', serial: 'SN1' },
+    }));
+    const deps = makeDeps({
+      contentSessionStore: {
+        findByTokenHash: vi.fn().mockResolvedValue({ encryptedConnection, expiresAt: Date.now() + 60_000 }),
+        deleteByTokenHash: vi.fn(),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'http://portal.example/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'https://cdn.example/live.ts' } }),
+    });
+    const app = makeApp(deps);
+
+    const res = await request(app).get('/stalker/play?contentToken=scoped-token&cmd=ABC&resolve=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.refreshUrl).toContain('contentToken=scoped-token');
+    expect(res.body.direct).toBe(true);
+  });
+
+  it('GET /stalker/play succeeds when content-session extension DB write fails', async () => {
+    const encryptedConnection = encryptToken(JSON.stringify({
+      id: 'stalker-1',
+      type: 'stalker',
+      config: { type: 'stalker', server: 'http://portal.example/c', mac: '00:1A:79:AA:BB:CC', serial: 'SN1' },
+    }));
+    const deps = makeDeps({
+      contentSessionStore: {
+        findByTokenHash: vi.fn().mockResolvedValue({
+          encryptedConnection,
+          expiresAt: Date.now() + 60_000, // still valid but close enough to trigger extension
+          createdAt: Date.now() - 4 * 60 * 60_000, // old enough to trigger TTL check
+        }),
+        extendByTokenHash: vi.fn().mockRejectedValue(new Error('SQLITE_IOERR: disk I/O error')),
+        deleteByTokenHash: vi.fn(),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'http://portal.example/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'https://cdn.example/live.ts' } }),
+    });
+    const app = makeApp(deps);
+
+    const res = await request(app).get('/stalker/play?contentToken=scoped-token&cmd=ABC&resolve=1');
+
+    // Extension failure must NOT prevent the request from succeeding.
+    expect(res.status).toBe(200);
+    expect(res.body.direct).toBe(true);
+    expect(deps.contentSessionStore.extendByTokenHash).toHaveBeenCalled();
+  });
+
+  it('GET /stalker/play succeeds when content-session extension is not supported by store', async () => {
+    const encryptedConnection = encryptToken(JSON.stringify({
+      id: 'stalker-1',
+      type: 'stalker',
+      config: { type: 'stalker', server: 'http://portal.example/c', mac: '00:1A:79:AA:BB:CC' },
+    }));
+    const deps = makeDeps({
+      contentSessionStore: {
+        findByTokenHash: vi.fn().mockResolvedValue({
+          encryptedConnection,
+          expiresAt: Date.now() + 60_000,
+          createdAt: Date.now() - 4 * 60 * 60_000,
+        }),
+        // No extendByTokenHash method — should be gracefully skipped.
+        deleteByTokenHash: vi.fn(),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'http://portal.example/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'https://cdn.example/live.ts' } }),
+    });
+    const app = makeApp(deps);
+
+    const res = await request(app).get('/stalker/play?contentToken=scoped-token&cmd=ABC&resolve=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.direct).toBe(true);
+  });
+
+  // ── End authentication tests ──────────────────────────────────────────
+
   it('GET /stalker/play rejects raw credentials when authentication is configured', async () => {
     const app = makeApp(makeDeps({
       auth: { verifyToken: vi.fn().mockReturnValue(null) },
@@ -627,6 +782,87 @@ describe('createStalkerRouter - unit', () => {
     const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(relayGrant()) );
     expect(res.status).toBe(500);
     expect(res.body.error).toContain('500');
+  });
+
+  // ── relay-grant tests ──────────────────────────────────────────────────
+
+  it('POST /stalker/relay-grant creates a valid grant for authenticated user', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).post('/stalker/relay-grant').send({ cmd: 'ABC', confirm: true });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('relayGrant');
+    expect(typeof res.body.relayGrant).toBe('string');
+    expect(res.body.expiresAt).toBeGreaterThan(Date.now());
+  });
+
+  it('POST /stalker/relay-grant returns 409 when media relay is disabled', async () => {
+    process.env.STALKER_MEDIA_RELAY_ENABLED = 'false';
+    const prevEnvRelay = process.env.STALKER_MEDIA_RELAY_ENABLED;
+    const app = makeApp(makeDeps({}));
+    const res = await request(app).post('/stalker/relay-grant').send({ cmd: 'ABC', confirm: true });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('media_relay_disabled');
+    process.env.STALKER_MEDIA_RELAY_ENABLED = prevEnvRelay;
+  });
+
+  it('POST /stalker/relay-grant returns 503 when secret is not configured', async () => {
+    const prev = process.env.STALKER_RELAY_GRANT_SECRET;
+    delete process.env.STALKER_RELAY_GRANT_SECRET;
+    const app = makeApp(makeDeps({}));
+    const res = await request(app).post('/stalker/relay-grant').send({ cmd: 'ABC', confirm: true });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('relay_not_configured');
+    if (prev !== undefined) process.env.STALKER_RELAY_GRANT_SECRET = prev;
+  });
+
+  it('POST /stalker/relay-grant returns 400 when confirm is missing', async () => {
+    const app = makeApp(makeDeps({}));
+    const res = await request(app).post('/stalker/relay-grant').send({ cmd: 'ABC' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('relay_confirmation_required');
+  });
+
+  it('GET /stalker/play with expired relay-grant returns 403', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://video.cdn.com/stream.mp4' } }),
+    });
+    const app = makeApp(deps);
+    const expiredGrant = `${Date.now() - 10_000}.${relayGrant('ABC').split('.')[1]}`;
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(expiredGrant));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('relay_confirmation_required');
+  });
+
+  it('GET /stalker/play with tampered relay-grant signature returns 403', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://video.cdn.com/stream.mp4' } }),
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: true, status: 200, headers: new Map([['content-type', 'video/mp4']]), body: Readable.from(['chunk']) },
+        url: 'http://video.cdn.com/stream.mp4',
+      }),
+    });
+    const app = makeApp(deps);
+    const [expires, sig] = relayGrant('ABC').split('.');
+    const tamperedSig = sig.slice(0, -4) + 'xxxx';
+    const tamperedGrant = `${expires}.${tamperedSig}`;
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(tamperedGrant));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('relay_confirmation_required');
+  });
+
+  it('GET /stalker/play with relay-grant for wrong command returns 403', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://video.cdn.com/stream.mp4' } }),
+    });
+    const app = makeApp(deps);
+    const grant = relayGrant('ABC');
+    const res = await request(app).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=XYZ&relayGrant=' + encodeURIComponent(grant));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('relay_confirmation_required');
   });
 
   // --- series ---
@@ -856,17 +1092,18 @@ describe('createStalkerRouter - unit', () => {
 
   // --- api passthrough ---
 
-  it('GET /stalker/api forwards arbitrary params to portal', async () => {
+  it('GET /stalker/api forwards allowed params to portal', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: { result: 'ok' } }),
     });
     const app = makeApp(deps);
-    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_ichannels_via_api&serial=SN&deviceId=DEV');
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_ichannels_via_api&type=itv');
     expect(res.status).toBe(200);
     expect(res.body.js.result).toBe('ok');
     expect(deps.portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
       action: 'get_ichannels_via_api',
+      type: 'itv',
     }), undefined, expect.objectContaining({ signal: expect.anything() }));
   });
 
@@ -884,7 +1121,230 @@ describe('createStalkerRouter - unit', () => {
     expect(deps.cache.trackRequest).toHaveBeenCalledWith('stalker', 200, expect.any(Number));
   });
 
-  // --- stream ---
+  // ── Parameter allowlist tests ──────────────────────────────────────────
+
+  it('GET /stalker/api rejects unknown parameters with 400 and invalid_parameter', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { result: 'ok' } }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres&__proto__=bad&hacked=true');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api strips portal and mac from forwarded params', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { result: 'ok' } }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres&type=itv');
+    expect(res.status).toBe(200);
+    expect(deps.portalFetchRetry).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.not.objectContaining({ portal: expect.anything() }),
+      undefined, expect.any(Object),
+    );
+    expect(deps.portalFetchRetry).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.not.objectContaining({ mac: expect.anything() }),
+      undefined, expect.any(Object),
+    );
+  });
+
+  it('GET /stalker/api returns 403 for dangerous action values', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { result: 'ok' } }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=create_link&cmd=http://evil.com/');
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('action_forbidden');
+  });
+
+  it('GET /stalker/api returns 403 for handshake action via passthrough', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=handshake');
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('action_forbidden');
+  });
+
+  it('GET /stalker/ rejects prototype-pollution keys', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: {} }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres&constructor=malicious');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api allows read-only catalog actions through', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: {} }),
+    });
+    const app = makeApp(deps);
+
+    // Each tuple is [action, type (or null if schema allows any), extra params]
+    const catalogActions = [
+      ['get_genres',            'type=itv'],
+      ['get_all_channels',      'type=itv'],
+      ['get_categories',        'type=vod'],
+      ['get_ordered_list',      'type=vod'],
+      ['get_epg_info',          'type=itv&period=3'],
+      ['get_main_info',         'type=account_info'],
+      ['get_simple_data_table', 'type=vod&period=1'],
+    ];
+    for (const [action, extra] of catalogActions) {
+      const res = await request(app).get(
+        `/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=${action}&${extra}`,
+      );
+      expect(res.status, `${action} should be allowed`).toBe(200);
+    }
+  });
+
+  it('GET /stalker/api rejects oversized string values', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const longAction = 'a'.repeat(500);
+    const res = await request(app).get(`/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=${longAction}`);
+    expect(res.status).toBe(400); // length check fires before action whitelist
+  });
+
+  it('GET /stalker/api rejects missing action on generic passthrough', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(res.body.error).toContain('action');
+  });
+
+  it('GET /stalker/api rejects invalid type/action pairs', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    // get_genres requires type=itv, but we send type=vod.
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres&type=vod');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api rejects fields not supported by the selected action', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    // get_genres only allows category/page/p, not cmd.
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres&type=itv&cmd=malicious');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api rejects array values for scalar parameters', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres&action=create_link');
+    // Express will merge duplicates into the first value, so this is actually
+    // safe by default. The array check fires when Express parses query params
+    // with bracket notation. Test that with a constructed request.
+    expect(res.status).toBe(400); // duplicate "action" in seen set
+  });
+
+  it('GET /stalker/api rejects decimal page values', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_ordered_list&type=vod&page=1.9');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api rejects exponent numeric values', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_ordered_list&type=vod&page=1e3');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api rejects leading-zero numeric values', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_ordered_list&type=vod&page=01');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api rejects missing type on get_genres', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    // get_genres requires type=itv.
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(res.body.error).toContain('requires type');
+  });
+
+  it('GET /stalker/api rejects invalid type for get_categories', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_categories&type=stb');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api rejects invalid type for get_ordered_list', async () => {
+    const deps = makeDeps({});
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_ordered_list&type=itv');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+  });
+
+  it('GET /stalker/api allows actions that do not require a type', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: {} }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_full_info');
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /stalker/api allows stb_type as a string for get_profile', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: {} }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_profile&type=stb&stb_type=MAG250');
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /stalker/api strips serial and deviceId from forwarded params', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { result: 'ok' } }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/api?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_genres&type=itv&serial=SN123&deviceId=DEV456');
+    expect(res.status).toBe(200);
+    expect(deps.portalFetchRetry).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.not.objectContaining({ serial: expect.anything() }),
+      undefined, expect.any(Object),
+    );
+    expect(deps.portalFetchRetry).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.not.objectContaining({ deviceId: expect.anything() }),
+      undefined, expect.any(Object),
+    );
+  });
+
+  // ── stream ---
 
   it('GET /stalker/stream returns URL with localhost rewrite', async () => {
     const deps = makeDeps({
@@ -897,14 +1357,43 @@ describe('createStalkerRouter - unit', () => {
     expect(res.body.url).toBe('http://p.com/live.m3u8');
   });
 
-  it('GET /stalker/stream returns 502 when no URL returned', async () => {
+  it('GET /stalker/stream returns content_not_found when no URL is returned', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: {} }),
     });
     const app = makeApp(deps);
     const res = await request(app).get('/stalker/stream?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC');
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('content_not_found');
+  });
+
+  it('GET /stalker/stream rejects a resolved URL that fails SSRF validation', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'http://127.0.0.1/private.ts' } }),
+      isUrlAllowed: vi.fn().mockResolvedValue(false),
+    });
+    const res = await request(makeApp(deps)).get(
+      '/stalker/stream?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC',
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: 'url_not_allowed' });
+  });
+
+  it('GET /stalker/series/episode/stream rejects a resolved URL that fails SSRF validation', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { cmd: 'ffmpeg http://169.254.169.254/private.mp4' } }),
+      isUrlAllowed: vi.fn().mockResolvedValue(false),
+    });
+    const res = await request(makeApp(deps)).get(
+      '/stalker/series/episode/stream?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&episode=1',
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: 'url_not_allowed' });
   });
 
   // --- EPG ---
@@ -972,5 +1461,56 @@ describe('createStalkerRouter - unit', () => {
     const res = await request(makeApp(deps)).get('/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=ABC&relayGrant=' + encodeURIComponent(relayGrant()) );
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('media_relay_disabled');
+  });
+});
+
+describe('dedicated Stalker route validation', () => {
+  it('rejects unknown catalog parameters before contacting the provider', async () => {
+    const deps = makeDeps();
+    const res = await request(makeApp(deps)).get(
+      '/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&injected=true',
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid dedicated EPG numeric fields', async () => {
+    const deps = makeDeps();
+    const res = await request(makeApp(deps)).get(
+      '/stalker/epg?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&period=1.5',
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('returns a structured error for malformed opaque commands', async () => {
+    const deps = makeDeps();
+    const res = await request(makeApp(deps)).get(
+      '/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=svopaque%3Anot-a-token&resolve=1',
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: 'malformed' });
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('generic Stalker error contracts', () => {
+  it('classifies a generic passthrough timeout and records its status', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockRejectedValue(Object.assign(new Error('upstream timed out'), { code: 'ETIMEDOUT' })),
+    });
+    const res = await request(makeApp(deps)).get(
+      '/stalker/?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&action=get_full_info',
+    );
+
+    expect(res.status).toBe(504);
+    expect(res.body).toMatchObject({ code: 'provider_timeout' });
+    expect(deps.cache.trackRequest).toHaveBeenCalledWith('stalker', 504, expect.any(Number));
   });
 });

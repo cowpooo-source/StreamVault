@@ -4,7 +4,7 @@ import React from "react";
  * XtreamForm - Xtream Codes server/user/pass form
  * @param {{ form: object, setForm: function, loading: boolean, err: string, onSubmit: function }} props
  */
-export function XtreamForm({ form, setForm, loading, err, onSubmit }) {
+export function XtreamForm({ form, setForm, onSubmit }) {
   const set = (k, v) => setForm(k, v);
   return (
     <>

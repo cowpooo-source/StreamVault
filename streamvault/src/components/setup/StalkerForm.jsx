@@ -4,7 +4,7 @@ import React, { useState } from "react";
  * StalkerForm - Stalker portal MAC, portal URL, serial, device ID fields
  * @param {{ form: object, setForm: function, loading: boolean, err: string, skipValidation: boolean, setSkipValidation: function, onSubmit: function, onValidate: function }} props
  */
-export function StalkerForm({ form, setForm, loading, err, skipValidation, setSkipValidation, onSubmit, onValidate }) {
+export function StalkerForm({ form, setForm, skipValidation, setSkipValidation, onSubmit }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const set = (k, v) => setForm(k, v);
   return (

@@ -5,6 +5,7 @@ import { getEPGNow } from "../epg.js";
 import { classifyStreamUrl } from "../stream-classifier.js";
 import { shouldProxyStreamUrl, xtreamHlsCandidate } from "../stream-routing.js";
 import { shouldStopAutomaticRecovery, playbackHttpError } from "../iptv-errors.js";
+import { canStalkerRefresh, canStallRecover, chooseStallAction } from "../player-recovery.js";
 
 function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, onRequestRelay, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
@@ -398,10 +399,10 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     async function requestStalkerRefresh(reason) {
       const recovery = autoRecoveryRef.current;
-      if (!current._direct || recovery.stalkerRefreshInFlight || typeof onRefreshStream !== "function") return false;
+      const { allowed } = canStalkerRefresh(recovery, current);
+      if (!allowed || typeof onRefreshStream !== "function") return false;
       const now = Date.now();
       const recentRefreshes = (recovery.stalkerRefreshTimes || []).filter(time => time > now - 60_000);
-      if (recentRefreshes.length >= 3) return false;
       recentRefreshes.push(now);
       recovery.stalkerRefreshTimes = recentRefreshes;
       recovery.stalkerRefreshInFlight = true;
@@ -429,32 +430,34 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
     stallRecoveryRef.current = async (reason = "playback_stalled") => {
       const recovery = autoRecoveryRef.current;
-      if (recovery.recoveryInFlight || video.ended || video.paused || playbackPhaseRef.current !== "content") return false;
-      if ((recovery.stall || 0) >= 3) {
-        showStreamError({ icon: "!", title: "Playback Stalled", body: "The stream stopped responding after several reconnect attempts. Try again or choose another stream." });
+      const { allowed } = canStallRecover(recovery, video.ended, video.paused, playbackPhaseRef.current);
+      if (!allowed) {
+        if (recovery.stall >= 3) {
+          showStreamError({ icon: "!", title: "Playback Stalled", body: "The stream stopped responding after several reconnect attempts. Try again or choose another stream." });
+        }
         return false;
       }
       recovery.recoveryInFlight = true;
       recovery.stall = (recovery.stall || 0) + 1;
       trackAnalytics("playback_stall_recovery", { content_id: String(current.id || ""), content_type: current.type || "live", attempt: recovery.stall, reason });
       try {
-        if (recovery.stall === 1 && hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
-        if (recovery.stall === 1 && mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
+        const action = chooseStallAction(recovery.stall, !!hlsRef.current, !!mpegtsRef.current, !!current._direct);
+        if (action === 'hls_reload') { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
+        if (action === 'mpegts_reload') { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
         // Native video has no engine-level reload API. Refresh a direct Stalker URL
         // first; otherwise rebuild the native element while retaining VOD position.
-        if (!hlsRef.current && !mpegtsRef.current) {
-          const savedPosition = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-          if (current._direct && await requestStalkerRefresh(reason)) return true;
-          if (current.type !== "live" && savedPosition > 0.1) {
-            recoveryPositionRef.current = savedPosition;
+        if (action === 'stalker_refresh') {
+          if (await requestStalkerRefresh(reason)) return true;
+        }
+        if (current._direct && action === 'native_rebuild') {
+          if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
+            recoveryPositionRef.current = video.currentTime;
           }
           setStreamRevision(value => value + 1);
           return true;
         }
-        if (current._direct && await requestStalkerRefresh(reason)) return true;
-
-        if (hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
-        if (mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
+        if (action === 'hls_reload' && hlsRef.current) { hlsRef.current.startLoad(-1); video.play().catch(() => {}); return true; }
+        if (action === 'mpegts_reload' && mpegtsRef.current) { mpegtsRef.current.unload(); mpegtsRef.current.load(); mpegtsRef.current.play().catch(() => {}); return true; }
         if (current.type !== "live" && Number.isFinite(video.currentTime) && video.currentTime > 0.1) {
           recoveryPositionRef.current = video.currentTime;
         }

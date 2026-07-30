@@ -1039,8 +1039,9 @@ describe('Integration Tests - Routes', () => {
     miniApp.use('/stalker', createStalkerRouter(deps));
 
     const res = await authenticatedGet(miniApp, '/stalker/series/categories?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(504);
     expect(res.body.error).toBe('Portal timeout');
+    expect(res.body.code).toBe('provider_timeout');
   });
 
   it('GET /stalker/series/seasons returns seasons on happy path', async () => {
@@ -1311,7 +1312,7 @@ describe('Integration Tests - Routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('GET /stalker/series/episode/stream returns 502 when no URL returned', async () => {
+  it('GET /stalker/series/episode/stream returns content_not_found when no URL is returned', async () => {
     const miniApp = express();
     const portalFetchRetry = vi.fn().mockResolvedValue({ js: {} });
     const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
@@ -1338,7 +1339,8 @@ describe('Integration Tests - Routes', () => {
     miniApp.use('/stalker', createStalkerRouter(deps));
 
     const res = await authenticatedGet(miniApp, '/stalker/series/episode/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC&episode=5');
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('content_not_found');
   });
 
   it('GET /stalker/vod/categories returns vod categories', async () => {
@@ -1530,6 +1532,7 @@ describe('Integration Tests - Routes', () => {
 
     const res = await authenticatedGet(miniApp, '/stalker/epg?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55');
     expect(res.status).toBe(502);
+    expect(res.body.code).toBe('provider_failure');
     expect(res.body.error).toBe('EPG server down');
   });
 
@@ -1699,12 +1702,12 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await authenticatedGet(miniApp, '/stalker/api?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&action=custom_action&param1=value1');
+    const res = await authenticatedGet(miniApp, '/stalker/api?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&action=get_genres&type=itv&page=1');
     expect(res.status).toBe(200);
     expect(res.body.js.custom).toBe('response');
     expect(portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
-      action: 'custom_action',
-      param1: 'value1',
+      action: 'get_genres',
+      page: '1',
     }), undefined, expect.objectContaining({ signal: expect.anything() }));
   });
 
@@ -1734,9 +1737,10 @@ describe('Integration Tests - Routes', () => {
     miniApp.use(express.json());
     miniApp.use('/stalker', createStalkerRouter(deps));
 
-    const res = await authenticatedGet(miniApp, '/stalker/api?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&action=test');
-    expect(res.status).toBe(502);
+    const res = await authenticatedGet(miniApp, '/stalker/api?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&action=get_genres&type=itv');
+    expect(res.status).toBe(504);
     expect(res.body.error).toBe('API timeout');
+    expect(res.body.code).toBe('provider_timeout');
   });
 
   it('GET /stalker/series returns series items with all metadata', async () => {
@@ -1917,7 +1921,7 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.url).toBe('http://portal.example.com/live.m3u8');
   });
 
-  it('GET /stalker/stream returns 502 when no URL returned', async () => {
+  it('GET /stalker/stream returns content_not_found when no URL is returned', async () => {
     const miniApp = express();
     const portalFetchRetry = vi.fn().mockResolvedValue({ js: {} });
     const getSession = vi.fn().mockResolvedValue({ token: 't', base: 'https://portal/', apiPath: 'server/load.php', headers: {}, refresh: vi.fn() });
@@ -1944,7 +1948,8 @@ describe('Integration Tests - Routes', () => {
     miniApp.use('/stalker', createStalkerRouter(deps));
 
     const res = await authenticatedGet(miniApp, '/stalker/stream?portal=http://portal.example.com/c/&mac=00:11:22:33:44:55&cmd=ABC');
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('content_not_found');
   });
 
   it('GET /stalker/stream returns 400 when cmd is missing', async () => {
@@ -2008,7 +2013,4 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.error).toContain('503');
   });
 });
-
-
-
 

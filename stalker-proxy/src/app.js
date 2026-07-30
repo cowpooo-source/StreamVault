@@ -128,7 +128,7 @@ function createApp(deps) {
   app.use("/stalker", async (req, res, next) => {
     const portal = req.body?.portal || req.query?.portal;
     const mac = req.body?.mac || req.query?.mac;
-    if (portal && !(await isUrlAllowed(portal))) return res.status(403).json({ error: "Portal URL not allowed" });
+    if (portal && !(await isUrlAllowed(portal))) return res.status(403).json({ error: "Portal URL not allowed", code: "url_not_allowed" });
     if (mac && !MAC_RE.test(mac)) return res.status(400).json({ error: "Invalid MAC format" });
     next();
   });
@@ -371,7 +371,8 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
 
   app.get("/stream", async (req, res) => {
     const { url } = req.query;
-    if (!url || !(await isUrlAllowed(url))) return res.status(400).end();
+    if (!url) return res.status(400).json({ error: 'URL required', code: 'malformed' });
+    if (!(await isUrlAllowed(url))) return res.status(403).json({ error: 'Stream URL not allowed', code: 'url_not_allowed' });
     try {
       const headers = { "User-Agent": req.headers["user-agent"] || "StreamVault/1.0" };
       if (req.headers.range) headers["Range"] = req.headers.range;
@@ -431,13 +432,13 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       } else {
         upstream.body.pipe(res);
       }
-    } catch { res.status(502).end(); }
+    } catch { res.status(502).json({ error: 'Stream relay failed', code: 'provider_failure' }); }
   });
 
   app.get("/img", async (req, res) => {
     const { url } = req.query;
-    if (!url) return res.status(400).end();
-    if (!(await isUrlAllowed(url))) return res.status(403).end();
+    if (!url) return res.status(400).json({ error: 'Image URL required', code: 'malformed' });
+    if (!(await isUrlAllowed(url))) return res.status(403).json({ error: 'Image URL not allowed', code: 'url_not_allowed' });
     try {
       const controller = new AbortController();
       req.on("close", () => controller.abort());
@@ -446,12 +447,13 @@ html,body,#player{width:100%;height:100%;background:#000;overflow:hidden}
       res.set("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
       res.set("Cache-Control", "public, max-age=86400");
       upstream.body.pipe(res);
-    } catch { res.status(502).end(); }
+    } catch { res.status(502).json({ error: 'Stream relay failed', code: 'provider_failure' }); }
   });
 
   app.get("/proxy", async (req, res) => {
     const { url } = req.query;
-    if (!url || !(await isUrlAllowed(url))) return res.status(400).end();
+    if (!url) return res.status(400).json({ error: 'URL required', code: 'malformed' });
+    if (!(await isUrlAllowed(url))) return res.status(403).json({ error: 'Proxy URL not allowed', code: 'url_not_allowed' });
     let tt;
     try {
       // Catalog/XMLTV responses can be large, but a stalled provider must not

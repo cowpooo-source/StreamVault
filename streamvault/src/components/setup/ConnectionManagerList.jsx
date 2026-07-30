@@ -6,7 +6,7 @@ const CONN_ICONS = { xtream: "📡", stalker: "📺", m3u: "📋", hls: "🔗" }
  * ConnectionManagerList - Saved connections list with diagnostics
  * @param {{ connections: array, activeConnId: string|null, diagResults: object, diagLoading: object, onReconnect: function, onEdit: function, onRemoveConn: function, onDiagnose: function }} props
  */
-export function ConnectionManagerList({ connections, activeConnId, diagResults, diagLoading, onReconnect, onEdit, onRemoveConn, onDiagnose }) {
+export function ConnectionManagerList({ connections, diagResults, diagLoading, onReconnect, onEdit, onRemoveConn, onDiagnose }) {
   if (!connections || connections.length === 0) return null;
 
   return (

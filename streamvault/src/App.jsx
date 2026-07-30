@@ -24,11 +24,10 @@ import {
   isHttpContentMode,
   maybeOpenDirectContentSession,
   navigateToAppHome,
-  persistContentSessionToken,
   refreshContentSession,
-  validateContentSession,
   shouldUseTokenPlayerForItem,
 } from "./direct-content-session.js";
+import { hydrateContentSession } from "./app-session.js";
 
 // ── i18n ──
 const RTL_LANGS = ["ar","ur"];
@@ -1814,6 +1813,9 @@ export default function App() {
     });
   }
   async function handleLogout() {
+    // Stop media before waiting on the network so logout cannot leave a
+    // provider stream running behind a slow or failed auth request.
+    setPlaying(null);
     await authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
     localStorage.removeItem("sv-guest-mode");
     clearContentSessionToken();
@@ -1967,37 +1969,18 @@ export default function App() {
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
     setContentSessionError("");
     setContentSessionLoading(true);
 
     (async () => {
-      try {
-        const token = contentSessionToken();
-        if (!token) throw new Error("Missing content session token");
-
-        persistContentSessionToken(token);
-        if (window.location.search) {
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-
-        const session = await validateContentSession(token);
-        if (cancelled) return;
-
-        const sessionConnection = session?.connection;
-        if (!sessionConnection?.id) {
-          throw new Error("Missing content session connection");
-        }
-
-        const normalizedConnection = {
-          ...sessionConnection,
-          id: sessionConnection.id,
-          type: sessionConnection.type || sessionConnection.config?.type || "xtream",
-          label: sessionConnection.label || sessionConnection.config?.label || sessionConnection.id,
-          color: sessionConnection.color || PROFILE_COLORS[0],
-          config: sessionConnection.config || sessionConnection,
-        };
-
+      const result = await hydrateContentSession({
+        signal: controller.signal,
+        defaultColor: PROFILE_COLORS[0],
+      });
+      if (controller.signal.aborted || result.error === "cancelled") return;
+      if (result.connection) {
+        const normalizedConnection = result.connection;
         setContentSessionError("");
         setEphemeralConnection(normalizedConnection);
         setConn(normalizedConnection.config);
@@ -2015,23 +1998,16 @@ export default function App() {
         setSearch("");
         setGlobalQ("");
         setContentSessionLoading(false);
-      } catch (e) {
-        if (!cancelled) {
-          const code = e?.code || e?.status;
-          if (code === "unauthorized" || code === "invalid" || code === 401 || code === 403 || (!e?.code && /Missing content session token/.test(e?.message || ""))) {
-            clearContentSessionToken();
-            navigateToAppHome({ location: window.location, reason: "auth" });
-            return;
-          }
-          setEphemeralConnection(null);
-          setConn(null);
-          setContentSessionError(e?.message || "Content session expired or invalid");
-          setContentSessionLoading(false);
-        }
+        return;
       }
+      if (result.error === "session_auth_failure") return;
+      setEphemeralConnection(null);
+      setConn(null);
+      setContentSessionError(result.error || "Content session expired or invalid");
+      setContentSessionLoading(false);
     })();
 
-    return () => { cancelled = true; };
+    return () => controller.abort();
   }, [httpContentMode, contentSessionRetryKey, setActiveConnId]);
 
   useEffect(() => {

@@ -1,5 +1,3 @@
-import { useState } from 'react';
-
 export function ServerSelector({ onSelect }) {
   return (
     <div className="server-selector">
