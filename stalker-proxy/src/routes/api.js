@@ -7,6 +7,14 @@ function createApiRouter(deps) {
   const TMDB_KEY = process.env.TMDB_API_KEY || "";
   const ADMIN_PASS = process.env.ADMIN_PASS;
 
+  function isEmptyConnectionSnapshot(data, count) {
+    if (count === 0 || (Array.isArray(data) && data.length === 0) || data === "[]") return true;
+    if (typeof data !== "string") return false;
+    // AES-GCM encryption of "[]" is always a 12-byte IV plus an 18-byte
+    // ciphertext/tag, encoded by the frontend as 16 base64 chars + "." + 24.
+    return /^[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/]{24}$/.test(data);
+  }
+
   function safeCompare(a, b) {
     if (!a || !b) return false;
     const crypto = require("crypto");
@@ -130,6 +138,15 @@ function createApiRouter(deps) {
     const { type } = req.params;
     const sid = syncId(req);
     if (!sid || !["favorites","history","connections"].includes(type)) return res.status(400).end();
+    if (type === "connections" && isEmptyConnectionSnapshot(req.body.data, req.body.count)) {
+      const confirmed = req.body.allowEmpty === true && req.body.reason === "user_removed_last_connection";
+      if (!confirmed) {
+        return res.status(409).json({
+          error: "Empty connection snapshot rejected",
+          code: "empty_connections_rejected",
+        });
+      }
+    }
     cache.saveGuestData(sid, type === "connections" ? "_all" : req.body.connId, type, req.body.data);
     res.json({ ok: true });
   });
@@ -143,7 +160,10 @@ function createApiRouter(deps) {
   router.post("/sync/migrate-guest", auth.requireAuth, (req, res) => {
     const { guestId } = req.body;
     if (!guestId || req.headers["x-guest-id"] !== guestId) return res.status(403).end();
-    const rows = cache.db.prepare("SELECT conn_id, type, data FROM guest_data WHERE guest_id = ?").all(`guest:${guestId}`);
+    // Connection ciphertext is bound to the guest encryption key and cannot
+    // be copied into a registered account. The frontend decrypts and re-saves
+    // those connections using the authenticated user's key.
+    const rows = cache.db.prepare("SELECT conn_id, type, data FROM guest_data WHERE guest_id = ? AND type != 'connections'").all(`guest:${guestId}`);
     for (const row of rows) {
       if (!cache.getGuestData(`user:${req.user.id}`, row.conn_id, row.type)) {
         cache.saveGuestData(`user:${req.user.id}`, row.conn_id, row.type, JSON.parse(row.data));

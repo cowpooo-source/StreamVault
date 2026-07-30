@@ -101,13 +101,17 @@ describe("useStreamVault", () => {
   it("removeConnection dispatches REMOVE_CONNECTION and persists", async () => {
     mockDb.get.mockResolvedValue([{ id: "c1", type: "xtream", label: "Test", color: "#ff0000", config: {} }]);
 
-    const { result } = renderHook(() => useStreamVault(opts()));
+    const { result } = renderHook(() => useStreamVault(authOpts()));
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
 
     await act(async () => { result.current.actions.removeConnection("c1"); });
 
     expect(result.current.state.connections).toHaveLength(0);
     expect(mockDb.set).toHaveBeenCalledWith("sv-connections", []);
+    expect(mockSyncConnectionsToServer).toHaveBeenCalledWith([], {
+      allowEmpty: true,
+      reason: "user_removed_last_connection",
+    });
   });
 
   it("setActiveConnId persists to db", async () => {
@@ -215,6 +219,33 @@ describe("useStreamVault", () => {
 
     expect(result.current.state.connections).toHaveLength(1);
     expect(mockDb.set).toHaveBeenCalledWith("sv-connections", expect.any(Array));
+  });
+
+  it("can clear connections locally without synchronizing an empty snapshot", async () => {
+    const { result } = renderHook(() => useStreamVault(authOpts()));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+
+    act(() => {
+      result.current.actions.setConnections([], { sync: false });
+    });
+
+    expect(mockDb.set).toHaveBeenCalledWith("sv-connections", []);
+    expect(mockSyncConnectionsToServer).not.toHaveBeenCalled();
+  });
+
+  it("waits for the account encryption key before hydrating connections", async () => {
+    const { result, rerender } = renderHook(
+      ({ hydrationKey }) => useStreamVault({ ...opts(), connectionHydrationKey: hydrationKey }),
+      { initialProps: { hydrationKey: null } },
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(mockDb.get).not.toHaveBeenCalled();
+    expect(result.current.state.hydrated).toBe(false);
+
+    rerender({ hydrationKey: "user:u1" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(mockDb.get).toHaveBeenCalledWith("sv-connections", []);
+    expect(result.current.state.hydrated).toBe(true);
   });
 
   it("updateConnection updates an existing connection", async () => {

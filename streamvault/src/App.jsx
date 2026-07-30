@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo, useDeferredValue } from "react";
 import { createPortal } from "react-dom";
 import "./app.css";
-import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics, resolveUrl } from "./utils.js";
+import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics, trackAnalyticsScreen, resolveUrl } from "./utils.js";
 import Player from "./components/Player.jsx";
 import DirectHLSView from "./components/DirectHLSView.jsx";
 import TimelineGrid from "./components/TimelineGrid.jsx";
@@ -1032,6 +1032,22 @@ async function migrateGuestData() {
   } catch (e) { console.warn("Guest data migration failed:", e.message); }
 }
 
+async function syncConnectionSnapshotToServer(conns, options = {}) {
+  const encrypted = await encryptConnections(conns);
+  const res = await authFetch(API + "/api/sync/connections", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      connId: "_all",
+      data: encrypted,
+      count: conns.length,
+      allowEmpty: options.allowEmpty === true,
+      reason: options.reason,
+    }),
+  });
+  if (!res.ok) throw new Error(`Connection sync failed (${res.status})`);
+}
+
 // ══════════════════════════════════════════════════════════════════
 // THEMES (OTT Navigator style multi-theme)
 // ══════════════════════════════════════════════════════════════════
@@ -1710,25 +1726,6 @@ export default function App() {
 
   const liveGridRef = useRef(null);
 
-  // Configure GA4 Identity
-  useEffect(() => {
-    if (typeof window.gtag === "function") {
-      const gaId = import.meta.env.VITE_GA_MEASUREMENT_ID;
-      if (gaId && !gaId.startsWith('G-XXX')) {
-        let role = isGuest ? "guest" : "unauthenticated";
-        if (authUser) role = authUser.role || "regular";
-        
-        window.gtag('config', gaId, {
-          send_page_view: false,
-          user_id: authUser ? String(authUser.id) : null, // Only use authenticated ID for user_id
-          user_properties: {
-            guest_role: role,
-          }
-        });
-      }
-    }
-  }, [authUser, isGuest]);
-
   // Check stored token on mount
   useEffect(() => {
     // Check for query params (activation, reset-password)
@@ -1750,7 +1747,6 @@ export default function App() {
     fetch(`${API}/api/auth/me`, { credentials: "include" })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(async u => {
-        setAuthUser(u);
         setEncKeySource(`user:${u.id}`);
         // Merge server state with local state so a just-added connection is
         // not lost if setup reloads before the sync request finishes.
@@ -1762,7 +1758,8 @@ export default function App() {
         for (const localConn of (localConns || [])) {
           if (!mergedConns.some(c => c.id === localConn.id)) mergedConns.push(localConn);
         }
-        if (mergedConns.length) setConnections(mergedConns);
+        if (mergedConns.length) await db.set("sv-connections", mergedConns);
+        setAuthUser(u);
       })
       .catch(() => { })
       .finally(() => setAuthLoading(false));
@@ -1771,7 +1768,7 @@ export default function App() {
   async function handleAuth(user) {
     const guestConns = connections?.length ? [...connections] : [];
 
-    setAuthUser(user); setIsGuest(false); localStorage.removeItem("sv-guest-mode");
+    setIsGuest(false); localStorage.removeItem("sv-guest-mode");
     // Use user ID for encryption key (consistent across devices)
     setEncKeySource(`user:${user.id}`);
 
@@ -1792,13 +1789,20 @@ export default function App() {
       if (!mergedConns.some(c => c.id === localConn.id)) mergedConns.push(localConn);
     }
     if (mergedConns.length) {
-      setConnections(mergedConns);
+      setConnections(mergedConns, { sync: false });
     } else if (guestConns.length > 0) {
       // No server data, but we had guest connections — import them to the new account!
-      setConnections(guestConns);
+      setConnections(guestConns, { sync: false });
     } else {
-      setConnections([]);
+      setConnections([], { sync: false });
     }
+    const restoredConns = mergedConns.length ? mergedConns : guestConns;
+    if (restoredConns.length) {
+      await syncConnectionSnapshotToServer(restoredConns).catch(error => {
+        console.warn("Connection sync after login failed:", error.message);
+      });
+    }
+    setAuthUser(user);
   }
   function handleGuest() {
     setIsGuest(true);
@@ -1815,7 +1819,7 @@ export default function App() {
     clearContentSessionToken();
     setEphemeralConnection(null);
     // Clear current user's connections from local state
-    setConnections([]);
+    setConnections([], { sync: false });
     setActiveConnId(null);
     setConn(null);
     db.set("sv-activeConn", null);
@@ -1895,18 +1899,26 @@ export default function App() {
   const t = useCallback((key, ...args) => _t(lang, key, ...args), [lang]);
   const isRTL = RTL_LANGS.includes(lang);
   const httpContentMode = isHttpContentMode();
+  useEffect(() => {
+    if (authLoading) return;
+    const accountTier = isGuest ? "guest" : (authUser?.role || "unauthenticated");
+    const screen = !authUser && !isGuest ? "auth" : (!conn ? "setup" : section);
+    trackAnalyticsScreen(screen, {
+      account_tier: accountTier,
+      provider_type: conn?.type || "none",
+      content_mode: httpContentMode,
+    });
+  }, [authLoading, authUser, isGuest, conn, section, httpContentMode]);
 
   const { state: sv, actions: svActions } = useStreamVault({
-    db, syncToServer, syncConnectionsToServer: async (conns) => {
-      try {
-        const encrypted = await encryptConnections(conns);
-        await authFetch(API + "/api/sync/connections", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ connId: "_all", data: encrypted }),
-        });
-      } catch { /* local persistence remains the fallback */ }
-    },
+    db, syncToServer, syncConnectionsToServer: syncConnectionSnapshotToServer,
+    connectionHydrationKey: authLoading
+      ? null
+      : authUser
+        ? `user:${authUser.id}`
+        : isGuest
+          ? `guest:${GUEST_ID}`
+          : null,
     authUser, isGuest,
     persistActiveConnId: !httpContentMode
   });
@@ -3052,10 +3064,8 @@ export default function App() {
 
   trackAnalytics("play_item", {
     content_type: item.type || "live",
-    content_id: String(item.id || ""),
-    // Remove: content_title
     provider_type: conn?.type || "unknown",
-    category: cat || "All",
+    category_scope: cat === "All" ? "all" : "filtered",
     is_favorite: isFav(item)
   });
     
@@ -3119,10 +3129,8 @@ export default function App() {
 
     trackAnalytics("play_item", {
       content_type: "catchup",
-      content_id: String(channel.id || ""),
-      // Remove: content_title
       provider_type: conn?.type || "unknown",
-      category: cat || "All",
+      category_scope: cat === "All" ? "all" : "filtered",
       is_favorite: isFav(channel)
     });
 

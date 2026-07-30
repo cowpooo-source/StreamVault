@@ -13,6 +13,12 @@ function debouncedSync(type, connId, data, syncFn, delay = 2000) {
   }, delay);
 }
 
+function syncConnectionsSafely(syncFn, conns, options = {}) {
+  Promise.resolve(syncFn(conns, options)).catch(error => {
+    console.warn("Connection sync failed:", error?.message || error);
+  });
+}
+
 export function useStreamVault({
   db,
   syncToServer,
@@ -20,6 +26,7 @@ export function useStreamVault({
   authUser,
   isGuest,
   persistActiveConnId = true,
+  connectionHydrationKey = "default",
 }) {
   const [state, dispatch] = useReducer(streamvaultReducer, null, createInitialStoreState);
 
@@ -42,7 +49,9 @@ export function useStreamVault({
 
   // Load connections + activeConnId on mount
   useEffect(() => {
+    if (!connectionHydrationKey) return;
     let cancelled = false;
+    dispatch({ type: "SET_HYDRATED", payload: false });
     (async () => {
       const storedConns = normalizeConnections(await db.get("sv-connections", []));
       if (cancelled) return;
@@ -58,7 +67,7 @@ export function useStreamVault({
       dispatch({ type: "SET_HYDRATED", payload: true });
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [connectionHydrationKey, db]);
 
   // Load favorites + history whenever activeConnId changes
   useEffect(() => {
@@ -76,32 +85,34 @@ export function useStreamVault({
     })();
 
     return () => { cancelled = true; };
-  }, [state.activeConnId]);
+  }, [state.activeConnId, db]);
 
   // ── actions ─────────────────────────────────────────────────────────
 
-  const setConnections = useCallback((conns) => {
+  const setConnections = useCallback((conns, options = {}) => {
     dispatch({ type: "SET_CONNECTIONS", payload: conns });
     db.set("sv-connections", conns);
-    if (authUser || isGuest) syncConnectionsToServer(conns);
-  }, [authUser, isGuest]);
+    if (options.sync !== false && (authUser || isGuest)) {
+      syncConnectionsSafely(syncConnectionsToServer, conns, options);
+    }
+  }, [authUser, db, isGuest, syncConnectionsToServer]);
 
   const setActiveConnId = useCallback((id) => {
     dispatch({ type: "SET_ACTIVE_CONN_ID", payload: id });
     if (persistActiveConnId) {
       db.set("sv-activeConn", id);
     }
-  }, [persistActiveConnId]);
+  }, [db, persistActiveConnId]);
 
   const setFavorites = useCallback((favs) => {
     dispatch({ type: "SET_FAVORITES", payload: favs });
     if (state.activeConnId) db.set(`sv-favs-${state.activeConnId}`, favs);
-  }, [state.activeConnId]);
+  }, [db, state.activeConnId]);
 
   const setHistory = useCallback((hist) => {
     dispatch({ type: "SET_HISTORY", payload: hist });
     if (state.activeConnId) db.set(`sv-history-${state.activeConnId}`, hist);
-  }, [state.activeConnId]);
+  }, [db, state.activeConnId]);
 
   const addConnection = useCallback((conn) => {
     const updatedConns = [...connectionsRef.current, conn];
@@ -110,22 +121,26 @@ export function useStreamVault({
     if (persistActiveConnId) {
       db.set("sv-activeConn", conn.id);
     }
-    if (authUser || isGuest) syncConnectionsToServer(updatedConns);
-  }, [authUser, isGuest, persistActiveConnId]);
+    if (authUser || isGuest) syncConnectionsSafely(syncConnectionsToServer, updatedConns);
+  }, [authUser, db, isGuest, persistActiveConnId, syncConnectionsToServer]);
 
   const removeConnection = useCallback((id) => {
     const updatedConns = connectionsRef.current.filter(c => c.id !== id);
     dispatch({ type: "REMOVE_CONNECTION", payload: id });
     db.set("sv-connections", updatedConns);
-    if (authUser || isGuest) syncConnectionsToServer(updatedConns);
-  }, [authUser, isGuest]);
+    if (authUser || isGuest) {
+      syncConnectionsSafely(syncConnectionsToServer, updatedConns, updatedConns.length === 0
+        ? { allowEmpty: true, reason: "user_removed_last_connection" }
+        : {});
+    }
+  }, [authUser, db, isGuest, syncConnectionsToServer]);
 
   const updateConnection = useCallback((conn) => {
     const updatedConns = connectionsRef.current.map(c => c.id === conn.id ? conn : c);
     dispatch({ type: "UPDATE_CONNECTION", payload: conn });
     db.set("sv-connections", updatedConns);
-    if (authUser || isGuest) syncConnectionsToServer(updatedConns);
-  }, [authUser, isGuest]);
+    if (authUser || isGuest) syncConnectionsSafely(syncConnectionsToServer, updatedConns);
+  }, [authUser, db, isGuest, syncConnectionsToServer]);
 
   const toggleFavorite = useCallback((item) => {
     const type = item.type || "live";
@@ -141,7 +156,7 @@ export function useStreamVault({
       db.set(`sv-favs-${state.activeConnId}`, newFavs);
       if (authUser || isGuest) debouncedSync("favorites", state.activeConnId, newFavs, syncToServer);
     }
-  }, [state.activeConnId, authUser, isGuest]);
+  }, [authUser, db, isGuest, state.activeConnId, syncToServer]);
 
   const addHistory = useCallback((item) => {
     const entry = { ...item, timestamp: Date.now(), position: 0 };
@@ -154,7 +169,7 @@ export function useStreamVault({
       db.set(`sv-history-${state.activeConnId}`, newHist);
       if (authUser || isGuest) debouncedSync("history", state.activeConnId, newHist, syncToServer);
     }
-  }, [state.activeConnId, authUser, isGuest]);
+  }, [authUser, db, isGuest, state.activeConnId, syncToServer]);
 
   const actions = useMemo(() => ({
     setConnections,

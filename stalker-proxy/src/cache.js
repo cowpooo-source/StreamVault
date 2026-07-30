@@ -111,7 +111,8 @@ const stmtGetFeedback = db.prepare("SELECT id, message, guest_id, user_agent, ip
 const stmtSaveGuestData = db.prepare("INSERT OR REPLACE INTO guest_data (guest_id, conn_id, type, data, updated_at) VALUES (?, ?, ?, ?, ?)");
 const stmtGetGuestData = db.prepare("SELECT data FROM guest_data WHERE guest_id = ? AND conn_id = ? AND type = ?");
 const stmtDeleteGuestData = db.prepare("DELETE FROM guest_data WHERE guest_id = ? AND conn_id = ?");
-const stmtCleanupGuestData = db.prepare("DELETE FROM guest_data WHERE updated_at < ?");
+// Registered-user sync data is durable. Only anonymous guest snapshots expire.
+const stmtCleanupGuestData = db.prepare("DELETE FROM guest_data WHERE guest_id LIKE 'guest:%' AND updated_at < ?");
 const stmtCleanupGuests = db.prepare("DELETE FROM guests WHERE last_seen < ?");
 
 // ── Cache operations ──

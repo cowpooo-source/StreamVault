@@ -2,8 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import os from "os";
 
-const TEST_DB = path.join(__dirname, "test-cache.db");
+const TEST_DB = path.join(os.tmpdir(), `streamvault-test-cache-${process.pid}.db`);
 
 let cache;
 
@@ -90,6 +91,18 @@ describe("Cache — Guest Data (Sync)", () => {
     expect(cache.getGuestData("guest:abc", "conn1", "history")).toBeNull();
     // conn2 untouched
     expect(cache.getGuestData("guest:abc", "conn2", "favorites")).toEqual({ vod: {} });
+  });
+
+  it("expires anonymous guest sync data but preserves registered-user data", () => {
+    cache.saveGuestData("guest:expired", "_all", "connections", "guest-data");
+    cache.saveGuestData("user:durable", "_all", "connections", "user-data");
+    cache.db.prepare("UPDATE guest_data SET updated_at = 0 WHERE guest_id IN (?, ?)")
+      .run("guest:expired", "user:durable");
+
+    cache.cleanupGuestData();
+
+    expect(cache.getGuestData("guest:expired", "_all", "connections")).toBeNull();
+    expect(cache.getGuestData("user:durable", "_all", "connections")).toBe("user-data");
   });
 });
 
