@@ -1,252 +1,132 @@
 # Portal Heaven
 
-The first fully browser-based Stalker Portal IPTV client. No apps to install, no STB emulators — just open a URL and stream.
+Portal Heaven is a browser media player for provider accounts that the user is authorized to access. It does not provide channels, movies, subscriptions, or source content.
 
-Supports **Stalker Portal** (MAC-based), **Xtream Codes**, **M3U/M3U8 Playlists**, and **Direct HLS/MP4** URLs.
+The application supports Stalker portals, Xtream-compatible APIs, M3U playlists, and direct HLS or file URLs. Direct browser playback is preferred. The backend handles authentication, provider metadata, content-session authorization, and compatibility operations. Media relay is an explicit fallback and is disabled by default in the direct-play deployment.
 
----
+## Current deployment model
 
-## Features
+| Host | Purpose |
+| --- | --- |
+| portalheaven.stream | Public marketing and documentation site |
+| media.portalheaven.stream | HTTPS application, authentication, setup, browsing, and account settings |
+| Legacy host | Temporary old application during migration |
+| HTTP content host | Token-gated content shell used when the browser must play HTTP provider media |
 
-| Category | Details |
-|----------|---------|
-| **Live TV** | Channel grid with logos, real-time EPG guide (TiviMate-style) |
-| **Movies & VOD** | Poster grid with categories, year, rating, TMDB metadata |
-| **Series** | Season/episode browsing with detail modals |
-| **Discover** | Trending content and recommendations via TMDB |
-| **User Accounts** | Admin, Regular, Free, Guest tiers with role-based limits |
-| **Cross-device Sync** | Connections, favorites, watch history follow your account |
-| **Import/Export** | Backup and restore all data as JSON |
-| **Mobile Responsive** | Hamburger menu + slide-out drawer on portrait screens |
-| **Analytics** | Admin dashboard — visitors, requests, cache stats, portals |
-| **Image Proxy** | Fixes mixed-content and broken SSL certs on portal image servers |
-| **Stream Proxy** | Pipes streams through server to solve CORS and IP-binding |
-| **Lazy Loading** | Images load only when scrolled into view |
-| **Themes** | Multiple color themes with one-click switching |
-| **Multi-language** | i18n support with RTL layout |
-| **Legal Disclaimer** | One-time popup before first IPTV connection |
-| **Offline Cache** | IndexedDB — channels/categories persist across sessions |
+The exact content host and deployment paths are environment configuration, not source-code constants. The HTTPS application should never be used to proxy provider media unless the configured compatibility fallback is required.
 
-**Player keyboard shortcuts:**
-`Space` play/pause | `F` fullscreen | `M` mute | `Left/Right` +/-10s or channels | `Up/Down` volume or channels | `P` PiP | `Esc` close
+## Repository layout
 
----
+~~~text
+streamvault/                   React and Vite frontend
+stalker-proxy/                 Express backend and SQLite-backed account/cache services
+docker/                        Local Nginx gateway
+docs/                          Release, testing, and historical design documentation
+docker-compose.yml             Local development stack
+docker-compose.feature.yml     Non-production direct-play stack
+~~~
 
-## Architecture
+## Requirements
 
-```
-Browser (React SPA)
-    |
-    v
-Nginx (HTTPS, Let's Encrypt, reverse proxy)
-    |
-    v
-Express Backend (Node.js, port 3001)
-    |-- /stalker/*      Stalker portal proxy (handshake, API, stream)
-    |-- /stream          Stream proxy (CORS, IP-binding, Range support)
-    |-- /img             Image proxy (HTTPS-first, HTTP fallback)
-    |-- /proxy           Generic fetch proxy (Xtream API, M3U)
-    |-- /api/auth/*      User authentication (bcrypt + JWT)
-    |-- /api/sync/*      Cross-device data sync
-    |-- /api/admin/*     User management (admin only)
-    |-- /analytics       Admin dashboard (HTML)
-    |-- /health          Health check
-    |
-    v
-SQLite (better-sqlite3)
-    |-- cache            Channel/VOD/EPG cache (7-day TTL, WAL mode)
-    |-- users            User accounts (bcrypt hashed passwords)
-    |-- sessions         JWT session tracking (server-side revocation)
-    |-- guest_data       Sync data (favorites, history, connections)
-    |-- analytics        Visitors, requests, portals, watch log, feedback
-```
+- Node.js 22 LTS
+- npm
+- Docker and Docker Compose for the container workflow
+- A persistent writable data directory for the backend database
+- HTTPS and correctly scoped secrets for hosted deployments
 
----
+## Local development
 
-## User Tiers
+Run the backend and frontend separately when debugging source changes:
 
-| | Guest | Free | Regular (default) | Pro | Admin |
-|---|---|---|---|---|---|
-| IPTV connections | 2 | 2 | 5 | 10 | Unlimited |
-| Concurrent Logins| 1 | 1 | 3 | 5 | Unlimited |
-| VOD/Series items | 500 | 500 | Unlimited | Unlimited | Unlimited |
-| EPG | Yes | Yes | Yes | Yes | Yes |
-| Server sync | No | Yes | Yes | Yes | Yes |
-| Analytics | No | No | No | No | Yes |
-| User management | No | No | No | No | Yes |
-
-New registrations automatically get **Regular** access (promotional).
-
----
-
-## Quick Start (Development)
-
-```bash
-# Backend
+~~~powershell
 cd stalker-proxy
-cp .env.example .env    # set ADMIN_PASS at minimum, TMDB_API_KEY for server-side metadata
-npm install
-node src/index.js       # http://localhost:3001
+npm ci
+npm test
+npm run dev
+~~~
 
-# Frontend
-cd Portal Heaven
-npm install
-npm run dev             # http://localhost:5173
-```
+In another terminal:
 
-Open `http://localhost:5173` — login, register, or continue as guest.
+~~~powershell
+cd streamvault
+npm ci
+npm test
+npm run dev
+~~~
 
----
+The frontend runs on http://localhost:5173 and the backend on http://localhost:3001. Copy the .env.example files before starting and use only local test credentials.
 
-## VPS Deployment
+## Docker development
 
-### Automated
+The compose files require secrets instead of embedding credentials in source control:
 
-```bash
-./deploy-vps.sh your-domain.com
-```
+~~~powershell
+$env:ADMIN_PASS = 'local-test-password'
+$env:TOKEN_MASTER_KEY = 'replace-with-a-random-64-character-hex-key'
+docker compose -f docker-compose.yml up --build
+~~~
 
-Sets up Node.js, Nginx, SSL (Let's Encrypt), PM2 — fully automated for RHEL/CentOS/Ubuntu.
-The deploy script looks for the production checkout in `/opt/streamvault` by default and also accepts `STREAMVAULT_REPO_DIR` if your VPS uses a different path.
+For the direct-play feature stack:
 
-### Manual
+~~~powershell
+$env:ADMIN_PASS = 'local-test-password'
+$env:TOKEN_MASTER_KEY = 'replace-with-a-random-64-character-hex-key'
+docker compose -f docker-compose.feature.yml up --build
+~~~
 
-```bash
-# Clone and install
-git clone https://github.com/frossty/Portal Heaven.git
-cd Portal Heaven/stalker-proxy && npm install --omit=dev
-cd ../Portal Heaven && npm install && npm run build
+Never use production passwords, JWT secrets, Turnstile secrets, provider credentials, or webhook URLs in local compose files.
 
-# Configure
-cat > stalker-proxy/.env << EOF
-PORT=3001
-ADMIN_PASS=your-secure-password
-ALLOWED_ORIGIN=*
-TMDB_API_KEY=your-tmdb-v3-key
-EOF
+## Verification
 
-# Start with PM2
+Backend:
+
+~~~powershell
 cd stalker-proxy
-pm2 start src/index.js --name stalker-proxy
-pm2 save && pm2 startup
-```
+npm test
+~~~
 
-Nginx serves `Portal Heaven/dist/` as static files and proxies API routes to port 3001.
-The frontend build emits modern and legacy bundles together, so older smart TVs only need a fresh `npm run build` and redeploy of `dist/`.
+Frontend:
 
----
+~~~powershell
+cd streamvault
+npm run lint
+npm test
+$env:VITE_SECURE_APP_BASE_URL = 'https://media.portalheaven.stream/app'
+npm run build
+npm run e2e
+~~~
 
-## Environment Variables
+The Playwright suite uses mocked provider and media routes. Staging smoke tests and provider canaries are separate and must be run deliberately with credentials supplied through environment variables. See streamvault/README.md for test commands and fixtures.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3001` | Backend port |
-| `ADMIN_PASS` | — | Admin account password (required, seeds on first start) |
-| `ADMIN_USER` | `admin` | Admin username |
-| `JWT_SECRET` | auto-generated | JWT signing secret (auto-stored in DB if not set) |
-| `DEFAULT_ROLE` | `free` | Role assigned to new registrations; may be explicitly set to `free`, `regular`, or `pro` |
-| `REGISTRATION_OPEN` | `true` | Set `false` to disable public registration |
-| `ALLOWED_ORIGIN` | `*` | CORS allowed origins |
-| `TMDB_API_KEY` | — | TMDB v3 API key used by `/api/tmdb/*` for all users |
-| `BREVO_API_KEY` | — | Brevo API key used for auth emails |
-| `SMTP_FROM` | `portalheaven.stream@gmail.com` | Sender email address for outgoing mail |
-| `SMTP_FROM_NAME` | `Portal Heaven` | Sender name for outgoing mail |
-| `CACHE_DB` | `data/cache.db` | SQLite database path |
+## Configuration
 
----
-## API Reference
+Backend configuration is documented in stalker-proxy/.env.example. Frontend build configuration is documented in streamvault/.env.example.
 
-### Authentication
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/auth/register` | — | Create account |
-| POST | `/api/auth/login` | — | Login, returns JWT |
-| POST | `/api/auth/logout` | Bearer | Revoke session |
-| GET | `/api/auth/me` | Bearer | Current user info + limits |
-| PUT | `/api/auth/password` | Bearer | Change password |
+Important production settings include:
 
-### Admin (requires admin role)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/admin/users` | List all users |
-| POST | `/api/admin/users` | Create user with any role |
-| PUT | `/api/admin/users/:id` | Update role, limits, disabled |
-| DELETE | `/api/admin/users/:id` | Delete user |
+- JWT_SECRET and TOKEN_MASTER_KEY must be stable, random, and stored outside Git.
+- ALLOWED_ORIGIN must list the real HTTPS application origin.
+- APP_URL and VITE_SECURE_APP_BASE_URL must point to the media application.
+- DEFAULT_ROLE=free must remain explicit for new registrations.
+- STALKER_PLAYBACK_MODE=direct_only and STALKER_MEDIA_RELAY_ENABLED=false preserve the direct-first audit requirement.
+- Turnstile and OAuth credentials must be configured for the production hostnames.
 
-### Data Sync
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| PUT | `/api/sync/:type` | Save favorites, history, or connections |
-| GET | `/api/sync/:type` | Restore synced data |
-| POST | `/api/sync/migrate-guest` | Link guest data to user account |
-| DELETE | `/api/sync` | Delete sync data for a connection |
+## Data and account behavior
 
-### Stalker Proxy
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/stalker/handshake` | Portal authentication |
-| POST | `/stalker/validate` | Validate portal account status |
-| GET | `/stalker/channels` | Live channel list with genres |
-| GET | `/stalker/vod/categories` | VOD categories |
-| GET | `/stalker/vod` | VOD items by category |
-| GET | `/stalker/series/categories` | Series categories |
-| GET | `/stalker/series` | Series by category |
-| GET | `/stalker/series/seasons` | Seasons + episodes |
-| GET | `/stalker/play` | create_link + stream pipe (same IP) |
-| GET | `/stalker/epg` | Electronic Program Guide |
-| GET | `/stalker/profile` | STB profile info |
+Authentication and the account/cache database are currently SQLite-backed. Content sessions can use the configured PostgreSQL store, but this does not automatically migrate account data. Review docs/production-release.md before copying production data or running separate legacy and media deployments.
 
-### Utility
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/stream?url=` | Stream proxy with Range/HEAD/CORS |
-| GET | `/img?url=` | Image proxy (HTTPS-first, HTTP fallback) |
-| GET | `/proxy?url=` | Generic CORS fetch proxy |
-| GET | `/health` | Health check |
+New registrations are assigned the free role by the backend. Existing roles are not changed automatically. Guest and free accounts are subject to their configured limits and advertising policy.
 
----
+## Release documentation
 
-## Tech Stack
+- Production release and migration runbook: docs/production-release.md
+- Documentation index: docs/README.md
+- Manual release checklist: docs/testing/manual-release-checklist.md
+- Frontend and E2E guide: streamvault/README.md
+- Backend and API guide: stalker-proxy/README.md
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 19, Vite 8, single-file SPA (App.jsx) |
-| Backend | Express 4, Node.js 20+ |
-| Database | SQLite via better-sqlite3 (WAL mode) |
-| Auth | bcryptjs + jsonwebtoken |
-| Video | HLS.js (adaptive), mpegts.js (MPEG-TS), native `<video>` |
-| Deployment | Nginx + PM2 + Let's Encrypt |
-| Metadata | TMDB API (poster art, ratings, trailers) |
-
----
-
-## Project Structure
-
-```
-Portal Heaven/
-├── Portal Heaven/                 # React frontend
-│   ├── src/App.jsx              # Entire SPA (single-file)
-│   ├── public/                  # PWA assets, service worker
-│   └── dist/                    # Production build
-├── stalker-proxy/               # Node.js backend
-│   ├── src/index.js             # Express server + all routes
-│   ├── src/auth.js              # User auth (bcrypt, JWT, RBAC)
-│   ├── src/cache.js             # SQLite cache + analytics
-│   ├── src/email.js             # Email module (Brevo)
-│   └── src/analytics.html       # Admin dashboard
-├── deploy-vps.sh                # Automated VPS deployment script
-└── README.md
-```
-
----
-
-## Disclaimer
-
-Portal Heaven is a **media player application** only. It does not provide, host, or distribute any content, streams, or IPTV services. Users are solely responsible for ensuring they have valid, legal subscriptions for any services they connect. The developers bear no responsibility for the content or legality of third-party services.
-
----
+Dated files under docs/superpowers/ are design and implementation history. They may describe earlier hosts or deployment experiments and are not the current production runbook.
 
 ## License
 
-Private repository. All rights reserved.
-
+This repository is distributed under the license in LICENSE. Review the license and applicable law before operating a hosted service.

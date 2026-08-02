@@ -60,6 +60,7 @@ Desktop.ini
 
 # ── Archives ──────────────────────────────────────────────────────
 *.zip
+*.tar
 *.tar.gz
 
 # SQLite temp files (test databases)

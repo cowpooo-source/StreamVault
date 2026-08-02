@@ -5,10 +5,15 @@ function createAuthRouter(deps) {
   const { auth, email, fetch } = deps;
   const router = express.Router();
 
-  const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY;
+  const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY?.trim();
+  // Never silently disable CAPTCHA in a production process. Local/test runs may
+  // omit the secret, but production must fail closed until it is configured.
+  const turnstileRequired = process.env.TURNSTILE_REQUIRED === "true"
+    || Boolean(TURNSTILE_SECRET_KEY)
+    || process.env.NODE_ENV === "production";
 
   async function verifyTurnstile(token, ip) {
-    if (!TURNSTILE_SECRET_KEY) return true;
+    if (!TURNSTILE_SECRET_KEY) return false;
     if (!token) return false;
     const formData = new URLSearchParams();
     formData.append('secret', TURNSTILE_SECRET_KEY);
@@ -24,6 +29,22 @@ function createAuthRouter(deps) {
     }
   }
 
+  async function requireTurnstile(req, res) {
+    if (!turnstileRequired) return true;
+    if (!TURNSTILE_SECRET_KEY) {
+      res.status(503).json({ error: "CAPTCHA is not configured", code: "captcha_unavailable" });
+      return false;
+    }
+
+    const token = req.body?.cf_turnstile_response;
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
+    if (!(await verifyTurnstile(token, ip))) {
+      res.status(403).json({ error: "CAPTCHA failed", code: "captcha_failed" });
+      return false;
+    }
+    return true;
+  }
+
   function setAuthCookie(res, token) {
     res.cookie("sv_auth", token, {
       httpOnly: true, secure: process.env.NODE_ENV === "production" || process.env.APP_URL?.startsWith("https"),
@@ -34,9 +55,7 @@ function createAuthRouter(deps) {
   const loginLimiter = rateLimit({ windowMs: 900000, max: 15, message: { error: "Too many attempts" } });
 
   router.post("/auth/register", rateLimit({ windowMs: 3600000, max: 10 }), express.json(), async (req, res) => {
-    const turnstileToken = req.body.cf_turnstile_response;
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
-    if (TURNSTILE_SECRET_KEY && !(await verifyTurnstile(turnstileToken, ip))) return res.status(403).json({ error: "CAPTCHA failed" });
+    if (!(await requireTurnstile(req, res))) return;
     if (process.env.REGISTRATION_OPEN === "false") return res.status(403).json({ error: "Closed" });
 
     try {
@@ -49,13 +68,12 @@ function createAuthRouter(deps) {
   });
 
   router.post("/auth/login", loginLimiter, express.json(), async (req, res) => {
-    const turnstileToken = req.body.cf_turnstile_response;
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
-    if (TURNSTILE_SECRET_KEY && !(await verifyTurnstile(turnstileToken, ip))) return res.status(403).json({ error: "CAPTCHA failed" });
+    if (!(await requireTurnstile(req, res))) return;
 
     try {
       const { username, password, force } = req.body;
       if (!username || !password) return res.status(400).json({ error: "Required" });
+      const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
       const session = await auth.authenticate(username, password, ip, force === true);
       setAuthCookie(res, session.token);
       res.json(session);

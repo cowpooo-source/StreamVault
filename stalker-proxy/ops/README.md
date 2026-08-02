@@ -1,20 +1,20 @@
 # Non-production operations
 
-These files target only `stalker-proxy-play` in `/home/opc/StreamVault-Feature`.
+These files are scoped to the feature environment and currently target stalker-proxy-play in /home/opc/StreamVault-Feature. They must not be copied unchanged to media production or the legacy service.
 
-Install the scoped log rotation and watchdog timer:
+Install the feature-only log rotation and watchdog:
 
-```bash
+~~~bash
 sudo cp ops/logrotate-streamvault-feature.conf /etc/logrotate.d/streamvault-feature
 sudo cp ops/streamvault-feature-monitor.service /etc/systemd/system/
 sudo cp ops/streamvault-feature-monitor.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now streamvault-feature-monitor.timer
-```
+~~~
 
-Optional settings belong in `ops/monitor.env`:
+Optional values belong in ops/monitor.env:
 
-```bash
+~~~bash
 CPU_THRESHOLD=85
 CPU_CONSECUTIVE=3
 ALERT_COOLDOWN_SECONDS=900
@@ -23,14 +23,8 @@ ERROR_456_THRESHOLD=3
 ERROR_502_THRESHOLD=5
 ALERT_WEBHOOK_FORMAT=discord
 ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN
-```
+~~~
 
-The watchdog never restarts the service. It writes alerts to the system journal
-under `streamvault-feature-monitor` and posts the same message when a webhook is
-configured.
+The watchdog writes alerts to the system journal and posts to Discord when configured. It does not restart the service automatically.
 
-For Discord, create the webhook in the target channel under **Edit Channel**,
-**Integrations**, **Webhooks**, and **New Webhook**. The server invite URL is not
-the webhook URL and must not be placed in ALERT_WEBHOOK_URL.
-
-The error thresholds count responses in the rolling one-minute health window. HTTP 456 is treated as a provider rejection; HTTP 502 covers upstream or provider failures.
+The Discord invite URL is not a webhook URL. Treat webhook URLs as secrets and keep them out of Git, logs, screenshots, and issue reports.

@@ -9,8 +9,13 @@ services:
       - ./stalker-proxy/data:/home/node/app/data
     environment:
       - PORT=3001
-      - ALLOWED_ORIGIN=*
-      - ADMIN_PASS=Mango!123
+      - NODE_ENV=${NODE_ENV:-development}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost}
+      - ADMIN_PASS=${ADMIN_PASS:?ADMIN_PASS must be set}
+      - TOKEN_MASTER_KEY=${TOKEN_MASTER_KEY:?TOKEN_MASTER_KEY must be set}
+      - TURNSTILE_REQUIRED=${TURNSTILE_REQUIRED:-false}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
+      - CONTENT_BASE_URL=${CONTENT_BASE_URL:-http://localhost}
     networks:
       - streamvault-net
 
@@ -22,7 +27,8 @@ services:
       - ./streamvault:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=
+      - VITE_API_URL=${VITE_API_URL:-}
+      - VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY:-}
     networks:
       - streamvault-net
 

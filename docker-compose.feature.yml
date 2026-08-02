@@ -12,14 +12,17 @@ services:
       - stalker-data:/home/node/app/data
     environment:
       - PORT=3001
-      - ALLOWED_ORIGIN=*
-      - ADMIN_PASS=Mango!123
+      - NODE_ENV=${NODE_ENV:-development}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://127.0.0.1:3201}
+      - ADMIN_PASS=${ADMIN_PASS:?ADMIN_PASS must be set}
+      - TURNSTILE_REQUIRED=${TURNSTILE_REQUIRED:-false}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
       - PLAYER_BASE=http://127.0.0.1:3201
       - APP_URL=http://127.0.0.1:3201/app
       - CONTENT_BASE_URL=http://127.0.0.1:3201
       - CONTENT_SESSION_TTL_MINUTES=30
       - CONTENT_SESSION_MAX_PER_USER=5
-      - TOKEN_MASTER_KEY=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+      - TOKEN_MASTER_KEY=${TOKEN_MASTER_KEY:?TOKEN_MASTER_KEY must be set}
     networks:
       - streamvault-feature-net
 
@@ -31,8 +34,9 @@ services:
       - ./streamvault:/app
       - /app/node_modules
     environment:
-      - VITE_API_URL=
-      - VITE_SECURE_APP_BASE_URL=http://127.0.0.1:3201/app
+      - VITE_API_URL=${VITE_API_URL:-}
+      - VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY:-}
+      - VITE_SECURE_APP_BASE_URL=${VITE_SECURE_APP_BASE_URL:-http://127.0.0.1:3201/app}
     networks:
       - streamvault-feature-net
 
