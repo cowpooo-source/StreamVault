@@ -35,7 +35,7 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_URL=${VITE_API_URL:-}
-      - VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY:-}
+      - VITE_TURNSTILE_SITE_KEY
       - VITE_SECURE_APP_BASE_URL=${VITE_SECURE_APP_BASE_URL:-http://127.0.0.1:3201/app}
     networks:
       - streamvault-feature-net
