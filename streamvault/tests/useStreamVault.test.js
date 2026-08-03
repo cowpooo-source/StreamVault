@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useStreamVault } from "../src/useStreamVault.js";
+import { activeConnectionStorageKey } from "../src/connection-lifecycle.js";
 
 const mockDb = {
   get: vi.fn().mockResolvedValue(null),
@@ -95,7 +96,8 @@ describe("useStreamVault", () => {
 
     expect(result.current.state.connections).toHaveLength(1);
     expect(mockDb.set).toHaveBeenCalledWith("sv-connections", expect.any(Array));
-    expect(mockDb.set).toHaveBeenCalledWith("sv-activeConn", "c1");
+    await expect(activeConnectionStorageKey("c1")).resolves.toEqual(expect.stringMatching(/^sv-active-v2:/));
+    expect(mockDb.set).toHaveBeenCalledWith("sv-activeConn", expect.stringMatching(/^sv-active-v2:/));
   });
 
   it("removeConnection dispatches REMOVE_CONNECTION and persists", async () => {
@@ -120,7 +122,7 @@ describe("useStreamVault", () => {
 
     await act(async () => { result.current.actions.setActiveConnId("c1"); });
 
-    expect(mockDb.set).toHaveBeenCalledWith("sv-activeConn", "c1");
+    expect(mockDb.set).toHaveBeenCalledWith("sv-activeConn", expect.stringMatching(/^sv-active-v2:/));
   });
 
   it("setActiveConnId skips persistence when requested", async () => {

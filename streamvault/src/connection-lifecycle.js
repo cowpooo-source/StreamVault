@@ -1,4 +1,43 @@
 const INVALID_STATUSES = new Set(["disabled", "expired", "blocked", "suspended", "unregistered", "0"]);
+const ACTIVE_CONNECTION_KEY_PREFIX = "sv-active-v2:";
+
+function fallbackConnectionStorageKey(value) {
+  // Web Crypto is available in supported browsers; keep a deterministic
+  // non-sensitive fallback for insecure HTTP contexts and older WebViews.
+  let hash = 2166136261;
+  for (const char of String(value)) {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ACTIVE_CONNECTION_KEY_PREFIX + (hash >>> 0).toString(16);
+}
+
+export async function activeConnectionStorageKey(id) {
+  const value = String(id || "");
+  if (!value) return null;
+  if (globalThis.crypto?.subtle && typeof TextEncoder !== "undefined") {
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+    const hex = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    return ACTIVE_CONNECTION_KEY_PREFIX + hex;
+  }
+  return fallbackConnectionStorageKey(value);
+}
+
+export async function resolveActiveConnectionId(storedValue, connections) {
+  const normalized = normalizeConnections(connections);
+  if (!storedValue) return null;
+
+  // Accept the old plaintext value once, then callers can migrate it to the
+  // opaque format without breaking existing users.
+  const legacy = normalized.find(connection => connection.id === String(storedValue));
+  if (legacy) return legacy.id;
+
+  const resolved = await Promise.all(normalized.map(async connection => ({
+    id: connection.id,
+    key: await activeConnectionStorageKey(connection.id),
+  })));
+  return resolved.find(entry => entry.key === storedValue)?.id || null;
+}
 
 function asTimestamp(value) {
   if (value === null || value === undefined || value === "") return null;

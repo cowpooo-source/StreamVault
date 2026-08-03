@@ -1,4 +1,4 @@
-const STATUS_RE = /\b(400|401|402|403|404|405|406|408|409|410|422|429|451|456|459|462|500|501|502|503|504)\b/;
+const STATUS_RE = /\b(400|401|402|403|404|405|406|407|408|409|410|422|429|451|456|459|462|500|501|502|503|504)\b/;
 
 export const IPTV_ERROR_CATEGORIES = Object.freeze([
   "invalid_credentials",
@@ -17,9 +17,9 @@ export const IPTV_ERROR_CATEGORIES = Object.freeze([
   "unknown",
 ]);
 
-const TERMINAL_STATUSES = new Set([400, 401, 402, 403, 404, 405, 406, 410, 422, 451, 456, 459, 462]);
+const TERMINAL_STATUSES = new Set([400, 401, 402, 403, 404, 405, 406, 407, 410, 422, 451, 456, 459, 462]);
 const NO_AUTOMATIC_RETRY_HTTP_STATUS = new Set([
-  400, 401, 402, 403, 404, 405, 406, 410, 423, 429, 451, 456, 459, 462,
+  400, 401, 402, 403, 404, 405, 406, 407, 410, 423, 429, 451, 456, 459, 462,
 ]);
 
 function errorText(error) {
@@ -114,6 +114,13 @@ export function shouldStopAutomaticRecovery(status) {
 export function playbackHttpError(status) {
   const code = Number(status);
   const normalized = normalizeIptvError({ status: code });
+  if (code === 407) {
+    return {
+      icon: "!",
+      title: "Client Error (407)",
+      body: "The upstream server requested proxy authentication. Direct playback cannot continue.",
+    };
+  }
   const titles = {
     not_found: `Stream Not Found (${code})`,
     unauthorized: `Access Denied (${code})`,

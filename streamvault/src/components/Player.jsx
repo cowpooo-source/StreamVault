@@ -572,6 +572,18 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
 
           if ((code === 459 || code === 462) && current._direct
               && await requestStalkerRefresh(`hls_http_${code}`)) return;
+          if (code === 407) {
+            showStreamError(playbackHttpError(code));
+            trackAnalytics("playback_error", {
+              error_type: `hls_${data.type}`,
+              error_code: String(code),
+              content_id: String(current.id || ""),
+              provider_type: current.type || "live",
+              playback_route: analyticsPlaybackRoute(current),
+           });
+            destroyPlayers();
+            return;
+          }
           // A missing optional Xtream HLS endpoint may still have a working TS
           // stream. HTTP 456 rejection and 429 throttling are not probes.
           if (!manifestParsed && code !== 456 && code !== 429

@@ -22,6 +22,12 @@ const XTREAM_PASS = process.env.CANARY_XTREAM_PASS;
 const STALKER_PORTAL = process.env.CANARY_STALKER_PORTAL;
 const STALKER_MAC = process.env.CANARY_STALKER_MAC;
 const M3U_URL = process.env.CANARY_M3U_URL;
+const CANARY_TARGET_CONFIGURED = Boolean(
+  process.env.E2E_BASE_URL
+  || XTREAM_SERVER
+  || STALKER_PORTAL
+  || M3U_URL
+);
 
 // ── Aggregated canary report ────────────────────────────────────────────────
 
@@ -401,6 +407,7 @@ test.describe("M3U canary", () => {
 
 test.describe("Backend health", () => {
   test("/health returns 200", async ({ page }) => {
+    test.skip(!CANARY_TARGET_CONFIGURED, "No canary provider or E2E_BASE_URL configured");
     const start = Date.now();
     const res = await page.goto("/health");
     expect(res).not.toBeNull();

@@ -73,20 +73,28 @@ test.describe("Service worker", () => {
   test("stream and proxy responses are not cached after fetch", async ({
     page,
   }) => {
-    for (const pattern of ["**/proxy?*", "**/stream?*", "**/stalker/play?*", "**/img?*"]) {
-      await page.route(pattern, (route) =>
-        route.fulfill({ status: 200, contentType: "application/octet-stream", body: "test" }),
-      );
-    }
     await waitForSW(page);
+
+    await page.route(/\/(?:proxy|stream|stalker\/play|img)(?:\?|$)/, (route) =>
+      route.fulfill({ status: 200, contentType: "application/octet-stream", body: "test" }),
+    );
 
     // Make a fetch through the proxy and a direct stream request so the SW
     // has an opportunity to cache them.
     await page.evaluate(async () => {
-      await fetch("/proxy?url=http://example.com/stream.ts").catch(() => {});
-      await fetch("/stream?url=http://example.com/segment.ts").catch(() => {});
-      await fetch("/stalker/play?cmd=test").catch(() => {});
-      await fetch("/img?url=http://example.com/poster.jpg").catch(() => {});
+      const fetchBounded = (url) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1000);
+        return fetch(url, { signal: controller.signal })
+          .catch(() => {})
+          .finally(() => clearTimeout(timer));
+      };
+      await Promise.all([
+        fetchBounded("/proxy?url=http://example.com/stream.ts"),
+        fetchBounded("/stream?url=http://example.com/segment.ts"),
+        fetchBounded("/stalker/play?cmd=test"),
+        fetchBounded("/img?url=http://example.com/poster.jpg"),
+      ]);
     });
 
     const paths = await cachedPaths(page);

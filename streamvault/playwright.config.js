@@ -11,7 +11,9 @@ export default defineConfig({
   testDir: "./e2e",
   testIgnore: externalTestIgnore,
   timeout: 60000,
-  fullyParallel: true,
+  // Service-worker lifecycle tests must run serially within their file;
+  // other spec files can still execute in parallel.
+  fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 2 : undefined,
   outputDir: "test-results/playwright",

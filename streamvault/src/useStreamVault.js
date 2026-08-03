@@ -1,7 +1,7 @@
 // useStreamVault — React hook that wires streamvault-store.js to persistence and side effects
 import { useReducer, useEffect, useCallback, useMemo, useRef } from "react";
 import { createInitialStoreState, streamvaultReducer, selectActiveConnection, selectFavItems } from "./streamvault-store.js";
-import { normalizeConnections } from "./connection-lifecycle.js";
+import { activeConnectionStorageKey, normalizeConnections, resolveActiveConnectionId } from "./connection-lifecycle.js";
 
 // Debounce helper for server sync
 const _syncTimers = {};
@@ -57,11 +57,14 @@ export function useStreamVault({
       if (cancelled) return;
       dispatch({ type: "SET_CONNECTIONS", payload: storedConns || [] });
 
-      const storedActiveConnId = await db.get("sv-activeConn", null);
+      const storedActiveConnKey = await db.get("sv-activeConn", null);
       if (cancelled) return;
-      if (storedActiveConnId && storedConns.some((connection) => connection.id === storedActiveConnId)) {
+      const storedActiveConnId = await resolveActiveConnectionId(storedActiveConnKey, storedConns);
+      if (storedActiveConnId) {
         dispatch({ type: "SET_ACTIVE_CONN_ID", payload: storedActiveConnId });
-      } else if (storedActiveConnId) {
+        const opaqueKey = await activeConnectionStorageKey(storedActiveConnId);
+        if (storedActiveConnKey !== opaqueKey) await db.set("sv-activeConn", opaqueKey);
+      } else if (storedActiveConnKey) {
         await db.set("sv-activeConn", null);
       }
       dispatch({ type: "SET_HYDRATED", payload: true });
@@ -100,7 +103,11 @@ export function useStreamVault({
   const setActiveConnId = useCallback((id) => {
     dispatch({ type: "SET_ACTIVE_CONN_ID", payload: id });
     if (persistActiveConnId) {
-      db.set("sv-activeConn", id);
+      if (!id) {
+        db.set("sv-activeConn", null);
+      } else {
+        activeConnectionStorageKey(id).then(key => db.set("sv-activeConn", key)).catch(() => {});
+      }
     }
   }, [db, persistActiveConnId]);
 
@@ -119,7 +126,7 @@ export function useStreamVault({
     dispatch({ type: "ADD_CONNECTION", payload: conn });
     db.set("sv-connections", updatedConns);
     if (persistActiveConnId) {
-      db.set("sv-activeConn", conn.id);
+      activeConnectionStorageKey(conn.id).then(key => db.set("sv-activeConn", key)).catch(() => {});
     }
     if (authUser || isGuest) syncConnectionsSafely(syncConnectionsToServer, updatedConns);
   }, [authUser, db, isGuest, persistActiveConnId, syncConnectionsToServer]);
