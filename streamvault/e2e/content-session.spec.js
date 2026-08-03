@@ -132,6 +132,9 @@ test.describe("Content session lifecycle", () => {
 
   test("unknown token returns to /app?reason=auth", async ({ appPage, allowBrowserError }) => {
     allowBrowserError(/^401 GET https?:\/\/[^/]+\/api\/content-session\/validate\?/);
+    await appPage.route("**/api/auth/me", (route) =>
+      route.fulfill({ status: 401, body: "{}" }),
+    );
     await appPage.route("**/api/content-session/validate**", (route) =>
       route.fulfill({ status: 401, body: "{}" }),
     );
@@ -144,6 +147,9 @@ test.describe("Content session lifecycle", () => {
 
   test("expired token returns to /app?reason=auth", async ({ appPage, allowBrowserError }) => {
     allowBrowserError(/^410 GET https?:\/\/[^/]+\/api\/content-session\/validate\?/);
+    await appPage.route("**/api/auth/me", (route) =>
+      route.fulfill({ status: 401, body: "{}" }),
+    );
     await appPage.route("**/api/content-session/validate**", (route) =>
       route.fulfill({ status: 410, body: "{}" }),
     );
