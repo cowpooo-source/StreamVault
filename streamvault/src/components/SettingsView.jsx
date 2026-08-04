@@ -21,6 +21,7 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
   const [emailMsg, setEmailMsg] = useState("");
   const [analyticsConsent, setAnalyticsConsentState] = useState(getAnalyticsConsent);
   const fileRef = useRef(null);
+  const analyticsConsentLabel = { granted: 'Enabled', denied: 'Disabled' }[analyticsConsent] || 'Not selected';
 
   React.useEffect(() => subscribeAnalyticsConsent(setAnalyticsConsentState), []);
 
@@ -212,15 +213,18 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
                 <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem",lineHeight:1.45}}>
                   Shares setup and playback reliability categories. Provider details, searches, titles, and account data are excluded.
                 </div>
+                <div aria-live='polite' style={{fontSize:'.72rem',color:'var(--accent)',marginTop:'.5rem',fontWeight:600}}>
+                  Consent: {analyticsConsentLabel}
+                </div>
               </div>
-              <button
-                type="button"
-                className={`c-btn ${analyticsConsent === "granted" ? "active" : ""}`}
-                style={{minWidth:"100px"}}
-                onClick={() => setAnalyticsConsent(analyticsConsent === "granted" ? "denied" : "granted")}
-              >
-                {analyticsConsent === "granted" ? "Enabled" : "Disabled"}
-              </button>
+              <div style={{display:'flex',gap:'.45rem',flexWrap:'wrap',justifyContent:'flex-end'}}>
+                <button type='button' className={analyticsConsent === 'granted' ? 'c-btn active' : 'c-btn'} onClick={() => setAnalyticsConsent('granted')}>
+                  Allow analytics
+                </button>
+                <button type='button' className={analyticsConsent === 'denied' ? 'c-btn active' : 'c-btn'} onClick={() => setAnalyticsConsent('denied')}>
+                  Disable analytics
+                </button>
+              </div>
             </div>
           </div>}
           <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)"}}>
