@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 
 const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY;
+const LEGACY_PLAYER_URL = "https://legacy.portalheaven.stream/";
 
 export default function AuthScreen({ onAuth, onGuest, api }) {
   const [mode, setMode] = useState("login");
@@ -338,6 +339,9 @@ export default function AuthScreen({ onAuth, onGuest, api }) {
             {loading ? "..." : "Continue as Guest"}
           </button>
           <div style={{fontSize:".65rem",color:"var(--t3)",marginTop:".4rem"}}>No account needed - some features limited</div>
+          <a href={LEGACY_PLAYER_URL} style={{display:"inline-block",marginTop:".8rem",color:"var(--accent)",fontSize:".75rem",textDecoration:"none"}}>
+            Use Legacy Player
+          </a>
           {mode === "register" && (
             <div style={{fontSize:".65rem",color:"var(--accent)",marginTop:".5rem"}}>
               New accounts get Regular access (promo)

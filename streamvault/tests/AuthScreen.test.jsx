@@ -45,6 +45,10 @@ describe("AuthScreen", () => {
     expect(screen.getByText("Register")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Username")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Password")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Use Legacy Player" })).toHaveAttribute(
+      "href",
+      "https://legacy.portalheaven.stream/",
+    );
   });
 
   it("should switch to register tab and show email field", () => {
