@@ -3252,9 +3252,8 @@ export default function App() {
     if (!cId) return "Invalid connection";
     const existing = connections.find(c => c.id === cId);
     if (existing) {
-      // Already saved — just activate
-      setActiveConnId(cId);
-      db.set("sv-activeConn", cId);
+      // Already saved. Activation is decided by handleConnect after it knows
+      // whether this flow will leave the secure app for direct content mode.
       return null;
     }
     // Enforce connection limit
@@ -3267,7 +3266,6 @@ export default function App() {
     const connObj = { id: cId, type: connConfig.type, label: makeConnectionLabel(connConfig.type, connConfig), color, config: connConfig };
     const newConns = [...connections, connObj];
     setConnections(newConns);
-    setActiveConnId(cId);
     return null;
   }
 
@@ -3650,6 +3648,10 @@ export default function App() {
       }
     }
 
+    // Only persist an active connection when this flow stays on the secure
+    // app. Direct content sessions use an ephemeral active connection on the
+    // HTTP origin and must not auto-reopen when disconnect returns to /app.
+    setActiveConnId(id);
     setConn(connConfig);
   }
 

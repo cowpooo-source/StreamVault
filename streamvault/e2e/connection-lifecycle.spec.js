@@ -39,6 +39,25 @@ test.describe("Connection lifecycle", () => {
     await expect(appPage.getByText("News Channel")).toBeVisible({ timeout: 15000 });
   });
 
+  test("disconnecting a newly opened connection returns to setup", async ({ appPage }) => {
+    await reachSetup(appPage);
+    await appPage.unroute("**/api/auth/me");
+    await mockAuthenticatedUser(appPage);
+    installXtreamMock(appPage, { auth: "valid" });
+
+    await appPage.getByPlaceholder("http://server.com:8080").fill("http://provider.test");
+    await appPage.getByPlaceholder("username").fill("new-user");
+    await appPage.getByPlaceholder("password").fill("new-pass");
+    await appPage.getByRole("button", { name: /Connect/ }).click();
+
+    await expect(appPage).toHaveURL(/\/content\?token=e2e-content-token/);
+    await expect(appPage.getByText("News Channel")).toBeVisible({ timeout: 15000 });
+
+    await appPage.getByRole("button", { name: /disconnect/i }).click();
+    await expect(appPage).toHaveURL(/\/app/);
+    await expect(appPage.getByRole("button", { name: /Xtream Codes/i })).toBeVisible({ timeout: 10000 });
+  });
+
   test("disconnect returns to /app", async ({ appPage }) => {
     // Start authenticated so we go straight to setup.
     await mockAuthenticatedUser(appPage);
