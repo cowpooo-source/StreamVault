@@ -61,6 +61,26 @@ const catalogItemLimit = () => {
   const parsed = Number.parseInt(process.env.STALKER_CATALOG_MAX_ITEMS || '', 10);
   return Number.isFinite(parsed) ? Math.min(20_000, Math.max(100, parsed)) : 5_000;
 };
+const CHANNEL_CATALOG_MAX_PAGES = 100;
+const isMetadataLimitError = error => error?.code === "METADATA_TOO_LARGE"
+  || /^Portal metadata response exceeds \d+ bytes$/i.test(String(error?.message || ""));
+const channelPageItems = payload => {
+  if (Array.isArray(payload?.js?.data)) return payload.js.data;
+  if (Array.isArray(payload?.js)) return payload.js;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+};
+const channelPageCount = (payload, itemCount) => {
+  const body = payload?.js && !Array.isArray(payload.js) ? payload.js : payload;
+  const explicitPages = Number.parseInt(body?.total_pages || body?.totalPages || "", 10);
+  if (Number.isFinite(explicitPages) && explicitPages > 0) return explicitPages;
+  const totalItems = Number.parseInt(body?.total_items || body?.totalItems || "", 10);
+  const pageSize = Number.parseInt(body?.max_page_items || body?.per_page || itemCount || "", 10);
+  if (Number.isFinite(totalItems) && Number.isFinite(pageSize) && pageSize > 0) {
+    return Math.max(1, Math.ceil(totalItems / pageSize));
+  }
+  return 1;
+};
 
 function createStalkerRouter(deps) {
   const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry: rawPortalFetchRetry, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
@@ -126,6 +146,54 @@ function createStalkerRouter(deps) {
     return signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   };
   const relayLimit = () => Math.max(1, Math.min(10, Number.parseInt(process.env.STALKER_RELAY_MAX_CONCURRENCY || "2", 10) || 2));
+
+  async function fetchChannelCatalog(session) {
+    try {
+      return await portalFetchRetry(session, { type: "itv", action: "get_all_channels" });
+    } catch (catalogError) {
+      if (!isMetadataLimitError(catalogError)) throw catalogError;
+
+      const limit = catalogItemLimit();
+      const channels = [];
+      const seen = new Set();
+      let totalPages = 1;
+      try {
+        for (let page = 1; page <= Math.min(totalPages, CHANNEL_CATALOG_MAX_PAGES) && channels.length < limit; page++) {
+          const payload = await portalFetchRetry(session, {
+            type: "itv",
+            action: "get_ichannels_via_api",
+            page,
+            p: page,
+          });
+          const items = channelPageItems(payload);
+          if (!items.length) break;
+          if (page === 1) totalPages = channelPageCount(payload, items.length);
+
+          let added = 0;
+          for (const item of items) {
+            const identity = String(item?.id ?? item?.ch_id ?? item?.cmd ?? "");
+            if (identity && seen.has(identity)) continue;
+            if (identity) seen.add(identity);
+            channels.push(item);
+            added++;
+            if (channels.length >= limit) break;
+          }
+          // Some portals ignore page parameters and repeat page one forever.
+          if (!added) break;
+        }
+      } catch (fallbackError) {
+        catalogError.cause = fallbackError;
+        catalogError.code = "CATALOG_TOO_LARGE";
+        throw catalogError;
+      }
+
+      if (!channels.length) {
+        catalogError.code = "CATALOG_TOO_LARGE";
+        throw catalogError;
+      }
+      return { js: { data: channels } };
+    }
+  }
 
 
   // Resolve stalker credentials from a content-session token or from direct query params.
@@ -421,10 +489,10 @@ function createStalkerRouter(deps) {
     try {
       const session = await getSession(portal, mac, { serial });
       const genreData = await portalFetchRetry(session, { type: "itv", action: "get_genres" });
-      const chData = await portalFetchRetry(session, { type: "itv", action: "get_all_channels" });
+      const chData = await fetchChannelCatalog(session);
       const genres = genreData?.js || [];
       const genreMap = Object.fromEntries(genres.map(g => [g.id, g.title]));
-      const channels = (chData?.js?.data || []).map(ch => ({
+      const channels = channelPageItems(chData).slice(0, catalogItemLimit()).map(ch => ({
         id: ch.id, name: ch.name, num: ch.number, logo: ch.logo || ch.icon || null,
         group: genreMap[ch.tv_genre_id] || "Other", url: encodeOpaqueCommand(ch.cmd), epgId: ch.xmltv_id || null, type: "live"
       }));

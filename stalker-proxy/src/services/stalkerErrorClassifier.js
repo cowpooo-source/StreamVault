@@ -17,6 +17,9 @@ function classifyProviderError(error) {
   if (explicitCode === "URL_NOT_ALLOWED") {
     return { status: 403, code: "url_not_allowed" };
   }
+  if (explicitCode === "CATALOG_TOO_LARGE") {
+    return { status: 502, code: "catalog_too_large" };
+  }
   if ([401, 403].includes(explicitStatus)
       || /authorization|auth failed|device not found|access denied|forbidden/i.test(msg)) {
     return { status: 403, code: "authorization_failure" };

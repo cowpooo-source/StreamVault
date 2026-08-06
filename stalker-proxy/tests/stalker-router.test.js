@@ -217,6 +217,133 @@ describe('createStalkerRouter - unit', () => {
     expect(deps.cache.set).toHaveBeenCalled();
   });
 
+  it('GET /stalker/channels falls back to paginated channel metadata when the full catalog exceeds the byte limit', async () => {
+    const portalFetchRetry = vi.fn().mockImplementation((_session, params) => {
+      if (params.action === 'get_genres') return Promise.resolve({ js: [{ id: 'g1', title: 'News' }] });
+      if (params.action === 'get_all_channels') return Promise.reject(new Error('Portal metadata response exceeds 52428800 bytes'));
+      if (params.action === 'get_ichannels_via_api' && params.page === 1) return Promise.resolve({
+        js: {
+          data: [
+            { id: 'ch1', name: 'One', number: 1, tv_genre_id: 'g1', cmd: 'http://stream.example/1' },
+            { id: 'ch2', name: 'Two', number: 2, tv_genre_id: 'g1', cmd: 'http://stream.example/2' },
+          ],
+          total_pages: 2,
+        },
+      });
+      if (params.action === 'get_ichannels_via_api' && params.page === 2) return Promise.resolve({
+        js: {
+          data: [{ id: 'ch3', name: 'Three', number: 3, tv_genre_id: 'g1', cmd: 'http://stream.example/3' }],
+          total_pages: 2,
+        },
+      });
+      return Promise.reject(new Error('Unexpected portal call'));
+    });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(200);
+    expect(res.body.channels.map(channel => channel.id)).toEqual(['ch1', 'ch2', 'ch3']);
+    expect(portalFetchRetry).toHaveBeenCalledWith(expect.any(Object), {
+      type: 'itv', action: 'get_ichannels_via_api', page: 2, p: 2,
+    }, undefined, expect.objectContaining({ signal: expect.anything() }));
+  });
+
+  it('GET /stalker/channels bounds paginated fallback results by the catalog item limit', async () => {
+    const previousLimit = process.env.STALKER_CATALOG_MAX_ITEMS;
+    process.env.STALKER_CATALOG_MAX_ITEMS = '100';
+    const page = Array.from({ length: 100 }, (_, index) => ({
+      id: `ch${index + 1}`,
+      name: `Channel ${index + 1}`,
+      number: index + 1,
+      cmd: `http://stream.example/${index + 1}`,
+    }));
+    const portalFetchRetry = vi.fn().mockImplementation((_session, params) => {
+      if (params.action === 'get_genres') return Promise.resolve({ js: [] });
+      if (params.action === 'get_all_channels') return Promise.reject(new Error('Portal metadata response exceeds 52428800 bytes'));
+      return Promise.resolve({ js: { data: page, total_pages: 5 } });
+    });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+    });
+
+    try {
+      const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+      expect(res.status).toBe(200);
+      expect(res.body.channels).toHaveLength(100);
+      expect(portalFetchRetry.mock.calls.filter(([, params]) => params.action === 'get_ichannels_via_api')).toHaveLength(1);
+    } finally {
+      if (previousLimit === undefined) delete process.env.STALKER_CATALOG_MAX_ITEMS;
+      else process.env.STALKER_CATALOG_MAX_ITEMS = previousLimit;
+    }
+  });
+
+  it('GET /stalker/channels bounds the primary catalog by the catalog item limit', async () => {
+    const previousLimit = process.env.STALKER_CATALOG_MAX_ITEMS;
+    process.env.STALKER_CATALOG_MAX_ITEMS = '100';
+    const channels = Array.from({ length: 101 }, (_, index) => ({
+      id: `ch${index + 1}`,
+      name: `Channel ${index + 1}`,
+      number: index + 1,
+      cmd: `http://stream.example/${index + 1}`,
+    }));
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn()
+        .mockResolvedValueOnce({ js: [] })
+        .mockResolvedValueOnce({ js: { data: channels } }),
+    });
+
+    try {
+      const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+      expect(res.status).toBe(200);
+      expect(res.body.channels).toHaveLength(100);
+    } finally {
+      if (previousLimit === undefined) delete process.env.STALKER_CATALOG_MAX_ITEMS;
+      else process.env.STALKER_CATALOG_MAX_ITEMS = previousLimit;
+    }
+  });
+
+  it('GET /stalker/channels does not use the catalog fallback for unrelated provider failures', async () => {
+    const portalFetchRetry = vi.fn().mockImplementation((_session, params) => {
+      if (params.action === 'get_genres') return Promise.resolve({ js: [] });
+      return Promise.reject(new Error('Portal server error (503)'));
+    });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(502);
+    expect(res.body.code).toBe('provider_failure');
+    expect(portalFetchRetry.mock.calls.some(([, params]) => params.action === 'get_ichannels_via_api')).toBe(false);
+  });
+
+  it('GET /stalker/channels returns catalog_too_large when the paginated fallback is unavailable', async () => {
+    const portalFetchRetry = vi.fn().mockImplementation((_session, params) => {
+      if (params.action === 'get_genres') return Promise.resolve({ js: [] });
+      if (params.action === 'get_all_channels') return Promise.reject(new Error('Portal metadata response exceeds 52428800 bytes'));
+      return Promise.reject(new Error('Unsupported action'));
+    });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(502);
+    expect(res.body.code).toBe('catalog_too_large');
+    expect(res.body.error).toContain('Portal metadata response exceeds 52428800 bytes');
+  });
+
   it('GET /stalker/channels returns 502 on session error', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockRejectedValue(new Error('Session failed')),
