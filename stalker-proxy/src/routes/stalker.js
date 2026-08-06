@@ -154,17 +154,12 @@ function createStalkerRouter(deps) {
       if (!isMetadataLimitError(catalogError)) throw catalogError;
 
       const limit = catalogItemLimit();
-      const channels = [];
-      const seen = new Set();
-      let totalPages = 1;
-      try {
+      const loadPages = async action => {
+        const channels = [];
+        const seen = new Set();
+        let totalPages = 1;
         for (let page = 1; page <= Math.min(totalPages, CHANNEL_CATALOG_MAX_PAGES) && channels.length < limit; page++) {
-          const payload = await portalFetchRetry(session, {
-            type: "itv",
-            action: "get_ichannels_via_api",
-            page,
-            p: page,
-          });
+          const payload = await portalFetchRetry(session, { type: "itv", action, page, p: page });
           const items = channelPageItems(payload);
           if (!items.length) break;
           if (page === 1) totalPages = channelPageCount(payload, items.length);
@@ -181,17 +176,22 @@ function createStalkerRouter(deps) {
           // Some portals ignore page parameters and repeat page one forever.
           if (!added) break;
         }
-      } catch (fallbackError) {
-        catalogError.cause = fallbackError;
-        catalogError.code = "CATALOG_TOO_LARGE";
-        throw catalogError;
+        return channels;
+      };
+
+      let fallbackError = catalogError;
+      for (const action of ["get_all_channels", "get_ichannels_via_api"]) {
+        try {
+          const channels = await loadPages(action);
+          if (channels.length) return { js: { data: channels } };
+        } catch (error) {
+          fallbackError = error;
+        }
       }
 
-      if (!channels.length) {
-        catalogError.code = "CATALOG_TOO_LARGE";
-        throw catalogError;
-      }
-      return { js: { data: channels } };
+      catalogError.cause = fallbackError;
+      catalogError.code = "CATALOG_TOO_LARGE";
+      throw catalogError;
     }
   }
 
