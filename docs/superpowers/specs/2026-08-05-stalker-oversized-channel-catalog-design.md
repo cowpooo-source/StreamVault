@@ -2,13 +2,13 @@
 
 ## Problem
 
-Some Stalker portals return more than 50 MiB from `get_all_channels`. The proxy correctly stops reading at `STALKER_CHANNELS_MAX_BYTES`, but `/stalker/channels` currently exposes that protection as a terminal 502 even when the portal offers the paginated `get_ichannels_via_api` action.
+Some Stalker portals return more than 50 MiB from `get_all_channels`. Some of those portals also ignore pagination parameters and return an empty response from `get_ichannels_via_api`, so neither buffered loading nor server-side pagination is reliable.
 
 ## Design
 
-Keep `get_all_channels` as the primary path for compatibility and cache behavior. If that request fails specifically because its response exceeds the configured metadata limit, fetch `get_ichannels_via_api` page by page. Stop at the provider's reported last page, an empty page, or `STALKER_CATALOG_MAX_ITEMS`, whichever comes first.
+Stream-parse `get_all_channels` as the primary production path and stop after `STALKER_CATALOG_MAX_ITEMS` channel objects. This avoids buffering the full response and closes the upstream body once the bounded catalog is complete.
 
-Each fallback request remains subject to `STALKER_METADATA_MAX_BYTES`, upstream timeouts, metadata concurrency limits, request deduplication, and the request abort signal. Unrelated provider failures are returned unchanged rather than being hidden by the fallback.
+If streaming is unavailable or malformed, preserve the buffered `get_all_channels`, paginated `get_all_channels`, and paginated `get_ichannels_via_api` paths as compatibility fallbacks. All requests retain upstream timeouts and browser abort propagation.
 
 Normalize both response shapes into the existing channel response contract and keep genre mapping, opaque commands, cache sanitation, and catalog TTL behavior unchanged.
 
@@ -18,8 +18,9 @@ If the paginated action is unsupported or fails, return the original oversized-c
 
 ## Tests
 
-- A normal `get_all_channels` response does not invoke the fallback.
-- A size-limit failure falls back to multiple `get_ichannels_via_api` pages and combines their channels.
+- A chunked `get_all_channels` response is stream-parsed and stops at the item limit.
+- Production routing uses streaming before buffered or paginated fallbacks.
+- A size-limit failure can still fall back to paginated provider actions.
 - Pagination stops at `STALKER_CATALOG_MAX_ITEMS`.
 - A non-size provider failure does not invoke the fallback.
 - A failed fallback returns `catalog_too_large`.

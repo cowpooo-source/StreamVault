@@ -278,6 +278,37 @@ describe('createStalkerRouter - unit', () => {
     expect(portalFetchRetry.mock.calls.some(([, params]) => params.action === 'get_ichannels_via_api')).toBe(false);
   });
 
+  it('GET /stalker/channels uses the bounded streaming catalog before paginated fallbacks', async () => {
+    const portalFetchRetry = vi.fn().mockImplementation((_session, params) => {
+      if (params.action === 'get_genres') return Promise.resolve({ js: [] });
+      if (params.action === 'get_all_channels' && !params.page) {
+        return Promise.reject(new Error('Portal metadata response exceeds 52428800 bytes'));
+      }
+      return Promise.reject(new Error('Paginated fallback should not be used'));
+    });
+    const portalFetchChannelCatalog = vi.fn().mockResolvedValue([
+      { id: 'ch1', name: 'One', cmd: 'http://stream.example/1' },
+      { id: 'ch2', name: 'Two', cmd: 'http://stream.example/2' },
+    ]);
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+      portalFetchChannelCatalog,
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+
+    expect(res.status).toBe(200);
+    expect(res.body.channels.map(channel => channel.id)).toEqual(['ch1', 'ch2']);
+    expect(portalFetchChannelCatalog).toHaveBeenCalledWith(
+      expect.any(Object),
+      5000,
+      undefined,
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+    expect(portalFetchRetry).toHaveBeenCalledTimes(1);
+  });
+
   it('GET /stalker/channels bounds paginated fallback results by the catalog item limit', async () => {
     const previousLimit = process.env.STALKER_CATALOG_MAX_ITEMS;
     process.env.STALKER_CATALOG_MAX_ITEMS = '100';

@@ -2,6 +2,10 @@ const http = require("http");
 const https = require("https");
 const dns = require("dns");
 const util = require("util");
+const { chain } = require("stream-chain");
+const { parser } = require("stream-json");
+const { pick } = require("stream-json/filters/Pick");
+const { streamArray } = require("stream-json/streamers/StreamArray");
 const { sanitizeStalkerUrl } = require("../services/stalkerSecurity");
 const dnsLookup = util.promisify(dns.lookup);
 
@@ -722,6 +726,52 @@ function createProxyHelpers(deps) {
     }
   }
 
+  async function portalFetchChannelCatalog(session, maxItems, timeout = 12000, requestOptions = {}) {
+    const limit = Math.min(20_000, Math.max(1, Number.parseInt(maxItems, 10) || 1));
+    const qs = new URLSearchParams({
+      type: "itv",
+      action: "get_all_channels",
+      JsHttpRequest: "1-xml",
+    }).toString();
+    const url = `${session.base}${session.apiPath}?${qs}`;
+    const response = await fetch(url, {
+      headers: session.headers,
+      timeout,
+      signal: requestOptions.signal,
+      agent: agentFor(url),
+    });
+    if (!response.ok) {
+      if (response.status === 429) {
+        throw Object.assign(new Error("Portal rate limited (429). Try again later."), { code: "RATE_LIMITED" });
+      }
+      throw new Error(`Portal server error (${response.status})`);
+    }
+    if (!response.body?.pipe) throw new Error("Portal channel catalog is not streamable");
+
+    const catalogStream = chain([
+      parser(),
+      pick({ filter: "js.data" }),
+      streamArray(),
+    ]);
+    const forwardSourceError = error => catalogStream.destroy(error);
+    response.body.once("error", forwardSourceError);
+    response.body.pipe(catalogStream);
+
+    const channels = [];
+    try {
+      for await (const entry of catalogStream) {
+        channels.push(entry.value);
+        if (channels.length >= limit) break;
+      }
+    } finally {
+      response.body.removeListener("error", forwardSourceError);
+      response.body.unpipe(catalogStream);
+      if (!response.body.destroyed) response.body.destroy();
+      if (!catalogStream.destroyed) catalogStream.destroy();
+    }
+    return channels;
+  }
+
   function resetProxyHelperStateForTests() {
     pathCache.clear();
     sessionCache.clear();
@@ -791,6 +841,7 @@ function createProxyHelpers(deps) {
     safeError,
     getSession,
     portalFetchRetry,
+    portalFetchChannelCatalog,
     resetProxyHelperStateForTests,
     resolveUrl,
     rewriteMediaUrl,

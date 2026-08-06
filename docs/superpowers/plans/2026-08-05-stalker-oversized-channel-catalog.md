@@ -4,7 +4,7 @@
 
 **Goal:** Load oversized Stalker channel catalogs without raising the 50 MiB safety limit.
 
-**Architecture:** Preserve `get_all_channels` as the primary compatibility path. On the specific bounded-reader size error, use `get_ichannels_via_api` pagination and normalize the collected items into the existing `/stalker/channels` response.
+**Architecture:** Stream-parse `get_all_channels` with a hard item cap. Preserve buffered and paginated channel actions as compatibility fallbacks and normalize every successful path into the existing `/stalker/channels` response.
 
 **Tech Stack:** Node.js 22, Express, Vitest, Supertest
 
@@ -54,8 +54,35 @@ Run: `npm test`
 
 Expected: all tests pass with zero failures.
 
-- [ ] **Step 6: Review the diff and commit**
+- [x] **Step 6: Review the diff and commit**
 
 Run: `git diff --check`
 
 Commit the route, classifier, tests, design, and plan together after verification.
+
+### Task 2: Add bounded streaming for portals that ignore pagination
+
+**Files:**
+- Modify: `stalker-proxy/package.json`
+- Modify: `stalker-proxy/package-lock.json`
+- Modify: `stalker-proxy/src/app.js`
+- Modify: `stalker-proxy/src/routes/stalker.js`
+- Modify: `stalker-proxy/src/utils/proxyHelpers.js`
+- Test: `stalker-proxy/tests/proxyHelpers.test.js`
+- Test: `stalker-proxy/tests/stalker-router.test.js`
+
+- [x] **Step 1: Reproduce a portal that ignores channel pagination**
+
+Verify that the portal reports a large `total_items`, leaves `cur_page` unchanged for `page` and `p`, and returns an empty `get_ichannels_via_api` body.
+
+- [x] **Step 2: Add failing streaming and route tests**
+
+Require the parser to stop at the requested item limit and require the route to use streaming before issuing the buffered request.
+
+- [x] **Step 3: Implement bounded stream parsing**
+
+Use `stream-json` to select `js.data`, collect at most `STALKER_CATALOG_MAX_ITEMS`, propagate request aborts, and close the upstream body at the limit.
+
+- [x] **Step 4: Run focused and full backend tests**
+
+Run `npm test -- tests/proxyHelpers.test.js`, `npm test -- tests/stalker-router.test.js`, and `npm test`.

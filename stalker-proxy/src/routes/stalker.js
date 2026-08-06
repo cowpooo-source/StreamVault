@@ -83,7 +83,7 @@ const channelPageCount = (payload, itemCount) => {
 };
 
 function createStalkerRouter(deps) {
-  const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry: rawPortalFetchRetry, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
+  const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry: rawPortalFetchRetry, portalFetchChannelCatalog: rawPortalFetchChannelCatalog, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
   const sessionStore = deps.contentSessionStore || (deps.cache?.db && typeof deps.cache.db.exec === 'function' ? createContentSessionStore({ db: deps.cache.db }) : fallbackSessionStore);
   const router = express.Router();
   const requestContext = new AsyncLocalStorage();
@@ -93,6 +93,14 @@ function createStalkerRouter(deps) {
     timeout,
     { signal: requestContext.getStore()?.signal },
   );
+  const portalFetchChannelCatalog = rawPortalFetchChannelCatalog
+    ? (session, maxItems, timeout) => rawPortalFetchChannelCatalog(
+      session,
+      maxItems,
+      timeout,
+      { signal: requestContext.getStore()?.signal },
+    )
+    : null;
   router.use((req, res, next) => {
     const controller = new AbortController();
     let completed = false;
@@ -148,51 +156,63 @@ function createStalkerRouter(deps) {
   const relayLimit = () => Math.max(1, Math.min(10, Number.parseInt(process.env.STALKER_RELAY_MAX_CONCURRENCY || "2", 10) || 2));
 
   async function fetchChannelCatalog(session) {
+    const limit = catalogItemLimit();
+    let streamingError;
+    if (portalFetchChannelCatalog) {
+      try {
+        const channels = await portalFetchChannelCatalog(session, limit);
+        if (channels.length) return { js: { data: channels } };
+      } catch (error) {
+        streamingError = error;
+      }
+    }
+
+    let catalogError;
     try {
       return await portalFetchRetry(session, { type: "itv", action: "get_all_channels" });
-    } catch (catalogError) {
-      if (!isMetadataLimitError(catalogError)) throw catalogError;
-
-      const limit = catalogItemLimit();
-      const loadPages = async action => {
-        const channels = [];
-        const seen = new Set();
-        let totalPages = 1;
-        for (let page = 1; page <= Math.min(totalPages, CHANNEL_CATALOG_MAX_PAGES) && channels.length < limit; page++) {
-          const payload = await portalFetchRetry(session, { type: "itv", action, page, p: page });
-          const items = channelPageItems(payload);
-          if (!items.length) break;
-          if (page === 1) totalPages = channelPageCount(payload, items.length);
-
-          let added = 0;
-          for (const item of items) {
-            const identity = String(item?.id ?? item?.ch_id ?? item?.cmd ?? "");
-            if (identity && seen.has(identity)) continue;
-            if (identity) seen.add(identity);
-            channels.push(item);
-            added++;
-            if (channels.length >= limit) break;
-          }
-          // Some portals ignore page parameters and repeat page one forever.
-          if (!added) break;
-        }
-        return channels;
-      };
-
-      let fallbackError = catalogError;
-      for (const action of ["get_all_channels", "get_ichannels_via_api"]) {
-        try {
-          const channels = await loadPages(action);
-          if (channels.length) return { js: { data: channels } };
-        } catch (error) {
-          fallbackError = error;
-        }
-      }
-
-      catalogError.cause = fallbackError;
-      catalogError.code = "CATALOG_TOO_LARGE";
-      throw catalogError;
+    } catch (error) {
+      catalogError = error;
     }
+    if (!isMetadataLimitError(catalogError)) throw catalogError;
+
+    const loadPages = async action => {
+      const channels = [];
+      const seen = new Set();
+      let totalPages = 1;
+      for (let page = 1; page <= Math.min(totalPages, CHANNEL_CATALOG_MAX_PAGES) && channels.length < limit; page++) {
+        const payload = await portalFetchRetry(session, { type: "itv", action, page, p: page });
+        const items = channelPageItems(payload);
+        if (!items.length) break;
+        if (page === 1) totalPages = channelPageCount(payload, items.length);
+
+        let added = 0;
+        for (const item of items) {
+          const identity = String(item?.id ?? item?.ch_id ?? item?.cmd ?? "");
+          if (identity && seen.has(identity)) continue;
+          if (identity) seen.add(identity);
+          channels.push(item);
+          added++;
+          if (channels.length >= limit) break;
+        }
+        // Some portals ignore page parameters and repeat page one forever.
+        if (!added) break;
+      }
+      return channels;
+    };
+
+    let fallbackError = streamingError || catalogError;
+    for (const action of ["get_all_channels", "get_ichannels_via_api"]) {
+      try {
+        const channels = await loadPages(action);
+        if (channels.length) return { js: { data: channels } };
+      } catch (error) {
+        fallbackError = error;
+      }
+    }
+
+    catalogError.cause = fallbackError;
+    catalogError.code = "CATALOG_TOO_LARGE";
+    throw catalogError;
   }
 
 

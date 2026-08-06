@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Readable } from 'node:stream';
 import { resolveUrl, rewriteM3u8, rewriteMediaUrl, createProxyHelpers } from '../src/utils/proxyHelpers';
 
 describe('proxyHelpers', () => {
@@ -250,6 +251,34 @@ describe("redirect targets", () => {
       if (previousChannelLimit === undefined) delete process.env.STALKER_CHANNELS_MAX_BYTES;
       else process.env.STALKER_CHANNELS_MAX_BYTES = previousChannelLimit;
     }
+  });
+
+  it('streams a channel catalog and stops at the requested item limit', async () => {
+    const payload = JSON.stringify({
+      js: {
+        total_items: 3,
+        data: [
+          { id: 'ch1', name: 'One', cmd: 'http://stream.example/1' },
+          { id: 'ch2', name: 'Two', cmd: 'http://stream.example/2' },
+          { id: 'ch3', name: 'Three', cmd: 'http://stream.example/3' },
+        ],
+      },
+    });
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: vi.fn().mockReturnValue(null) },
+      body: Readable.from([payload.slice(0, 70), payload.slice(70)]),
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = { base: 'http://portal.example/', apiPath: 'load.php', headers: {} };
+
+    const channels = await helpers.portalFetchChannelCatalog(session, 2);
+
+    expect(channels).toEqual([
+      { id: 'ch1', name: 'One', cmd: 'http://stream.example/1' },
+      { id: 'ch2', name: 'Two', cmd: 'http://stream.example/2' },
+    ]);
   });
 
   it('deduplicates identical in-flight metadata requests', async () => {
