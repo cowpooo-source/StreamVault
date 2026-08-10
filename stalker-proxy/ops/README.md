@@ -34,4 +34,6 @@ The watchdog writes alerts to the system journal and posts to Discord when confi
 
 The application health response includes route-specific status counters. A catalog alert requires both a request-volume threshold and an error threshold, preventing a single bad catalog request from paging the operator.
 
+For media production, install the separate `streamvault-httpstatic-monitor.service` and `.timer`. It must use a deployment-stable copy of this script and an environment file containing `APP_NAME=stalker-proxy-httpstatic`, `HEALTH_URL=http://127.0.0.1:3301/health`, a unique `STATE_DIR`, and the Discord webhook. Keep the existing feature monitor pointed at `stalker-proxy-play` on port `3201`.
+
 The Discord invite URL is not a webhook URL. Treat webhook URLs as secrets and keep them out of Git, logs, screenshots, and issue reports.
