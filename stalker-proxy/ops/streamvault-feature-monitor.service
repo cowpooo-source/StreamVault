@@ -5,5 +5,5 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=opc
-EnvironmentFile=-/home/opc/StreamVault-Feature/stalker-proxy/ops/monitor.env
+EnvironmentFile=-/etc/streamvault/feature-monitor.env
 ExecStart=/usr/bin/bash /home/opc/StreamVault-Feature/stalker-proxy/ops/monitor-feature-service.sh
