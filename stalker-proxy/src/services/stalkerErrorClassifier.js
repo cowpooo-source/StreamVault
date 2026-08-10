@@ -20,6 +20,9 @@ function classifyProviderError(error) {
   if (explicitCode === "CATALOG_TOO_LARGE") {
     return { status: 502, code: "catalog_too_large" };
   }
+  if (explicitCode === "PROVIDER_COOLDOWN") {
+    return { status: 429, code: "provider_cooldown" };
+  }
   if ([401, 403].includes(explicitStatus)
       || /authorization|auth failed|device not found|access denied|forbidden/i.test(msg)) {
     return { status: 403, code: "authorization_failure" };

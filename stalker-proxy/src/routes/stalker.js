@@ -118,7 +118,14 @@ function createStalkerRouter(deps) {
       return;
     }
     const { status, code } = classifyProviderError(error);
-    res.status(status).json({ error: safeStalkerError(error), code });
+    if (error?.retryAfterMs) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))));
+    }
+    res.status(status).json({
+      error: safeStalkerError(error),
+      code,
+      ...(error?.retryAfterMs ? { retryAfterSeconds: Math.max(1, Math.ceil(error.retryAfterMs / 1000)) } : {}),
+    });
   };
   const validateQuery = route => (req, res, next) => {
     try {

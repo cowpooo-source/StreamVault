@@ -19,12 +19,19 @@ CPU_THRESHOLD=85
 CPU_CONSECUTIVE=3
 ALERT_COOLDOWN_SECONDS=900
 ERROR_401_THRESHOLD=5
+ERROR_403_THRESHOLD=5
+ERROR_429_THRESHOLD=3
 ERROR_456_THRESHOLD=3
 ERROR_502_THRESHOLD=5
+ERROR_504_THRESHOLD=5
+CATALOG_REQUEST_THRESHOLD=30
+CATALOG_ERROR_THRESHOLD=5
 ALERT_WEBHOOK_FORMAT=discord
 ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN
 ~~~
 
-The watchdog writes alerts to the system journal and posts to Discord when configured. It does not restart the service automatically.
+The watchdog writes alerts to the system journal and posts to Discord when configured. It alerts on repeated authorization failures (403), rate limits (429), provider 456/502/504 failures, catalog error bursts, sustained CPU, failed health checks, and kernel TCP out-of-memory messages. Alerts are deduplicated by `ALERT_COOLDOWN_SECONDS`. It does not restart the service automatically.
+
+The application health response includes route-specific status counters. A catalog alert requires both a request-volume threshold and an error threshold, preventing a single bad catalog request from paging the operator.
 
 The Discord invite URL is not a webhook URL. Treat webhook URLs as secrets and keep them out of Git, logs, screenshots, and issue reports.

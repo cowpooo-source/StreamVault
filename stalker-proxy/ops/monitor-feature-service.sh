@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ERROR_401_THRESHOLD=${ERROR_401_THRESHOLD:-5}
+ERROR_403_THRESHOLD=${ERROR_403_THRESHOLD:-5}
+ERROR_429_THRESHOLD=${ERROR_429_THRESHOLD:-3}
 ERROR_456_THRESHOLD=${ERROR_456_THRESHOLD:-3}
 ERROR_502_THRESHOLD=${ERROR_502_THRESHOLD:-5}
+ERROR_504_THRESHOLD=${ERROR_504_THRESHOLD:-5}
+CATALOG_REQUEST_THRESHOLD=${CATALOG_REQUEST_THRESHOLD:-30}
+CATALOG_ERROR_THRESHOLD=${CATALOG_ERROR_THRESHOLD:-5}
 
 APP_NAME="${APP_NAME:-stalker-proxy-play}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3201/health}"
@@ -56,14 +61,30 @@ if ! health="$(curl -fsS --max-time 10 "$HEALTH_URL")"; then
 fi
 
 status_count() {
-  node -e 'const value=JSON.parse(process.argv[1]);process.stdout.write(String(value.requests?.byStatus?.[process.argv[2]] ?? 0))' $health $1
+  node -e 'const value=JSON.parse(process.argv[1]);process.stdout.write(String(value.requests?.byStatus?.[process.argv[2]] ?? 0))' "$health" "$1"
 }
 errors_401=$(status_count 401)
+errors_403=$(status_count 403)
+errors_429=$(status_count 429)
 errors_456=$(status_count 456)
 errors_502=$(status_count 502)
+errors_504=$(status_count 504)
 if (( errors_401 >= ERROR_401_THRESHOLD )); then alert repeated_401_$errors_401; fi
+if (( errors_403 >= ERROR_403_THRESHOLD )); then alert repeated_provider_authorization_failures_$errors_403; fi
+if (( errors_429 >= ERROR_429_THRESHOLD )); then alert repeated_provider_rate_limits_$errors_429; fi
 if (( errors_456 >= ERROR_456_THRESHOLD )); then alert repeated_provider_456_$errors_456; fi
 if (( errors_502 >= ERROR_502_THRESHOLD )); then alert repeated_502_$errors_502; fi
+if (( errors_504 >= ERROR_504_THRESHOLD )); then alert repeated_provider_timeouts_$errors_504; fi
+
+catalog_requests="$(node -e 'const value=JSON.parse(process.argv[1]);process.stdout.write(String(value.requests?.byType?.stalker ? (value.requests?.byRouteStatus?.channels ? Object.values(value.requests.byRouteStatus.channels).reduce((a,b)=>a+b,0) : 0) : 0))' "$health")"
+catalog_errors="$(node -e 'const value=JSON.parse(process.argv[1]);const statuses=value.requests?.byRouteStatus?.channels||{};process.stdout.write(String(Object.entries(statuses).filter(([code])=>Number(code)>=400).reduce((a,[,b])=>a+b,0)))' "$health")"
+if (( catalog_requests >= CATALOG_REQUEST_THRESHOLD && catalog_errors >= CATALOG_ERROR_THRESHOLD )); then
+  alert "repeated_stalker_catalog_failures requests=$catalog_requests errors=$catalog_errors"
+fi
+
+if journalctl -k --since "-2 minutes" --no-pager 2>/dev/null | grep -qi "TCP: out of memory"; then
+  alert "kernel reported TCP out of memory; provider or relay connections may be exhausting socket memory"
+fi
 cpu="$(ps -p "$pid" -o pcpu= | xargs)"
 rss_kb="$(ps -p "$pid" -o rss= | xargs)"
 if awk -v cpu="$cpu" -v threshold="$CPU_THRESHOLD" 'BEGIN { exit !(cpu >= threshold) }'; then

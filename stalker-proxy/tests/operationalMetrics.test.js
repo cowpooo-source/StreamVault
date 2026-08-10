@@ -19,9 +19,22 @@ describe('operational metrics', () => {
       averageLatencyMs: 50,
       byType: { stalker: 1, proxy: 1 },
       byStatus: { '200': 1, '502': 1 },
+      byRouteStatus: {},
     });
 
     timestamp += 60_001;
     expect(metrics.snapshot().requestsLastMinute).toBe(0);
+  });
+
+  it('tracks status counts by route for provider-specific alerts', () => {
+    const metrics = createOperationalMetrics({ now: () => 1_000_000 });
+    metrics.begin();
+    metrics.finish('stalker', 429, 10, 'channels');
+    metrics.begin();
+    metrics.finish('stalker', 502, 10, 'channels');
+
+    expect(metrics.snapshot().byRouteStatus).toEqual({
+      channels: { '429': 1, '502': 1 },
+    });
   });
 });

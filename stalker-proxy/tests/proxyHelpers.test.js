@@ -281,6 +281,32 @@ describe("redirect targets", () => {
     ]);
   });
 
+  it('deduplicates identical in-flight channel catalog streams', async () => {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const payload = JSON.stringify({ js: { data: [{ id: 'ch1' }] } });
+    const fetch = vi.fn().mockImplementation(async () => {
+      await pending;
+      return {
+        ok: true,
+        status: 200,
+        body: Readable.from([payload]),
+      };
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = { base: 'http://portal.example/', apiPath: 'load.php', headers: {} };
+
+    const first = helpers.portalFetchChannelCatalog(session, 500);
+    const second = helpers.portalFetchChannelCatalog(session, 500);
+    release();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      [{ id: 'ch1' }],
+      [{ id: 'ch1' }],
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('deduplicates identical in-flight metadata requests', async () => {
     let release;
     const pending = new Promise(resolve => { release = resolve; });
@@ -341,6 +367,45 @@ describe("redirect targets", () => {
     } finally {
       if (previousCooldown === undefined) delete process.env.STALKER_PROVIDER_COOLDOWN_MS;
       else process.env.STALKER_PROVIDER_COOLDOWN_MS = previousCooldown;
+    }
+  });
+
+  it('blocks a provider after repeated authorization failures', async () => {
+    const previousThreshold = process.env.STALKER_PROVIDER_FAILURE_THRESHOLD;
+    const previousRecoveries = process.env.STALKER_METADATA_MAX_AUTH_RECOVERIES;
+    process.env.STALKER_PROVIDER_FAILURE_THRESHOLD = '3';
+    process.env.STALKER_METADATA_MAX_AUTH_RECOVERIES = '0';
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => 'Authorization failed',
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = {
+      base: 'http://portal.example/',
+      portal: 'http://portal.example/c/',
+      apiPath: 'load.php',
+      mac: '00:11:22:33:44:55',
+      opts: {},
+      headers: {},
+    };
+
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await expect(helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' }))
+          .rejects.toThrow('Authorization failed');
+      }
+      await expect(helpers.portalFetchRetry(session, { type: 'itv', action: 'get_genres' }))
+        .rejects.toMatchObject({ code: 'PROVIDER_COOLDOWN' });
+      const callsAfterCooldown = fetch.mock.calls.length;
+      await expect(helpers.portalFetchRetry(session, { type: 'itv', action: 'get_vod_categories' }))
+        .rejects.toMatchObject({ code: 'PROVIDER_COOLDOWN' });
+      expect(fetch).toHaveBeenCalledTimes(callsAfterCooldown);
+    } finally {
+      if (previousThreshold === undefined) delete process.env.STALKER_PROVIDER_FAILURE_THRESHOLD;
+      else process.env.STALKER_PROVIDER_FAILURE_THRESHOLD = previousThreshold;
+      if (previousRecoveries === undefined) delete process.env.STALKER_METADATA_MAX_AUTH_RECOVERIES;
+      else process.env.STALKER_METADATA_MAX_AUTH_RECOVERIES = previousRecoveries;
     }
   });
 

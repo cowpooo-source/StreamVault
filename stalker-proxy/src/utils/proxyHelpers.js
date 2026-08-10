@@ -227,8 +227,10 @@ function createProxyHelpers(deps) {
   const sessionCache = new Map();
   const inFlightSessions = new Map();
   const inFlightMetadataRequests = new Map();
+  const inFlightCatalogRequests = new Map();
   const portalCooldowns = new Map();
   const providerCooldowns = new Map();
+  const providerFailureStates = new Map();
   const activeMetadataRequests = new Map();
   const handshakeFailureCache = new Map();
   const HANDSHAKE_FAILURE_CACHE_MAX = 500;
@@ -243,6 +245,18 @@ function createProxyHelpers(deps) {
 
   function rateLimitCooldownMs() {
     return boundedEnvInt('STALKER_PROVIDER_COOLDOWN_MS', 60 * 1000, 5 * 1000, 5 * 60 * 1000);
+  }
+
+  function providerFailureThreshold() {
+    return boundedEnvInt('STALKER_PROVIDER_FAILURE_THRESHOLD', 3, 2, 10);
+  }
+
+  function providerFailureWindowMs() {
+    return boundedEnvInt('STALKER_PROVIDER_FAILURE_WINDOW_MS', 60 * 1000, 10 * 1000, 10 * 60 * 1000);
+  }
+
+  function providerFailureCooldownMs() {
+    return boundedEnvInt('STALKER_PROVIDER_FAILURE_COOLDOWN_MS', 2 * 60 * 1000, 30 * 1000, 10 * 60 * 1000);
   }
 
   function providerKey(portal) {
@@ -321,6 +335,28 @@ function createProxyHelpers(deps) {
     }
     portalCooldowns.set(sessionKey, expiresAt);
     providerCooldowns.set(provider, expiresAt);
+  }
+
+  function recordProviderFailure(portal, error) {
+    const message = String(error?.message || 'provider failure');
+    if (!/(authorization|auth failed|device not found|access denied|handshake failed|could not obtain token|server error \(5\d\d\))/i.test(message)) return null;
+    const provider = providerKey(portal);
+    const now = Date.now();
+    const previous = providerFailureStates.get(provider);
+    const state = previous && previous.expiresAt > now
+      ? previous
+      : { count: 0, expiresAt: now + providerFailureWindowMs() };
+    state.count += 1;
+    state.expiresAt = now + providerFailureWindowMs();
+    providerFailureStates.set(provider, state);
+    if (state.count < providerFailureThreshold()) return null;
+
+    const expiresAt = now + providerFailureCooldownMs();
+    providerCooldowns.set(provider, expiresAt);
+    return Object.assign(
+      new Error(`Provider temporarily blocked after repeated failures. Retry in ${Math.ceil((expiresAt - now) / 1000)}s.`),
+      { code: 'PROVIDER_COOLDOWN', retryAfterMs: expiresAt - now },
+    );
   }
 
   function getPortalCooldown(portal, mac, opts = {}) {
@@ -600,6 +636,8 @@ function createProxyHelpers(deps) {
       if (e.message?.includes("could not obtain token") || e.message?.includes("Handshake failed")) {
         setHandshakeFailure(portal, mac, normalized, e.message);
       }
+      const blocked = recordProviderFailure(portal, e);
+      if (blocked) throw blocked;
       throw e;
     } finally {
       const cooldownUntil = getPortalCooldown(portal, mac, normalized);
@@ -629,7 +667,10 @@ function createProxyHelpers(deps) {
     const cooldownUntil = getPortalCooldown(session.portal || session.base, session.mac, session.opts);
     if (cooldownUntil) {
       const waitSeconds = Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 1000));
-      throw new Error(`Portal rate limited (429). Cooldown active for ${waitSeconds}s.`);
+      throw Object.assign(new Error(`Portal cooldown active. Retry in ${waitSeconds}s.`), {
+        code: 'PROVIDER_COOLDOWN',
+        retryAfterMs: cooldownUntil - Date.now(),
+      });
     }
 
     let result = await portalFetch(session, params, timeout, requestOptions);
@@ -664,6 +705,9 @@ function createProxyHelpers(deps) {
       .catch(error => {
         if (error?.code === 'RATE_LIMITED' || /\b429\b|rate limited/i.test(error?.message || '')) {
           setPortalCooldown(session.portal || session.base, session.mac, session.opts);
+        } else {
+          const blocked = recordProviderFailure(session.portal || session.base, error);
+          if (blocked) throw blocked;
         }
         throw error;
       })
@@ -728,6 +772,22 @@ function createProxyHelpers(deps) {
 
   async function portalFetchChannelCatalog(session, maxItems, timeout = 12000, requestOptions = {}) {
     const limit = Math.min(20_000, Math.max(1, Number.parseInt(maxItems, 10) || 1));
+    const requestKey = `${metadataRequestKey(session, { type: 'itv', action: 'get_all_channels' })}|limit:${limit}`;
+    const existing = inFlightCatalogRequests.get(requestKey);
+    if (existing) return existing;
+    const cooldownUntil = getPortalCooldown(session.portal || session.base, session.mac, session.opts);
+    if (cooldownUntil) {
+      throw Object.assign(new Error(`Portal cooldown active. Retry in ${Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 1000))}s.`), {
+        code: 'PROVIDER_COOLDOWN',
+        retryAfterMs: cooldownUntil - Date.now(),
+      });
+    }
+    const metadataProviderKey = providerKey(session.base);
+    const active = activeMetadataRequests.get(metadataProviderKey) || 0;
+    const maxConcurrent = boundedEnvInt('STALKER_METADATA_MAX_CONCURRENCY', 6, 1, 20);
+    if (active >= maxConcurrent) throw new Error('Portal metadata concurrency limit reached');
+    activeMetadataRequests.set(metadataProviderKey, active + 1);
+    const request = (async () => {
     const qs = new URLSearchParams({
       type: "itv",
       action: "get_all_channels",
@@ -770,6 +830,22 @@ function createProxyHelpers(deps) {
       if (!catalogStream.destroyed) catalogStream.destroy();
     }
     return channels;
+    })().catch(error => {
+      if (error?.code === 'RATE_LIMITED' || /\b429\b|rate limited/i.test(error?.message || '')) {
+        setPortalCooldown(session.portal || session.base, session.mac, session.opts);
+      } else {
+        const blocked = recordProviderFailure(session.portal || session.base, error);
+        if (blocked) throw blocked;
+      }
+      throw error;
+    }).finally(() => {
+      inFlightCatalogRequests.delete(requestKey);
+      const remaining = (activeMetadataRequests.get(metadataProviderKey) || 1) - 1;
+      if (remaining > 0) activeMetadataRequests.set(metadataProviderKey, remaining);
+      else activeMetadataRequests.delete(metadataProviderKey);
+    });
+    inFlightCatalogRequests.set(requestKey, request);
+    return request;
   }
 
   function resetProxyHelperStateForTests() {
@@ -777,8 +853,10 @@ function createProxyHelpers(deps) {
     sessionCache.clear();
     inFlightSessions.clear();
     inFlightMetadataRequests.clear();
+    inFlightCatalogRequests.clear();
     portalCooldowns.clear();
     providerCooldowns.clear();
+    providerFailureStates.clear();
     activeMetadataRequests.clear();
     handshakeFailureCache.clear();
   }

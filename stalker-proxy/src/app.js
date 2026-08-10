@@ -79,12 +79,15 @@ function createApp(deps) {
     if (p.startsWith("/stalker/")) type = "stalker";
     else if (p === "/stream") type = "stream";
     else if (p === "/proxy") type = "proxy";
+    const route = p.startsWith("/stalker/")
+      ? p.slice("/stalker/".length).split("/")[0] || "root"
+      : type;
     let operationalFinished = false;
     if (shouldTrack) operationalMetrics.begin();
     const finishOperational = status => {
       if (!shouldTrack || operationalFinished) return;
       operationalFinished = true;
-      operationalMetrics.finish(type, status, Date.now() - start);
+      operationalMetrics.finish(type, status, Date.now() - start, route);
     };
 
     res.on("finish", () => {
