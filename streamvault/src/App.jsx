@@ -2966,13 +2966,11 @@ export default function App() {
     }
     if (!silent) {
       setCatLoading(true);
-      beginContentLoad("Loading category items");
     }
     try {
       const res  = await fetch(`${API}/stalker/${sec}?${stalkerRequestParams({ cat: catId, ...(force ? { refresh: "1" } : {}) })}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      if (!silent) updateContentLoad(72, "Processing provider items…");
       const items = data.items || [];
       applyItems(items);
       // Persist only stable catalog fields; signed playback URLs are stripped.
@@ -2982,7 +2980,6 @@ export default function App() {
     finally {
       if (!silent) {
         setCatLoading(false);
-        endContentLoad();
       }
       fetchingCatRef.current.delete(refKey);
     }
