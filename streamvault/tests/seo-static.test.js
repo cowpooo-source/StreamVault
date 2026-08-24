@@ -18,7 +18,8 @@ describe("public SEO and GEO contract", () => {
     expect(marketing).toContain('<meta name="robots" content="index, follow, max-image-preview:large">');
     expect(matches(marketing, /<h1(?:\s[^>]*)?>/gi)).toHaveLength(1);
     expect(marketing).toContain("Source-Available IPTV Web Player for Xtream, M3U and Stalker");
-    expect(marketing).toContain('href="/app"');
+    expect(marketing).toContain('href="https://media.portalheaven.stream/app"');
+    expect(marketing).not.toContain('href="/app"');
   });
 
   it("matches public licensing language to the repository license", () => {
