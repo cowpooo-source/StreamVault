@@ -13,18 +13,21 @@ export default function VirtualGrid({
   toggleFav, 
   setExpandedItem,
   imgSrc,
-  header // Accepts the recommendations row so it scrolls with the grid
+  header,
+  onEndReached,
+  canLoadMore = false,
 }) {
   const scrollRef = useRef(null);
   const [gridMetrics, setGridMetrics] = useState({ columns: 1, rowHeight: 285 });
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  // Reset scroll position to top whenever the items array reference changes completely 
-  // (e.g. switching categories or executing a new search)
+  // The parent remounts this grid when the category/search scope changes.
+  // Do not reset on every appended page or pagination will jump to the top.
   useLayoutEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
-  }, [items]);
+  }, []);
 
   // Measure scroll container width to calculate exact columns and row height dynamically
   useEffect(() => {
@@ -56,6 +59,12 @@ export default function VirtualGrid({
     estimateSize: useCallback(() => rowHeightRef.current, []),
     overscan: 3,
   });
+
+  const loadMore = async () => {
+    if (loadingMore || !canLoadMore || !onEndReached) return;
+    setLoadingMore(true);
+    try { await onEndReached(); } finally { setLoadingMore(false); }
+  };
 
   return (
     <div 
@@ -126,6 +135,13 @@ export default function VirtualGrid({
           );
         })}
       </div>
+      {canLoadMore && onEndReached && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '0.75rem 0', flexShrink: 0 }}>
+          <button className="c-btn" type="button" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

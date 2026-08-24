@@ -53,11 +53,14 @@ describe("public SEO and GEO contract", () => {
     expect(manifest.short_name).toBe("Portal Heaven");
   });
 
-  it("uses optimized, dimensioned marketing images", () => {
-    expect(marketing).toContain('src="/hero-marketing.jpg" width="1400" height="742"');
-    expect(marketing).toContain('src="/epg-marketing.jpg" width="1200" height="631"');
-    expect(marketing).toContain('src="/analytics-marketing.jpg" width="1200" height="637"');
-    expect(matches(marketing, /loading="lazy"/g).length).toBeGreaterThanOrEqual(2);
+  it("uses one centered looping promo video as the hero visual", () => {
+    expect(marketing).toContain('class="promo-stage"');
+    expect(marketing).toContain('<video class="promo-video"');
+    expect(marketing).toContain('autoplay muted loop playsinline');
+    expect(marketing).toContain('preload="metadata"');
+    expect(marketing).toContain('src="/portal-heaven-promo.mp4"');
+    expect(marketing).not.toContain('SEE PORTAL HEAVEN IN ACTION');
+    expect(marketing).not.toContain('class="gallery"');
   });
 
   it("publishes crawler discovery files and excludes private application routes", () => {

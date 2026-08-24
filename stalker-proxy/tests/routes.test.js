@@ -727,7 +727,7 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.portalReachable).toBe(true);
     expect(res.body.status).toBe('active');
     expect(res.body.expiry).toBe('2030-01-01');
-    expect(res.body.token).toBe('tok');
+    expect(res.body.token).toBeUndefined();
   });
 
   // --- Additional integration smoke tests ---

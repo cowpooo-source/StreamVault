@@ -91,6 +91,7 @@ const NUMERIC = new Set([
 ]);
 
 const INTEGER_RE = /^(0|[1-9]\d*)$/;
+const COMPOSITE_SEASON_RE = /^(0|[1-9]\d*):(0|[1-9]\d*)$/;
 const MAX_STRING_LEN = 256;
 const MAX_STRING_LENGTHS = {
   cmd: 4096,
@@ -150,10 +151,14 @@ function pickAndValidateStalkerParams(query, route) {
     }
 
     if (NUMERIC.has(key)) {
-      if (!INTEGER_RE.test(str)) {
+      const validNumeric = key === "season_id"
+        ? INTEGER_RE.test(str) || COMPOSITE_SEASON_RE.test(str)
+        : INTEGER_RE.test(str);
+      if (!validNumeric) {
         fail(`Stalker parameter "${key}" must be a non-negative integer`);
       }
-      if (Number(str) > MAX_SAFE_INT) {
+      const numericParts = str.split(":").map(Number);
+      if (numericParts.some(value => value > MAX_SAFE_INT)) {
         fail(`Stalker parameter "${key}" exceeds maximum value`);
       }
       params[key] = str;

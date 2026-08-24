@@ -46,6 +46,13 @@ function makeApp(deps) {
   return app;
 }
 
+function makeGuestApp(deps) {
+  const app = express();
+  app.use(express.json());
+  app.use('/stalker', createStalkerRouter(deps));
+  return app;
+}
+
 function relayGrant(cmd = 'ABC') {
   const expires = Date.now() + 60_000;
   const commandHash = crypto.createHash('sha256').update(cmd).digest('hex');
@@ -61,6 +68,7 @@ describe('createStalkerRouter - unit', () => {
     process.env.STALKER_PLAYBACK_MODE = 'relay_allowed';
     process.env.STALKER_MEDIA_RELAY_ENABLED = 'true';
     process.env.STALKER_RELAY_GRANT_SECRET = 'test-relay-secret';
+    process.env.STALKER_VALIDATE_MAX_PER_MINUTE = '10';
     process.env.TOKEN_MASTER_KEY = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
   });
 
@@ -126,7 +134,86 @@ describe('createStalkerRouter - unit', () => {
     expect(res.body.maxConnections).toBe(5);
     expect(res.body.portalReachable).toBe(true);
     expect(res.body.latency).toBeGreaterThanOrEqual(0);
-    expect(res.body.token).toBe('tok');
+    expect(res.body.token).toBeUndefined();
+  });
+
+  it('POST /stalker/validate allows a guest with a valid guest id', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 'provider-token', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn()
+        .mockResolvedValueOnce({ js: { serial_number: 'SN1', device_id: 'D1' } })
+        .mockResolvedValueOnce({ js: { status: 0, expire_billing_date: '2030-12-31', id: 'uid1' } }),
+    });
+    const app = makeGuestApp(deps);
+    const res = await request(app)
+      .post('/stalker/validate')
+      .set('X-Guest-Id', '841f8a36-fb33-4e1b-bb0d-e57f9346d34a')
+      .send({ portal: 'http://p.com/c/', mac: '00:1a:79:aa:bb:cc' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.valid).toBe(true);
+    expect(res.body.token).toBeUndefined();
+  });
+
+  it('POST /stalker/validate accepts a bounded legacy guest id', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_profile') return Promise.resolve({ js: { mac: '00:1a:79:aa:bb:cc' } });
+        if (params.action === 'get_main_info') return Promise.resolve({ js: { status: 'active', end_date: '2099-01-01' } });
+        return Promise.resolve({ js: [] });
+      }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app)
+      .post('/stalker/validate')
+      .set('X-Guest-Id', 'pfx934phakpmn3iafdr')
+      .send({ portal: 'http://p.com/c/', mac: '00:1a:79:aa:bb:cc' });
+    expect(res.status).not.toBe(401);
+  });
+
+  it('POST /stalker/validate rejects missing or malformed guest identity', async () => {
+    const deps = makeDeps();
+    const app = makeGuestApp(deps);
+
+    const missing = await request(app)
+      .post('/stalker/validate')
+      .send({ portal: 'http://p.com/c/', mac: '00:1a:79:aa:bb:cc' });
+    const malformed = await request(app)
+      .post('/stalker/validate')
+      .set('X-Guest-Id', 'not-a-guest-id')
+      .send({ portal: 'http://p.com/c/', mac: '00:1a:79:aa:bb:cc' });
+
+    expect(missing.status).toBe(401);
+    expect(malformed.status).toBe(401);
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps guest access to catalog routes protected by a content session', async () => {
+    const deps = makeDeps();
+    const app = makeGuestApp(deps);
+    const res = await request(app)
+      .get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc')
+      .set('X-Guest-Id', '841f8a36-fb33-4e1b-bb0d-e57f9346d34a');
+
+    expect(res.status).toBe(401);
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('rate limits repeated guest validation requests', async () => {
+    process.env.STALKER_VALIDATE_MAX_PER_MINUTE = '1';
+    const deps = makeDeps({
+      getSession: vi.fn().mockRejectedValue(new Error('Portal unreachable')),
+    });
+    const app = makeGuestApp(deps);
+    const body = { portal: 'http://p.com/c/', mac: '00:1a:79:aa:bb:cc' };
+    const guestId = '841f8a36-fb33-4e1b-bb0d-e57f9346d34a';
+
+    const first = await request(app).post('/stalker/validate').set('X-Guest-Id', guestId).send(body);
+    const second = await request(app).post('/stalker/validate').set('X-Guest-Id', guestId).send(body);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
   });
 
   it('POST /stalker/validate returns valid=false on upstream session failure', async () => {
@@ -278,7 +365,7 @@ describe('createStalkerRouter - unit', () => {
     expect(portalFetchRetry.mock.calls.some(([, params]) => params.action === 'get_ichannels_via_api')).toBe(false);
   });
 
-  it('GET /stalker/channels uses the bounded streaming catalog before paginated fallbacks', async () => {
+  it('GET /stalker/channels uses the streaming catalog before paginated fallbacks', async () => {
     const portalFetchRetry = vi.fn().mockImplementation((_session, params) => {
       if (params.action === 'get_genres') return Promise.resolve({ js: [] });
       if (params.action === 'get_all_channels' && !params.page) {
@@ -302,16 +389,43 @@ describe('createStalkerRouter - unit', () => {
     expect(res.body.channels.map(channel => channel.id)).toEqual(['ch1', 'ch2']);
     expect(portalFetchChannelCatalog).toHaveBeenCalledWith(
       expect.any(Object),
-      5000,
+      50000,
       undefined,
       expect.objectContaining({ signal: expect.anything() }),
     );
     expect(portalFetchRetry).toHaveBeenCalledTimes(1);
   });
 
-  it('GET /stalker/channels bounds paginated fallback results by the catalog item limit', async () => {
-    const previousLimit = process.env.STALKER_CATALOG_MAX_ITEMS;
-    process.env.STALKER_CATALOG_MAX_ITEMS = '100';
+  it('GET /stalker/channels bounds the streaming catalog', async () => {
+    const previousLimit = process.env.STALKER_CHANNELS_MAX_ITEMS;
+    process.env.STALKER_CHANNELS_MAX_ITEMS = '100';
+    const portalFetchChannelCatalog = vi.fn().mockResolvedValue(
+      Array.from({ length: 250 }, (_, index) => ({ id: `ch${index + 1}`, name: `Channel ${index + 1}` })),
+    );
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchChannelCatalog,
+    });
+
+    try {
+      const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+      expect(res.status).toBe(200);
+      expect(res.body.channels).toHaveLength(100);
+      expect(portalFetchChannelCatalog).toHaveBeenCalledWith(
+        expect.any(Object),
+        100,
+        undefined,
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    } finally {
+      if (previousLimit === undefined) delete process.env.STALKER_CHANNELS_MAX_ITEMS;
+      else process.env.STALKER_CHANNELS_MAX_ITEMS = previousLimit;
+    }
+  });
+
+  it('GET /stalker/channels returns all paginated fallback results within the page cap', async () => {
+    const previousLimit = process.env.STALKER_CHANNELS_MAX_ITEMS;
+    process.env.STALKER_CHANNELS_MAX_ITEMS = '100';
     const page = Array.from({ length: 100 }, (_, index) => ({
       id: `ch${index + 1}`,
       name: `Channel ${index + 1}`,
@@ -334,14 +448,14 @@ describe('createStalkerRouter - unit', () => {
       expect(res.body.channels).toHaveLength(100);
       expect(portalFetchRetry.mock.calls.filter(([, params]) => params.action === 'get_ichannels_via_api')).toHaveLength(1);
     } finally {
-      if (previousLimit === undefined) delete process.env.STALKER_CATALOG_MAX_ITEMS;
-      else process.env.STALKER_CATALOG_MAX_ITEMS = previousLimit;
+      if (previousLimit === undefined) delete process.env.STALKER_CHANNELS_MAX_ITEMS;
+      else process.env.STALKER_CHANNELS_MAX_ITEMS = previousLimit;
     }
   });
 
-  it('GET /stalker/channels bounds the primary catalog by the catalog item limit', async () => {
-    const previousLimit = process.env.STALKER_CATALOG_MAX_ITEMS;
-    process.env.STALKER_CATALOG_MAX_ITEMS = '100';
+  it('GET /stalker/channels returns the complete primary catalog', async () => {
+    const previousLimit = process.env.STALKER_CHANNELS_MAX_ITEMS;
+    process.env.STALKER_CHANNELS_MAX_ITEMS = '1000';
     const channels = Array.from({ length: 101 }, (_, index) => ({
       id: `ch${index + 1}`,
       name: `Channel ${index + 1}`,
@@ -359,10 +473,10 @@ describe('createStalkerRouter - unit', () => {
       const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
 
       expect(res.status).toBe(200);
-      expect(res.body.channels).toHaveLength(100);
+      expect(res.body.channels).toHaveLength(101);
     } finally {
-      if (previousLimit === undefined) delete process.env.STALKER_CATALOG_MAX_ITEMS;
-      else process.env.STALKER_CATALOG_MAX_ITEMS = previousLimit;
+      if (previousLimit === undefined) delete process.env.STALKER_CHANNELS_MAX_ITEMS;
+      else process.env.STALKER_CHANNELS_MAX_ITEMS = previousLimit;
     }
   });
 
@@ -1195,6 +1309,24 @@ describe('createStalkerRouter - unit', () => {
     expect(deps.portalFetchRetry).toHaveBeenCalled();
   });
 
+  it('fetchAllPages continues when the provider omits total_pages and stops at an empty page', async () => {
+    let page = 0;
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockImplementation(() => {
+        page++;
+        if (page === 1) return Promise.resolve({ js: { data: [{ id: 'v1' }, { id: 'v2' }] } });
+        if (page === 2) return Promise.resolve({ js: { data: [{ id: 'v3' }, { id: 'v4' }] } });
+        return Promise.resolve({ js: { data: [] } });
+      }),
+    });
+    const app = makeApp(deps);
+    const res = await request(app).get('/stalker/vod?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cat=1');
+    expect(res.status).toBe(200);
+    expect(res.body.items.map(item => item.id)).toEqual(['v1', 'v2', 'v3', 'v4']);
+    expect(deps.portalFetchRetry).toHaveBeenCalledTimes(3);
+  });
+
   it('fetchAllPages returns empty array on first page failure', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
@@ -1681,6 +1813,35 @@ describe('dedicated Stalker route validation', () => {
     expect(res.body).toMatchObject({ code: 'malformed' });
     expect(deps.getSession).not.toHaveBeenCalled();
   });
+
+  it('returns a refreshable error for expired catalog playback references', async () => {
+    const payload = encryptToken(JSON.stringify({ command: 'ffrt http://provider/ch/1', iat: Date.now() - 60_000, exp: Date.now() - 1 }));
+    const deps = makeDeps();
+    const res = await request(makeApp(deps)).get(
+      `/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=svopaque%3A${encodeURIComponent(payload)}&resolve=1`,
+    );
+
+    expect(res.status).toBe(410);
+    expect(res.body).toMatchObject({ code: 'play_ref_expired' });
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects a catalog playback reference bound to another connection', async () => {
+    const payload = encryptToken(JSON.stringify({
+      command: 'ffrt http://provider/ch/1',
+      iat: Date.now(),
+      exp: Date.now() + 60_000,
+      binding: 'wrong-connection',
+    }));
+    const deps = makeDeps();
+    const res = await request(makeApp(deps)).get(
+      `/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=svopaque%3A${encodeURIComponent(payload)}&resolve=1`,
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: 'play_ref_connection_mismatch' });
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('generic Stalker error contracts', () => {
@@ -1696,5 +1857,344 @@ describe('generic Stalker error contracts', () => {
     expect(res.status).toBe(504);
     expect(res.body).toMatchObject({ code: 'provider_timeout' });
     expect(deps.cache.trackRequest).toHaveBeenCalledWith('stalker', 504, expect.any(Number));
+  });
+});
+
+describe('versioned lazy Stalker catalog routes', () => {
+  beforeEach(() => {
+    process.env.STALKER_LAZY_CATALOG_ENABLED = 'true';
+  });
+
+  it('keeps legacy catalog routes available when lazy catalog is disabled', async () => {
+    process.env.STALKER_LAZY_CATALOG_ENABLED = 'false';
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn()
+        .mockResolvedValueOnce({ js: [] })
+        .mockResolvedValueOnce({ js: { data: [{ id: 1, name: 'Legacy', cmd: 'legacy' }] } }),
+    });
+
+    const app = makeApp(deps);
+    const legacy = await request(app).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+    const lazy = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=1&pageSize=100');
+
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.channels).toHaveLength(1);
+    expect(lazy.status).toBe(404);
+    expect(lazy.body.code).toBe('feature_disabled');
+  });
+
+  it('returns normalized live pages without exposing raw commands', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: [{ id: 7, name: 'News', cmd: 'http://cdn.example/live.ts' }] } }),
+    });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=live&category=all&page=1&pageSize=100');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ kind: 'live', category: 'all', page: 1, hasMore: false });
+    expect(res.body.items[0]).toMatchObject({ id: 7, name: 'News', type: 'live' });
+    expect(res.body.items[0].cmd).toBeUndefined();
+    expect(res.body.items[0].playRef).toMatch(/^svopaque:/);
+  });
+
+  it('uses a bounded streaming page fallback when the live page endpoint fails', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockRejectedValue(Object.assign(
+        new Error('Portal metadata response exceeds 16777216 bytes'),
+        { code: 'METADATA_TOO_LARGE' },
+      )),
+      portalFetchChannelCatalogPage: vi.fn().mockResolvedValue({
+        js: {
+          data: [{ id: 7, name: 'News', tv_genre_id: 3, cmd: 'http://cdn.example/live.ts' }],
+          max_page_items: 1,
+          total_items: 1,
+          total_pages: 1,
+        },
+      }),
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=live&category=3&page=1&pageSize=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].id).toBe(7);
+    expect(deps.portalFetchChannelCatalogPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the bounded live fallback when the provider returns an empty page', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: [] }),
+      portalFetchChannelCatalogPage: vi.fn().mockResolvedValue({
+        js: { data: [{ id: 8, name: 'Sports', tv_genre_id: 3, cmd: 'http://cdn.example/live.ts' }], max_page_items: 1, total_items: 1, total_pages: 1 },
+      }),
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=live&category=3&page=1&pageSize=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].id).toBe(8);
+    expect(deps.portalFetchChannelCatalogPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one streaming live snapshot across empty-provider category requests', async () => {
+    const cacheValues = new Map();
+    let providerStarted;
+    let releaseProvider;
+    const providerReady = new Promise(resolve => { providerStarted = resolve; });
+    const providerGate = new Promise(resolve => { releaseProvider = resolve; });
+    const deps = makeDeps({
+      cache: {
+        ...makeDeps().cache,
+        get: vi.fn(key => cacheValues.get(key) || null),
+        set: vi.fn((key, value) => cacheValues.set(key, value)),
+        del: vi.fn(key => cacheValues.delete(key)),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', portal: 'https://p.com/c/', mac: '00:1a:79:aa:bb:cc', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: [] } }),
+      portalFetchChannelCatalog: vi.fn(async (_session, _limit, _timeout, { onItem }) => {
+        providerStarted();
+        await onItem({ id: 1, name: 'Sports One', tv_genre_id: '1164', cmd: 'sports-one' });
+        await onItem({ id: 2, name: 'News One', tv_genre_id: '1478', cmd: 'news-one' });
+        await providerGate;
+        return 2;
+      }),
+    });
+
+    const app = makeApp(deps);
+    const requests = [
+      request(app).get('/stalker/catalog/v1/items?kind=live&category=1164&page=1&pageSize=100').then(response => response),
+      request(app).get('/stalker/catalog/v1/items?kind=live&category=1478&page=1&pageSize=100').then(response => response),
+    ];
+    await providerReady;
+    releaseProvider();
+    const [sports, news] = await Promise.all(requests);
+
+    expect(sports.status).toBe(200);
+    expect(news.status).toBe(200);
+    expect(sports.body.items[0].name).toBe('Sports One');
+    expect(news.body.items[0].name).toBe('News One');
+    expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1);
+    const metrics = await request(app).get('/stalker/audit-metrics');
+    expect(metrics.body).toMatchObject({
+      stalker_live_snapshot_started_total: expect.any(Number),
+      stalker_live_snapshot_joined_total: expect.any(Number),
+      stalker_live_snapshot_completed_total: expect.any(Number),
+      stalker_live_snapshot_failed_total: 0,
+      stalker_live_snapshot_items_total: expect.any(Number),
+    });
+    expect(metrics.body.stalker_live_snapshot_started_total).toBeGreaterThanOrEqual(1);
+    // Depending on event-loop scheduling, the second request may observe the
+    // just-published manifest instead of joining the in-flight build. The
+    // single upstream scan assertion covers both coalescing paths.
+    expect(metrics.body.stalker_live_snapshot_joined_total).toBeGreaterThanOrEqual(0);
+    expect(metrics.body.stalker_live_snapshot_completed_total).toBeGreaterThanOrEqual(1);
+    expect(metrics.body.stalker_live_snapshot_items_total).toBeGreaterThanOrEqual(2);
+    expect(metrics.body.stalker_live_snapshot_duration_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not duplicate a provider-supplied All live category', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: [
+        { id: '*', title: 'All' },
+        { id: '1577', title: 'Sports' },
+      ] }),
+    });
+
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/categories?kind=live');
+
+    expect(res.status).toBe(200);
+    expect(res.body.categories.map(category => category.title)).toEqual(['All', 'Sports']);
+  });
+
+  it('probes one additional page and marks pagination supported', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn()
+        .mockResolvedValueOnce({ js: { data: [{ id: 1, name: 'One', cmd: 'one' }], total_items: 2 } })
+        .mockResolvedValueOnce({ js: { data: [{ id: 2, name: 'Two', cmd: 'two' }], total_items: 2 } }),
+    });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=vod&category=1&page=1&pageSize=1');
+    expect(res.status).toBe(200);
+    expect(deps.portalFetchRetry).toHaveBeenCalledTimes(2);
+    expect(res.body.capabilities.pagination).toBe('supported');
+    expect(res.body.hasMore).toBe(true);
+  });
+
+  it('rejects invalid page sizes before contacting the provider', async () => {
+    const deps = makeDeps();
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=vod&category=1&pageSize=251');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('builds bounded live snapshot pages when the portal ignores pagination', async () => {
+    const records = new Map();
+    const deps = makeDeps({
+      cache: {
+        ...makeDeps().cache,
+        get: vi.fn(key => records.get(key)),
+        set: vi.fn((key, value) => records.set(key, value)),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', portal: 'https://p.com/c/', mac: '00:1a:79:aa:bb:cc', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: [
+        { id: 1, name: 'One', cmd: 'one' },
+        { id: 2, name: 'Two', cmd: 'two' },
+      ] } }),
+      portalFetchChannelCatalog: vi.fn(async (_session, _limit, _timeout, options) => {
+        const items = [
+          { id: 1, name: 'One', cmd: 'one' },
+          { id: 2, name: 'Two', cmd: 'two' },
+          { id: 3, name: 'Three', cmd: 'three' },
+        ];
+        if (options?.onItem) {
+          for (const item of items) await options.onItem(item);
+          return items.length;
+        }
+        return items;
+      }),
+    });
+    const app = makeApp(deps);
+    const first = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=1&pageSize=2');
+    const second = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=2&pageSize=2');
+
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ hasMore: true, capabilities: { mode: 'bounded_live_snapshot' } });
+    expect(first.body.items.map(item => item.id)).toEqual([1, 2]);
+    expect(second.status).toBe(200);
+    expect(second.body.items.map(item => item.id)).toEqual([3]);
+    expect(second.body.hasMore).toBe(false);
+    const beyond = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=3&pageSize=2');
+    expect(beyond.status).toBe(200);
+    expect(beyond.body).toMatchObject({ items: [], total: 3, totalKnown: true, complete: true, hasMore: false, nextPage: null });
+    expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects unknown versioned catalog parameters before contacting the provider', async () => {
+    const deps = makeDeps({ getSession: vi.fn() });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=vod&category=1&unexpected=1');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects item-only parameters on the categories endpoint', async () => {
+    const deps = makeDeps({ getSession: vi.fn() });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/categories?kind=vod&page=2');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects refresh on the search endpoint', async () => {
+    const deps = makeDeps({ getSession: vi.fn() });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/search?kind=vod&query=movie&refresh=1');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('does not let refresh coalesce with or republish an older page request', async () => {
+    let calls = 0;
+    let releaseFirst;
+    let refreshInvalidated = false;
+    const firstPayload = new Promise(resolve => { releaseFirst = resolve; });
+    const deps = makeDeps({
+      cache: {
+        ...makeDeps().cache,
+        deleteKeysByPrefix: vi.fn(() => { refreshInvalidated = true; }),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn(() => {
+        calls += 1;
+        return calls === 1
+          ? firstPayload
+          : Promise.resolve({ js: { data: [{ id: 2, name: 'Fresh', cmd: 'fresh' }], total_items: 1 } });
+      }),
+    });
+    const app = makeApp(deps);
+    const query = '/stalker/catalog/v1/items?kind=vod&category=1&page=1&pageSize=100';
+    const first = request(app).get(query);
+    const firstStarted = first.then(response => response);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(calls).toBe(1);
+    const refreshed = request(app).get(`${query}&refresh=1`).then(response => response);
+    while (!refreshInvalidated) await new Promise(resolve => setTimeout(resolve, 0));
+    releaseFirst({ js: { data: [{ id: 1, name: 'Stale', cmd: 'stale' }], total_items: 1 } });
+    const staleResponse = await firstStarted;
+    expect(staleResponse.status).toBe(409);
+    expect(staleResponse.body.code).toBe('catalog_superseded');
+
+    const freshResponse = await refreshed;
+    expect(freshResponse.status).toBe(200);
+    expect(freshResponse.body.items[0].id).toBe(2);
+  });
+
+  it('verifies provider search with a distinct probe before enabling it', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn()
+        .mockResolvedValueOnce({ js: { data: [{ id: 1, name: 'Movie', cmd: 'movie' }] } })
+        .mockResolvedValueOnce({ js: { data: [{ id: 2, name: 'Other', cmd: 'other' }] } }),
+    });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/search?kind=vod&category=1&query=movie&page=1&pageSize=100');
+
+    expect(res.status).toBe(200);
+    expect(deps.portalFetchRetry).toHaveBeenCalledTimes(2);
+    expect(deps.portalFetchRetry.mock.calls[1][1].search).toContain('__sv_probe_');
+    expect(res.body.capabilities.search).toBe('supported');
+  });
+
+  it('recovers an inconclusive search without probing until a later request', async () => {
+    const records = new Map();
+    const responses = [
+      { js: { data: [] } },
+      { js: { data: [] } },
+      { js: { data: [{ id: 2, name: 'Movie', cmd: 'movie-2' }] } },
+      { js: { data: [{ id: 3, name: 'Movie', cmd: 'movie-3' }] } },
+      { js: { data: [{ id: 4, name: 'Other', cmd: 'other-4' }] } },
+    ];
+    const deps = makeDeps({
+      cache: {
+        ...makeDeps().cache,
+        get: vi.fn(key => records.get(key)),
+        set: vi.fn((key, value) => records.set(key, value)),
+      },
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockImplementation(() => Promise.resolve(responses.shift())),
+    });
+    const app = makeApp(deps);
+    const query = '/stalker/catalog/v1/search?kind=vod&category=1&query=movie&page=1&pageSize=100';
+
+    const inconclusive = await request(app).get(query);
+    const recovered = await request(app).get(query);
+    const classified = await request(app).get(query);
+
+    expect(inconclusive.status).toBe(200);
+    expect(inconclusive.body.capabilities.search).toBe('inconclusive');
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.items).toHaveLength(1);
+    expect(recovered.body.capabilities.search).toBe('unknown');
+    expect(classified.status).toBe(200);
+    expect(classified.body.capabilities.search).toBe('supported');
+    expect(deps.portalFetchRetry).toHaveBeenCalledTimes(5);
+  });
+
+  it('rejects providers that return the same catalog for the search probe', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: [{ id: 1, name: 'Everything', cmd: 'one' }] } }),
+    });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/search?kind=vod&category=1&query=movie&page=1&pageSize=100');
+
+    expect(res.status).toBe(501);
+    expect(res.body.code).toBe('provider_search_unsupported');
+    expect(deps.portalFetchRetry).toHaveBeenCalledTimes(2);
   });
 });

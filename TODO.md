@@ -85,3 +85,4 @@
 
 - [x] **Feature: Media Playback Duration Heartbeat**
   60-second heartbeat ping implemented in `Player.jsx`. Backend endpoint `/api/playback/heartbeat` receives pings with session_id, position, and duration. `watch_duration` tracking via `playback_sessions` table. Analytics dashboard integrates duration metrics.
+# Reminder: review docs/stalker-vs-xtream-lazy-loading-notes.md before the next Stalker catalog/search performance change.

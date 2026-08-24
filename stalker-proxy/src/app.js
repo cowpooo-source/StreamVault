@@ -19,7 +19,7 @@ function createApp(deps) {
   const { 
     transferTimeout, agentFor, isUrlAllowed, fetchWithRedirectCheck, 
     summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, 
-    getSession, portalFetchRetry, portalFetchChannelCatalog
+    getSession, portalFetchRetry, portalFetchChannelCatalog, portalFetchChannelCatalogPage
   } = helpers;
 
   if (process.env.TRUST_PROXY !== "false") app.set("trust proxy", 1);
@@ -149,7 +149,7 @@ function createApp(deps) {
   const { createPlayerRouter } = require("./routes/player");
   const { stripe, handleWebhook } = require("./stripe.js");
 
-  const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, portalFetchChannelCatalog, agentFor };
+  const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, portalFetchChannelCatalog, portalFetchChannelCatalogPage, agentFor };
 
   app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));

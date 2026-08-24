@@ -109,6 +109,7 @@ Important production settings include:
 - APP_URL and VITE_SECURE_APP_BASE_URL must point to the media application.
 - DEFAULT_ROLE=free must remain explicit for new registrations.
 - STALKER_PLAYBACK_MODE=direct_only and STALKER_MEDIA_RELAY_ENABLED=false preserve the direct-first audit requirement.
+- STALKER_LAZY_CATALOG_ENABLED and VITE_STALKER_LAZY_CATALOG_ENABLED default to false; enable the backend first, verify the versioned catalog endpoints, then enable the frontend.
 - Turnstile and OAuth credentials must be configured for the production hostnames.
 
 ## Data and account behavior
@@ -116,6 +117,12 @@ Important production settings include:
 Authentication and the account/cache database are currently SQLite-backed. Content sessions can use the configured PostgreSQL store, but this does not automatically migrate account data. Review docs/production-release.md before copying production data or running separate legacy and media deployments.
 
 New registrations are assigned the free role by the backend. Existing roles are not changed automatically. Guest and free accounts are subject to their configured limits and advertising policy.
+
+## Stalker catalog loading
+
+The optional lazy catalog mode loads bounded pages instead of downloading every VOD or series item during connection setup. It retains lazy catalog metadata for 48 hours on the VPS and in an owner-scoped browser IndexedDB store, searches loaded pages locally, and uses provider search only when capability detection confirms it works. A provider that ignores live pagination uses one connection-scoped bounded snapshot capped at 50,000 items; VOD and series never use a full-catalog fallback. Playback links are resolved only when selected and direct playback remains preferred. Legacy non-lazy endpoint TTLs are unchanged.
+
+Enable it for staging with `STALKER_LAZY_CATALOG_ENABLED=true` in the backend and `VITE_STALKER_LAZY_CATALOG_ENABLED=true` at frontend build time. Roll back by rebuilding the frontend with the flag false; legacy catalog endpoints remain available during the rollout window.
 
 ## Release documentation
 

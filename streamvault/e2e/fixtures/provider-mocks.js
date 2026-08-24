@@ -224,7 +224,10 @@ export function installStalkerMock(page, options = {}) {
   const requestLog = [];
   const channels = STALKER_CHANNELS.slice(0, catalogSize);
 
-  page.route("**/stalker**", async (route) => {
+  page.route((requestUrl) => {
+    const pathname = requestUrl.pathname.replace(/\/+$/, "");
+    return pathname === "/stalker" || pathname.startsWith("/stalker/");
+  }, async (route) => {
     const url = new URL(route.request().url());
     const body = route.request().postDataJSON() || {};
     const action = body.action || url.searchParams.get("action") || "";

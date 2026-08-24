@@ -20,6 +20,21 @@ function classifyProviderError(error) {
   if (explicitCode === "CATALOG_TOO_LARGE") {
     return { status: 502, code: "catalog_too_large" };
   }
+  if (explicitCode === "CATALOG_PAGE_TOO_LARGE") {
+    return { status: 502, code: "catalog_page_too_large" };
+  }
+  if (explicitCode === "PROVIDER_METADATA_BUSY") {
+    return { status: 429, code: "provider_metadata_busy" };
+  }
+  if (explicitCode === "INVALID_PARAMETER") {
+    return { status: 400, code: "invalid_parameter" };
+  }
+  if (explicitCode === "PROVIDER_SEARCH_UNSUPPORTED") {
+    return { status: 501, code: "provider_search_unsupported" };
+  }
+  if (explicitCode === "CATALOG_SUPERSEDED") {
+    return { status: 409, code: "catalog_superseded" };
+  }
   if (explicitCode === "PROVIDER_COOLDOWN") {
     return { status: 429, code: "provider_cooldown" };
   }

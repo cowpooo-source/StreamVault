@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, memo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { imgSrc, API } from '../utils.js';
 import { safeJsonFetch } from '../app-runtime.js';
 
@@ -10,7 +10,15 @@ function normalizeTitle(s) {
   return (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 }
 
-const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, series, onPlay }) {
+const DiscoverView = memo(function DiscoverView({
+  tmdbKey, setTmdbKey, vod, series, onPlay,
+  stalkerDiscoveryEnabled = false,
+  stalkerDiscoveryItems = [],
+  stalkerDiscoveryLoading = false,
+  stalkerDiscoveryError = '',
+  stalkerDiscoveryPartial = false,
+  onLoadStalkerDiscovery,
+}) {
   const [keyInput, setKeyInput]           = useState(tmdbKey);
   const [trending, setTrending]           = useState([]);
   const [popularMovies, setPopularMovies] = useState([]);
@@ -18,8 +26,15 @@ const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, seri
   const [loading, setLoading]             = useState(false);
   const [err, setErr]                     = useState("");
   const [picker, setPicker]               = useState(null); // { tmdbItem, matches[] }
+  const discoveryStartedRef = useRef(false);
 
   useEffect(() => { if (tmdbKey) loadAll(tmdbKey); }, [tmdbKey]);
+
+  useEffect(() => {
+    if (!stalkerDiscoveryEnabled || discoveryStartedRef.current || !onLoadStalkerDiscovery) return;
+    discoveryStartedRef.current = true;
+    onLoadStalkerDiscovery();
+  }, [stalkerDiscoveryEnabled, onLoadStalkerDiscovery]);
 
   async function loadAll(key) {
     setLoading(true); setErr("");
@@ -75,9 +90,38 @@ const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, seri
     }
   }
 
+  function renderStalkerDiscovery() {
+    if (!stalkerDiscoveryEnabled) return null;
+    return (
+      <div className="disc-section" data-testid="stalker-discovery">
+        <div className="section-label">Suggestions from your provider</div>
+        {stalkerDiscoveryLoading && <div className="loading" style={{ minHeight: 80 }}><div className="spinner" /><span>Loading suggestions...</span></div>}
+        {!stalkerDiscoveryLoading && stalkerDiscoveryError && <div className="err" role="status">{stalkerDiscoveryError}</div>}
+        {!stalkerDiscoveryLoading && !stalkerDiscoveryError && !stalkerDiscoveryItems.length && (
+          <div style={{ color: 'var(--t2)', fontSize: '.82rem' }}>Open Movies or Series to load provider suggestions.</div>
+        )}
+        {!!stalkerDiscoveryItems.length && (
+          <div className="disc-row">
+            {stalkerDiscoveryItems.map((item, index) => (
+              <div key={`${item.type || 'item'}:${item.id || item.name}:${index}`} className="disc-card" onClick={() => onPlay(item)} title={item.name}>
+                {item.logo
+                  ? <img className="disc-poster" src={imgSrc(item.logo)} alt={item.name || ''} loading="lazy" />
+                  : <div className="disc-poster-ph">{item.type === 'series' ? 'TV' : 'VOD'}</div>}
+                <div className="disc-card-title">{item.name || 'Untitled'}</div>
+                <div className="disc-card-meta">{[item.group, item.type === 'series' ? 'Series' : 'Movie'].filter(Boolean).join(' · ')}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {stalkerDiscoveryPartial && <div style={{ color: 'var(--t3)', fontSize: '.72rem', marginTop: '.45rem' }}>Some provider categories were unavailable.</div>}
+      </div>
+    );
+  }
+
   if (!tmdbKey) {
     return (
       <div className="disc-key-prompt">
+        {renderStalkerDiscovery()}
         <div style={{fontSize:"2.5rem"}}>✨</div>
         <div style={{fontSize:"1rem",fontWeight:600}}>Discover Trending Content</div>
         <div style={{fontSize:".82rem",color:"var(--t2)",maxWidth:"360px",lineHeight:1.6}}>
@@ -124,6 +168,7 @@ const DiscoverView = memo(function DiscoverView({ tmdbKey, setTmdbKey, vod, seri
 
   return (
     <div className="discover-body">
+      {renderStalkerDiscovery()}
       {/* Hero */}
       {hero && (() => {
         const heroMatches = findAllInLibrary(hero);

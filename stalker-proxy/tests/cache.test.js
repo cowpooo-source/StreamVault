@@ -41,6 +41,17 @@ describe("Cache — Get/Set/Delete", () => {
     expect(cache.get("del-me")).toBeNull();
   });
 
+  it("lists all non-expired keys under a prefix for complete invalidation", () => {
+    cache.set("snapshot|size-10|page-1", "one");
+    cache.set("snapshot|size-250|page-1", "two");
+    cache.set("other|page-1", "keep");
+
+    expect(cache.keysByPrefix("snapshot|").sort()).toEqual([
+      "snapshot|size-10|page-1",
+      "snapshot|size-250|page-1",
+    ]);
+  });
+
   it("respects TTL expiry", () => {
     cache.set("short-ttl", "data", 1); // 1ms TTL
     // Wait a tiny bit for expiry

@@ -9,6 +9,18 @@ const COUNTERS = [
   'stalker_media_relay_requests_total',
   'stalker_media_relay_bytes_total',
   'stalker_media_relay_blocked_total',
+  'stalker_catalog_requests_total',
+  'stalker_catalog_upstream_calls_total',
+  'stalker_catalog_cache_hits_total',
+  'stalker_catalog_coalesced_total',
+  'stalker_catalog_aborted_total',
+  'stalker_catalog_rate_limited_total',
+  'stalker_live_snapshot_started_total',
+  'stalker_live_snapshot_joined_total',
+  'stalker_live_snapshot_completed_total',
+  'stalker_live_snapshot_failed_total',
+  'stalker_live_snapshot_items_total',
+  'stalker_live_snapshot_duration_ms',
 ];
 const counters = new Map(COUNTERS.map(name => [name, 0]));
 

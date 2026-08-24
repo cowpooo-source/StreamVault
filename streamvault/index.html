@@ -204,52 +204,25 @@
       margin-bottom: 3rem;
     }
 
-    /* Gallery */
-    .gallery {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 1.5rem;
-      margin-top: 2.5rem;
+    /* Hero promo */
+    .promo-stage {
+      width: min(100%, 1180px);
+      margin: 2.5rem auto 0;
+      padding: 0.65rem;
+      border: 1px solid rgba(167, 139, 250, 0.28);
+      border-radius: 1.75rem;
+      background: linear-gradient(145deg, rgba(79, 70, 229, 0.22), rgba(15, 18, 28, 0.86));
+      box-shadow: 0 28px 80px rgba(44, 33, 126, 0.3), 0 0 0 1px rgba(103, 232, 249, 0.08);
     }
 
-    .gallery-img {
-      flex: 1;
-      min-width: 240px;
-      background: #11131f;
-      border-radius: 24px;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.1);
-      transition: transform 0.2s;
-    }
-
-    .gallery-img:hover {
-      transform: translateY(-6px);
-      border-color: #4f46e5;
-    }
-
-    .gallery-img img {
-      width: 100%;
-      height: 180px;
-      object-fit: cover;
-      background: #0b0e16;
+    .promo-video {
       display: block;
-    }
-
-    .gallery-img video {
       width: 100%;
-      height: 180px;
+      aspect-ratio: 16 / 9;
+      height: auto;
       object-fit: cover;
-      background: #0b0e16;
-      display: block;
-    }
-
-    .gallery-caption {
-      padding: 0.75rem;
-      font-size: 0.85rem;
-      text-align: center;
-      color: #b1bad6;
-      background: #0a0c14;
+      border-radius: 1.25rem;
+      background: #07090f;
     }
 
     /* Sections */
@@ -488,11 +461,13 @@
       .nav-links {
         justify-content: center;
       }
-      .gallery-img img {
-        height: 140px;
+      .promo-stage {
+        margin-top: 2rem;
+        padding: 0.35rem;
+        border-radius: 1.15rem;
       }
-      .gallery-img video {
-        height: 140px;
+      .promo-video {
+        border-radius: 0.85rem;
       }
     }
   </style>
@@ -528,23 +503,11 @@
       <span class="trust-badge">Player only - no content included</span>
     </div>
 
-    <!-- Gallery preview (app screenshots) -->
-    <div class="gallery">
-      <div class="gallery-img">
-        <video width="1400" height="742" autoplay muted loop playsinline controls preload="metadata" poster="/hero-marketing.jpg" aria-label="Portal Heaven promo video">
-          <source src="/portal-heaven-promo.mp4" type="video/mp4">
-          Your browser does not support HTML video.
-        </video>
-        <div class="gallery-caption">Cinematic VOD & Series Browser</div>
-      </div>
-      <div class="gallery-img">
-        <img src="/epg-marketing.jpg" width="1200" height="631" alt="Portal Heaven live TV electronic program guide" loading="lazy" decoding="async">
-        <div class="gallery-caption">Interactive EPG Timeline & Catch-up</div>
-      </div>
-      <div class="gallery-img">
-        <img src="/analytics-marketing.jpg" width="1200" height="637" alt="Portal Heaven self-hosted analytics dashboard" loading="lazy" decoding="async">
-        <div class="gallery-caption">Admin Telemetry & Analytics</div>
-      </div>
+    <div class="promo-stage">
+      <video class="promo-video" width="1920" height="1080" autoplay muted loop playsinline preload="metadata" poster="/hero-marketing.jpg" aria-label="Portal Heaven promo video">
+        <source src="/portal-heaven-promo.mp4" type="video/mp4">
+        Your browser does not support HTML video.
+      </video>
     </div>
   </section>
 

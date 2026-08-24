@@ -66,7 +66,7 @@ function normalizeConnection(input) {
 
 const tokenHash = token => crypto.createHash('sha256').update(token).digest('hex');
 const userId = user => String(user?.id || user?.sub || user?.email || user?.username || '');
-const GUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GUEST_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[A-Za-z0-9_-]{16,64})$/i;
 function authenticate(req, auth) {
   const header = req.headers.authorization || '';
   const token = req.cookies?.sv_auth || (header.startsWith('Bearer ') ? header.slice(7) : null);

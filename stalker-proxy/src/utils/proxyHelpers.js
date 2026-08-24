@@ -47,12 +47,20 @@ function stalkerMetadataLimit(action) {
   const isChannelCatalog = action === "get_all_channels";
   const envName = isChannelCatalog ? "STALKER_CHANNELS_MAX_BYTES" : "STALKER_METADATA_MAX_BYTES";
   const configured = Number.parseInt(process.env[envName] || "", 10);
-  const defaultLimit = isChannelCatalog ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
-  const maximumLimit = isChannelCatalog ? 100 * 1024 * 1024 : 50 * 1024 * 1024;
+  const defaultLimit = isChannelCatalog ? 16 * 1024 * 1024 : 20 * 1024 * 1024;
+  const maximumLimit = isChannelCatalog ? 50 * 1024 * 1024 : 50 * 1024 * 1024;
   return Number.isFinite(configured)
     ? Math.min(maximumLimit, Math.max(64 * 1024, configured))
     : defaultLimit;
 }
+
+const EMPTY_CATALOG_ACTIONS = new Set([
+  'get_all_channels',
+  'get_categories',
+  'get_genres',
+  'get_ichannels_via_api',
+  'get_ordered_list',
+]);
 
 async function readBoundedText(response, action) {
   const limit = stalkerMetadataLimit(action);
@@ -728,6 +736,7 @@ function createProxyHelpers(deps) {
     try {
 
     function parseResponse(text, res) {
+      if (!text.trim() && EMPTY_CATALOG_ACTIONS.has(String(params.action || ''))) return { js: [] };
       if (text.includes("Authorization failed") || text.includes("Device not found") || text.includes("Access denied")) return null; // token/auth expired or invalid
       try {
         return JSON.parse(text);
@@ -771,8 +780,12 @@ function createProxyHelpers(deps) {
   }
 
   async function portalFetchChannelCatalog(session, maxItems, timeout = 12000, requestOptions = {}) {
-    const limit = Math.min(20_000, Math.max(1, Number.parseInt(maxItems, 10) || 1));
-    const requestKey = `${metadataRequestKey(session, { type: 'itv', action: 'get_all_channels' })}|limit:${limit}`;
+    const parsedLimit = Number.parseInt(maxItems, 10);
+    const limit = maxItems === Number.POSITIVE_INFINITY
+      ? Number.POSITIVE_INFINITY
+      : Math.min(50_000, Math.max(1, parsedLimit || 1));
+    const filterKey = String(requestOptions.filterKey || 'all');
+    const requestKey = `${metadataRequestKey(session, { type: 'itv', action: 'get_all_channels' })}|limit:${limit}|filter:${filterKey}`;
     const existing = inFlightCatalogRequests.get(requestKey);
     if (existing) return existing;
     const cooldownUntil = getPortalCooldown(session.portal || session.base, session.mac, session.opts);
@@ -818,10 +831,16 @@ function createProxyHelpers(deps) {
     response.body.pipe(catalogStream);
 
     const channels = [];
+    const onItem = typeof requestOptions.onItem === 'function' ? requestOptions.onItem : null;
+    const filterItem = typeof requestOptions.filterItem === 'function' ? requestOptions.filterItem : null;
+    let itemCount = 0;
     try {
       for await (const entry of catalogStream) {
-        channels.push(entry.value);
-        if (channels.length >= limit) break;
+        if (filterItem && !filterItem(entry.value)) continue;
+        itemCount += 1;
+        if (onItem) await onItem(entry.value, itemCount);
+        else channels.push(entry.value);
+        if (itemCount >= limit) break;
       }
     } finally {
       response.body.removeListener("error", forwardSourceError);
@@ -829,7 +848,7 @@ function createProxyHelpers(deps) {
       if (!response.body.destroyed) response.body.destroy();
       if (!catalogStream.destroyed) catalogStream.destroy();
     }
-    return channels;
+    return onItem ? itemCount : channels;
     })().catch(error => {
       if (error?.code === 'RATE_LIMITED' || /\b429\b|rate limited/i.test(error?.message || '')) {
         setPortalCooldown(session.portal || session.base, session.mac, session.opts);
@@ -846,6 +865,38 @@ function createProxyHelpers(deps) {
     });
     inFlightCatalogRequests.set(requestKey, request);
     return request;
+  }
+
+  async function portalFetchChannelCatalogPage(session, options = {}, timeout = 12000, requestOptions = {}) {
+    const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+    const pageSize = Math.min(250, Math.max(1, Number.parseInt(options.pageSize, 10) || 100));
+    const category = String(options.category ?? 'all').trim();
+    const offset = (page - 1) * pageSize;
+    const pageItems = [];
+    const maxMatches = offset + pageSize + 1;
+    const categoryMatches = category === '' || category === '*' || category.toLowerCase() === 'all'
+      ? () => true
+      : item => [item?.tv_genre_id, item?.genre_id, item?.category_id, item?.group_id]
+        .some(value => value !== null && value !== undefined && String(value) === category);
+    const result = await portalFetchChannelCatalog(session, maxMatches, timeout, {
+      ...requestOptions,
+      filterKey: category || 'all',
+      filterItem: categoryMatches,
+      onItem: (item, matchIndex) => {
+        if (matchIndex > offset && pageItems.length < pageSize) pageItems.push(item);
+      },
+    });
+    const matchedCount = Number(result) || 0;
+    const hasMore = matchedCount > offset + pageSize;
+    const body = {
+      data: pageItems,
+      max_page_items: pageSize,
+    };
+    if (!hasMore) {
+      body.total_items = offset + pageItems.length;
+      body.total_pages = page;
+    }
+    return { js: body };
   }
 
   function resetProxyHelperStateForTests() {
@@ -920,6 +971,7 @@ function createProxyHelpers(deps) {
     getSession,
     portalFetchRetry,
     portalFetchChannelCatalog,
+    portalFetchChannelCatalogPage,
     resetProxyHelperStateForTests,
     resolveUrl,
     rewriteMediaUrl,

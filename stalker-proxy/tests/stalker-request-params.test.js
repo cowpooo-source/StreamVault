@@ -37,4 +37,18 @@ describe("pickAndValidateStalkerParams", () => {
     expect(() => pickAndValidateStalkerParams({ cmd: "a".repeat(4097) }, "play"))
       .toThrow(/maximum length/);
   });
+
+  it("accepts composite Stalker season identifiers", () => {
+    const { params } = pickAndValidateStalkerParams({
+      cmd: "svopaque:command",
+      content_type: "series",
+      episode: "1",
+      episode_id: "1",
+      season_id: "14042:1",
+      series_number: "1",
+      resolve: "1",
+    }, "play");
+
+    expect(params.season_id).toBe("14042:1");
+  });
 });

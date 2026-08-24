@@ -34,6 +34,7 @@ The build emits modern and legacy browser bundles. Deploy the complete dist/ dir
 | VITE_ENABLE_VAST | Enable VAST playback for eligible accounts |
 | VITE_ENABLE_ADSTERRA | Enable the Adsterra integration |
 | VITE_ENABLE_HILLTOP | Enable the Hilltop integration |
+| VITE_STALKER_LAZY_CATALOG_ENABLED | Enable bounded, on-demand Stalker catalog loading |
 
 Production configuration belongs in the deployment environment. Never commit .env, provider credentials, CAPTCHA secrets, or analytics API secrets.
 
@@ -76,6 +77,7 @@ npm run e2e:debug
 npx playwright test e2e/auth.spec.js
 npx playwright test -g disconnect-returns
 npx playwright test --project=service-worker
+npx playwright test --config=playwright.lazy.config.js
 ~~~
 
 Deployment smoke tests and provider canaries are intentionally separate:

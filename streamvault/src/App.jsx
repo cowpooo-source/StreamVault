@@ -28,6 +28,13 @@ import {
   shouldUseTokenPlayerForItem,
 } from "./direct-content-session.js";
 import { hydrateContentSession } from "./app-session.js";
+import { describeStalkerCatalogLoading, loadInitialStalkerCatalog, shouldUseGlobalCatalogLoader } from "./stalker-catalog-loading.js";
+import { createStalkerCatalogApi } from "./stalker-catalog-api.js";
+import { createStalkerCatalogCache } from "./stalker-catalog-cache.js";
+import { stalkerCatalogConnectionFingerprint } from "./stalker-catalog-identity.js";
+import { discoverySeed, selectDiscoveryCategories } from "./stalker-discovery.js";
+import { findExactCatalogItem } from "./stalker-playback-helpers.js";
+import { toSeriesEpisodeDisplay } from "./series-episode-display.js";
 
 // ── i18n ──
 const RTL_LANGS = ["ar","ur"];
@@ -1167,9 +1174,10 @@ function parseEPGDate(s) {
 
 // uid is now imported from utils.js
 
-const STALKER_LIVE_TTL_MS = 6 * 60 * 60_000;
+const STALKER_LIVE_TTL_MS = 30 * 24 * 60 * 60_000;
 const STALKER_CATEGORY_TTL_MS = 24 * 60 * 60_000;
 const STALKER_CATALOG_TTL_MS = 12 * 60 * 60_000;
+const STALKER_LAZY_ENABLED = String(import.meta.env.VITE_STALKER_LAZY_CATALOG_ENABLED || '').toLowerCase() === 'true';
 
 // Transform stalker item URL: extract direct HTTP URLs, store original as _stalkerCmd
 function transformStalkerItem(item, portalBase) {
@@ -1178,6 +1186,21 @@ function transformStalkerItem(item, portalBase) {
   const logo = item.logo ? (resolveUrl(item.logo, portalBase) || item.logo) : null;
   if (item._stalkerCmd !== undefined) return { ...item, logo };
   return { ...item, logo, _stalkerCmd: item.url, url: isDirect ? raw : null };
+}
+
+function annotateStalkerCatalogItem(item, request, group = undefined) {
+  return {
+    ...item,
+    ...(group !== undefined ? { group } : {}),
+    _stalkerCatalogRequest: {
+      source: request.source || 'items',
+      kind: request.kind,
+      category: request.category || 'all',
+      page: Number(request.page) || 1,
+      pageSize: Number(request.pageSize) || 100,
+      ...(request.query ? { query: request.query } : {}),
+    },
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1724,6 +1747,9 @@ export default function App() {
   const [resetToken, setResetToken] = useState(null);
 
   const liveGridRef = useRef(null);
+  const stalkerCatalogApiRef = useRef(null);
+  const stalkerCatalogCacheRef = useRef(null);
+  const stalkerPageRef = useRef(new Map());
 
   // Check stored token on mount
   useEffect(() => {
@@ -1779,6 +1805,7 @@ export default function App() {
     
     // Migrate guest data to new user account (favs, history)
     await migrateGuestData();
+    await clearStalkerOwnerCache(`guest:${GUEST_ID}`).catch(() => {});
     
     // Merge server state with local/guest state so recent additions survive
     // an auth transition while the server sync is completing.
@@ -1803,7 +1830,8 @@ export default function App() {
     }
     setAuthUser(user);
   }
-  function handleGuest() {
+  async function handleGuest() {
+    if (authUser?.id) await clearStalkerOwnerCache(`user:${authUser.id}`).catch(() => {});
     setIsGuest(true);
     localStorage.setItem("sv-guest-mode", "1");
     trackAnalytics("auth_success", {
@@ -1816,6 +1844,12 @@ export default function App() {
     // Stop media before waiting on the network so logout cannot leave a
     // provider stream running behind a slow or failed auth request.
     setPlaying(null);
+    const ownerId = authUser?.id ? `user:${authUser.id}` : `guest:${GUEST_ID}`;
+    abortStalkerCatalogRequests();
+    await Promise.resolve(stalkerCatalogCacheRef.current?.clearOwner?.(ownerId)).catch(() => {});
+    stalkerCatalogApiRef.current = null;
+    stalkerCatalogCacheRef.current = null;
+    stalkerPageRef.current.clear();
     await authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
     localStorage.removeItem("sv-guest-mode");
     clearContentSessionToken();
@@ -1862,6 +1896,29 @@ export default function App() {
   // ── series detail modal
   const [seriesDetail, setSeriesDetail] = useState(null); // {item, seasons, activeSeason}
   const [seriesLoading, setSeriesLoading] = useState(false);
+
+  const getStalkerLazyTools = useCallback(async () => {
+    if (!conn || conn.type !== "stalker") return null;
+    const ownerId = authUser?.id ? `user:${authUser.id}` : `guest:${GUEST_ID}`;
+    const connectionScope = {
+      type: conn.type,
+      server: conn.server,
+      mac: conn.mac,
+      serial: conn.serial,
+      deviceId: conn.deviceId,
+      deviceId2: conn.deviceId2,
+    };
+    const fingerprint = await stalkerCatalogConnectionFingerprint(connectionScope);
+    const scopeKey = `${ownerId}:${fingerprint}`;
+    if (!stalkerCatalogApiRef.current || stalkerCatalogApiRef.current.scopeKey !== scopeKey) {
+      stalkerCatalogApiRef.current = { scopeKey, api: createStalkerCatalogApi({ fetcher: authFetch, enabled: STALKER_LAZY_ENABLED }) };
+      stalkerCatalogCacheRef.current = await createStalkerCatalogCache({
+        ownerId,
+        connection: connectionScope,
+      });
+    }
+    return { api: stalkerCatalogApiRef.current.api, cache: stalkerCatalogCacheRef.current };
+  }, [authUser?.id, conn]);
 
   // ── upgrade prompt for free/guest users
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
@@ -1994,6 +2051,8 @@ export default function App() {
         setChannels([]);
         setVod([]);
         setSeries([]);
+        setStalkerLiveCats([]);
+        stalkerLiveCategoryRef.current = { id: "all", title: "All" };
         setCat("All");
         setSearch("");
         setGlobalQ("");
@@ -2120,11 +2179,45 @@ export default function App() {
   }, [activeConnId]);
 
   // ── Stalker lazy-load
+  const [stalkerLiveCats,   setStalkerLiveCats]   = useState([]); // [{id,title,count}]
   const [stalkerVodCats,    setStalkerVodCats]    = useState([]); // [{id,title,count}]
   const [stalkerSeriesCats, setStalkerSeriesCats] = useState([]); // [{id,title,count}]
+  const [stalkerDiscoveryItems, setStalkerDiscoveryItems] = useState([]);
+  const [stalkerDiscoveryLoading, setStalkerDiscoveryLoading] = useState(false);
+  const [stalkerDiscoveryError, setStalkerDiscoveryError] = useState("");
+  const [stalkerDiscoveryPartial, setStalkerDiscoveryPartial] = useState(false);
+  const stalkerDiscoveryLoadedRef = useRef(null);
   const [catLoading,        setCatLoading]        = useState(false);
   const fetchingCatRef = useRef(new Set());
-  const [prefetchProgress, setPrefetchProgress] = useState(null); // {done,total} or null
+  const stalkerLiveCategoryRef = useRef({ id: "all", title: "All" });
+  const stalkerCatalogRequestRef = useRef(null);
+  const stalkerDiscoveryRequestRef = useRef(null);
+
+  function beginStalkerCatalogRequest() {
+    stalkerCatalogRequestRef.current?.abort();
+    const controller = new AbortController();
+    stalkerCatalogRequestRef.current = controller;
+    return controller;
+  }
+
+  function abortStalkerCatalogRequests() {
+    stalkerCatalogRequestRef.current?.abort();
+    stalkerCatalogRequestRef.current = null;
+    stalkerDiscoveryRequestRef.current?.abort();
+    stalkerDiscoveryRequestRef.current = null;
+    stalkerCatalogApiRef.current?.api?.abortScope?.();
+  }
+
+  async function clearStalkerOwnerCache(ownerId) {
+    const current = stalkerCatalogCacheRef.current;
+    if (current) {
+      await current.clearOwner(ownerId);
+      return;
+    }
+    const cache = await createStalkerCatalogCache({ ownerId });
+    await cache.clearOwner(ownerId);
+  }
+  const prefetchProgress = null;
 
   // ── last synced timestamps
   const [lastSynced, setLastSynced] = useState({}); // {live: timestamp, vod: timestamp, series: timestamp}
@@ -2331,6 +2424,9 @@ export default function App() {
     if (!Array.isArray(cachedChannels) || !cachedChannels.length) return false;
 
     const isStalker = connObj.type === "stalker";
+    // Lazy Stalker catalogs have their own owner-scoped page cache. Do not
+    // resurrect legacy aggregate arrays with stale playback references.
+    if (isStalker && STALKER_LAZY_ENABLED) return false;
     const now = Date.now();
     let needsBackgroundRefresh = false;
     if (isStalker) {
@@ -2438,6 +2534,10 @@ export default function App() {
   // ── connection
   useEffect(() => {
     if (!conn) return;
+    stalkerDiscoveryLoadedRef.current = null;
+    setStalkerDiscoveryItems([]);
+    setStalkerDiscoveryError("");
+    setStalkerDiscoveryPartial(false);
     // If auto-connected from IDB cache, skip fetching from provider
     if (autoConnected) {
       setAutoConnected(false);
@@ -2448,7 +2548,7 @@ export default function App() {
         loadEPG(xtreamEpgUrl);
       }
       else if (conn.epgUrl) loadEPG(conn.epgUrl);
-      return;
+      if (conn.type !== "stalker") return;
     }
     let cancelled = false;
     const controller = new AbortController();
@@ -2492,15 +2592,27 @@ export default function App() {
       const xtreamEpgUrl = `${conn.server}/xmltv.php?username=${conn.user}&password=${conn.pass}`;
       loadEPG(xtreamEpgUrl);
     } else if (conn.type === "stalker") {
-      fetchStalkerChannels();
-      // Pre-fetch VOD + series categories + items in background
-      loadStalkerCats("vod", false, true);
-      loadStalkerCats("series", false, true);
-      loadStalkerEPG();
+      (async () => {
+        await loadInitialStalkerCatalog({
+          loadChannels: () => fetchStalkerChannels(),
+          // Keep the pre-existing background behavior when lazy catalogs are
+          // disabled; only the lazy path loads the first VOD/series page here.
+          loadVod: () => loadStalkerCats("vod", false, !STALKER_LAZY_ENABLED),
+          loadSeries: () => loadStalkerCats("series", false, !STALKER_LAZY_ENABLED),
+          isCancelled: () => cancelled,
+        });
+        // Keep EPG loading separate from the lazy catalog sequence so the
+        // three catalog requests remain sequential without dropping the
+        // existing Stalker TV-guide behavior.
+        if (!cancelled) loadStalkerEPG();
+      })().catch(error => {
+        if (!cancelled && error?.name !== "AbortError" && error?.code !== "ABORT_ERR") console.error("Stalker catalog loading failed:", error);
+      });
     }
     return () => {
       cancelled = true;
       controller.abort();
+      abortStalkerCatalogRequests();
     };
   }, [conn]);
 
@@ -2623,8 +2735,85 @@ export default function App() {
     return params.toString();
   }
 
+  async function loadStalkerLiveCategoryItems(categoryId, categoryTitle, force = false, silent = false) {
+    const category = String(categoryId || "all");
+    const title = String(categoryTitle || "All");
+    const refKey = `live-${category}`;
+    if (fetchingCatRef.current.has(refKey)) return;
+    fetchingCatRef.current.add(refKey);
+    stalkerLiveCategoryRef.current = { id: category, title };
+    setPage(1);
+    if (!silent) beginContentLoad(`Loading ${title}`);
+    try {
+      const tools = await getStalkerLazyTools();
+      const controller = beginStalkerCatalogRequest();
+      const request = { kind: "live", category, page: 1, pageSize: 100, contentToken: contentSessionToken(), refresh: force };
+      if (force) await tools.cache.invalidateScope({ kind: "live", category });
+      const cached = !force ? await tools.cache.getPage(request) : null;
+      if (cached?.stale) {
+        const staleItems = cached.items.map(item => transformStalkerItem(
+          annotateStalkerCatalogItem({ ...item, url: item.playRef }, request, title),
+          conn.server,
+        ));
+        setChannels(staleItems);
+      }
+      const data = cached && !cached.stale
+        ? cached
+        : await tools.api.fetchCatalogPage({ ...request, signal: controller.signal });
+      if (!cached || cached.stale) await tools.cache.putPage(data);
+      if (!silent) updateContentLoad(72, describeStalkerCatalogLoading({ kind: "live", capabilities: data.capabilities }));
+      const items = data.items.map(item => transformStalkerItem(
+        annotateStalkerCatalogItem({ ...item, url: item.playRef }, request, title),
+        conn.server,
+      ));
+      setCat(title);
+      setChannels(items);
+      stalkerPageRef.current.set(`live:${category}`, {
+        nextPage: data.nextPage,
+        hasMore: data.hasMore,
+        loading: false,
+        total: data.total,
+        totalKnown: data.totalKnown,
+        complete: data.complete,
+        capabilities: data.capabilities,
+      });
+      setLastSynced(prev => ({ ...prev, live: Date.now() }));
+    } catch (e) {
+      if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") {
+        console.error("Stalker lazy live category error:", e);
+        setConnError(e.message);
+      }
+    } finally {
+      if (!silent) endContentLoad();
+      fetchingCatRef.current.delete(refKey);
+    }
+  }
+
   async function fetchStalkerChannels(force = false) {
     if (!conn || conn.type !== "stalker") return;
+    if (STALKER_LAZY_ENABLED) {
+      beginContentLoad("Loading live channels");
+      try {
+        const tools = await getStalkerLazyTools();
+        const controller = beginStalkerCatalogRequest();
+        const cachedCategories = !force ? await tools.cache.getCategories("live") : null;
+        if (cachedCategories?.stale) setStalkerLiveCats(cachedCategories.categories || []);
+        const categoryResponse = cachedCategories && !cachedCategories.stale
+          ? cachedCategories
+          : await tools.api.fetchCategories({ kind: "live", contentToken: contentSessionToken(), refresh: force, signal: controller.signal });
+        if (!cachedCategories || cachedCategories.stale || force) await tools.cache.putCategories("live", categoryResponse);
+        const categories = categoryResponse.categories || [];
+        setStalkerLiveCats(categories);
+        const current = stalkerLiveCategoryRef.current;
+        const selected = (force || current.id !== "all")
+          ? categories.find(item => String(item.id) === String(current.id))
+          : null;
+        const firstCategory = selected || categories.find(item => String(item.id) !== "all") || categories[0] || { id: "all", title: "All" };
+        await loadStalkerLiveCategoryItems(firstCategory.id, firstCategory.title, force, true);
+      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error("Stalker lazy channels error:", e); setConnError(e.message); } }
+      finally { endContentLoad(); }
+      return;
+    }
     const cId = connId(conn);
     // Stalker channel catalogs expire after six hours.
     if (!force && cId) {
@@ -2634,7 +2823,7 @@ export default function App() {
     }
     beginContentLoad("Connecting to Stalker portal");
     try {
-      const res = await fetch(`${API}/stalker/channels?${stalkerRequestParams()}`);
+      const res = await fetch(`${API}/stalker/channels?${stalkerRequestParams(force ? { refresh: "1" } : {})}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       updateContentLoad(62, "Processing live channels…");
@@ -2655,6 +2844,32 @@ export default function App() {
   // ── Load category lists with a bounded IndexedDB TTL
   // background=true: don't touch setCat/setLoading (used for pre-fetching on connect)
   async function loadStalkerCats(sec, force = false, background = false) {
+    if (STALKER_LAZY_ENABLED) {
+      const kind = sec === "vod" ? "vod" : "series";
+      try {
+        const tools = await getStalkerLazyTools();
+        const controller = beginStalkerCatalogRequest();
+        if (force) await tools.cache.invalidateScope({ kind, });
+        const cachedCategories = !force ? await tools.cache.getCategories(kind) : null;
+        if (cachedCategories?.stale) {
+          const staleCats = cachedCategories.categories || [];
+          kind === "vod" ? setStalkerVodCats(staleCats) : setStalkerSeriesCats(staleCats);
+        }
+        const categoryResponse = cachedCategories && !cachedCategories.stale
+          ? cachedCategories
+          : await tools.api.fetchCategories({ kind, contentToken: contentSessionToken(), refresh: force, signal: controller.signal });
+        if (!cachedCategories || cachedCategories.stale || force) {
+          await tools.cache.putCategories(kind, categoryResponse);
+        }
+        const cats = categoryResponse.categories || [];
+        kind === "vod" ? setStalkerVodCats(cats) : setStalkerSeriesCats(cats);
+        if (!background && cats.length) {
+          setCat(cats[0].title);
+          await loadStalkerCatItems(sec, cats[0].id, cats[0].title, false, force);
+        }
+      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error(`Stalker lazy ${sec} categories:`, e); setConnError(e.message); } }
+      return;
+    }
     const cId = connId(conn);
     let cats = null;
     if (!force && cId) {
@@ -2667,7 +2882,7 @@ export default function App() {
     if (!cats) {
       if (!background) beginContentLoad("Loading categories");
       try {
-        const res  = await fetch(`${API}/stalker/${sec}/categories?${stalkerRequestParams()}`);
+        const res  = await fetch(`${API}/stalker/${sec}/categories?${stalkerRequestParams(force ? { refresh: "1" } : {})}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         if (!background) updateContentLoad(52, "Loading categories…");
@@ -2685,15 +2900,50 @@ export default function App() {
     if (cats.length) {
       if (!background) {
         setCat(cats[0].title);
-        loadStalkerCatItems(sec, cats[0].id, cats[0].title);
+        await loadStalkerCatItems(sec, cats[0].id, cats[0].title, false, force);
       }
-      // Background prefetch all categories (silent)
-      prefetchRemainingStalkerCats(sec, cats, force);
     }
   }
 
   // ── Load items for one Stalker category with a bounded IndexedDB TTL
   async function loadStalkerCatItems(sec, catId, catTitle, silent = false, force = false) {
+    if (STALKER_LAZY_ENABLED) {
+      const kind = sec === "vod" ? "vod" : "series";
+      const refKey = `${sec}-${catId}`;
+      if (fetchingCatRef.current.has(refKey)) return;
+      fetchingCatRef.current.add(refKey);
+      const useGlobalLoader = shouldUseGlobalCatalogLoader({ lazyCatalogEnabled: STALKER_LAZY_ENABLED, kind });
+      if (!silent) {
+        setCatLoading(true);
+        if (useGlobalLoader) beginContentLoad(`Loading ${kind === "vod" ? "movies" : "series"}`);
+      }
+      try {
+        const tools = await getStalkerLazyTools();
+        const controller = beginStalkerCatalogRequest();
+        const request = { kind, category: String(catId), page: 1, pageSize: 100, contentToken: contentSessionToken(), refresh: force };
+        if (force) await tools.cache.invalidateScope({ kind, category: String(catId) });
+        const cached = !force ? await tools.cache.getPage(request) : null;
+        if (cached?.stale) {
+          const staleItems = cached.items.map(item => transformStalkerItem(annotateStalkerCatalogItem({ ...item, url: item.playRef }, request, catTitle), conn.server));
+          if (kind === "vod") setVod(prev => [...prev.filter(item => item.group !== catTitle), ...staleItems]);
+          else setSeries(prev => [...prev.filter(item => item.group !== catTitle), ...staleItems]);
+        }
+        const data = cached && !cached.stale ? cached : await tools.api.fetchCatalogPage({ ...request, signal: controller.signal });
+        if (!cached || cached.stale) await tools.cache.putPage(data);
+        const mapped = data.items.map(item => transformStalkerItem(annotateStalkerCatalogItem({ ...item, url: item.playRef }, request, catTitle), conn.server));
+        if (kind === "vod") setVod(prev => [...prev.filter(item => item.group !== catTitle), ...mapped]);
+        else setSeries(prev => [...prev.filter(item => item.group !== catTitle), ...mapped]);
+        stalkerPageRef.current.set(`${kind}:${catId}`, { nextPage: data.nextPage, hasMore: data.hasMore, loading: false, total: data.total, totalKnown: data.totalKnown, complete: data.complete, capabilities: data.capabilities });
+      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error(`Stalker lazy ${sec} items:`, e); setConnError(e.message); } }
+      finally {
+        if (!silent) {
+          setCatLoading(false);
+          if (useGlobalLoader) endContentLoad();
+        }
+        fetchingCatRef.current.delete(refKey);
+      }
+      return;
+    }
     const refKey = `${sec}-${catId}`;
     if (fetchingCatRef.current.has(refKey)) return;
     fetchingCatRef.current.add(refKey);
@@ -2719,7 +2969,7 @@ export default function App() {
       beginContentLoad("Loading category items");
     }
     try {
-      const res  = await fetch(`${API}/stalker/${sec}?${stalkerRequestParams({ cat: catId })}`);
+      const res  = await fetch(`${API}/stalker/${sec}?${stalkerRequestParams({ cat: catId, ...(force ? { refresh: "1" } : {}) })}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       if (!silent) updateContentLoad(72, "Processing provider items…");
@@ -2738,23 +2988,138 @@ export default function App() {
     }
   }
 
-  // ── Option F: background prefetch remaining categories sequentially
-  async function prefetchRemainingStalkerCats(sec, cats, force = false) {
-    setPrefetchProgress({ done: 0, total: cats.length });
-    let done = 0;
-    for (const cat of cats) {
-      await loadStalkerCatItems(sec, cat.id, cat.title, true, force);
-      done++;
-      setPrefetchProgress({ done, total: cats.length });
+  async function loadNextStalkerPage(sec) {
+    if (!STALKER_LAZY_ENABLED || !conn || conn.type !== "stalker") return;
+    const kind = sec === "live" ? "live" : sec === "vod" ? "vod" : "series";
+    const category = kind === "live"
+      ? stalkerLiveCategoryRef.current.id
+      : (kind === "vod" ? stalkerVodCats : stalkerSeriesCats).find(item => item.title === cat)?.id;
+    const categoryTitle = kind === "live"
+      ? stalkerLiveCategoryRef.current.title
+      : cat;
+    const stateKey = `${kind}:${category || 'all'}`;
+    const state = stalkerPageRef.current.get(stateKey);
+    if (!state?.hasMore || state.loading) return;
+    state.loading = true;
+    try {
+      const tools = await getStalkerLazyTools();
+      const controller = beginStalkerCatalogRequest();
+      const request = { kind, category: category || 'all', page: state.nextPage, pageSize: 100, contentToken: contentSessionToken() };
+      const data = await tools.api.fetchCatalogPage({ ...request, signal: controller.signal });
+      await tools.cache.putPage(data);
+      const mapped = data.items.map(item => transformStalkerItem(
+        annotateStalkerCatalogItem({ ...item, url: item.playRef }, request, categoryTitle),
+        conn.server,
+      ));
+      const mergeUnique = (prev, additions) => {
+        const identity = item => item.id != null && String(item.id) !== ""
+          ? `id:${item.id}`
+          : `fallback:${item.name || ""}:${item.group || ""}:${item.url || item._stalkerCmd || ""}`;
+        const seen = new Set(prev.map(identity));
+        return [...prev, ...additions.filter(item => {
+          const key = identity(item);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })];
+      };
+      if (kind === "live") setChannels(prev => mergeUnique(prev, mapped));
+      else if (kind === "vod") setVod(prev => mergeUnique(prev, mapped.map(item => ({ ...item, group: cat }))));
+      else setSeries(prev => mergeUnique(prev, mapped.map(item => ({ ...item, group: cat }))));
+      if (kind === "live") setPage(p => p + 1);
+      stalkerPageRef.current.set(stateKey, { ...state, nextPage: data.nextPage, hasMore: data.hasMore, loading: false, total: data.total ?? state.total, totalKnown: data.totalKnown ?? state.totalKnown, complete: data.complete, capabilities: data.capabilities ?? state.capabilities });
+    } catch (error) {
+      state.loading = false;
+      if (error?.name !== "AbortError" && error?.code !== "ABORT_ERR") console.error(`Stalker ${kind} next page failed:`, error);
     }
-    setPrefetchProgress(null);
-    // Full dataset save is handled by the debounced contentSaveEffect below
   }
 
+  // ── Option F: background prefetch remaining categories sequentially
   // ── Debounced save: persist vod/series to IDB + D1 when data stabilizes
+  async function loadStalkerDiscovery() {
+    if (!STALKER_LAZY_ENABLED || conn?.type !== "stalker" || stalkerDiscoveryLoading) return;
+    let tools;
+    try {
+      tools = await getStalkerLazyTools();
+    } catch (error) {
+      setStalkerDiscoveryError(error.message || "Provider discovery failed");
+      return;
+    }
+    if (!tools) return;
+    if (stalkerDiscoveryLoadedRef.current === tools.cache.scope) return;
+    stalkerDiscoveryLoadedRef.current = tools.cache.scope;
+    const controller = new AbortController();
+    stalkerDiscoveryRequestRef.current = controller;
+    setStalkerDiscoveryLoading(true);
+    setStalkerDiscoveryError("");
+    setStalkerDiscoveryPartial(false);
+
+    const discovered = [];
+    const seen = new Set();
+    let partial = false;
+    const contentToken = contentSessionToken();
+    const addItems = (items, kind, category) => {
+      for (const item of items || []) {
+        const mapped = transformStalkerItem(annotateStalkerCatalogItem(
+          { ...item, url: item.playRef },
+          { source: "items", kind, category: category.id, page: 1, pageSize: 100 },
+          category.title,
+        ), conn.server);
+        const key = `${kind}:${mapped.id ?? mapped.name ?? mapped._stalkerCmd ?? ""}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          discovered.push(mapped);
+        }
+      }
+    };
+
+    try {
+      for (const kind of ["vod", "series"]) {
+        if (controller.signal.aborted) break;
+        let categories = kind === "vod" ? stalkerVodCats : stalkerSeriesCats;
+        if (!categories.length) {
+          const cached = await tools.cache.getCategories(kind);
+          if (cached && !cached.stale) categories = cached.categories || [];
+          else {
+            const response = await tools.api.fetchCategories({ kind, contentToken, signal: controller.signal });
+            await tools.cache.putCategories(kind, response);
+            categories = response.categories || [];
+          }
+        }
+        const selected = selectDiscoveryCategories(categories, { seed: discoverySeed(tools.cache.scope), max: 4 });
+        for (const category of selected) {
+          if (controller.signal.aborted) break;
+          const request = { kind, category: String(category.id), page: 1, pageSize: 100, contentToken };
+          const cached = await tools.cache.getPage(request);
+      const data = cached && !cached.stale
+        ? cached
+        : await tools.api.fetchCatalogPage({ ...request, signal: controller.signal });
+      if (!cached || cached.stale) await tools.cache.putPage(data);
+          addItems(data.items, kind, category);
+        }
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError" && error?.code !== "ABORT_ERR") {
+        partial = true;
+        if (error?.code === "provider_cooldown" || error?.status === 429 || error?.status === 401 || error?.status === 403) {
+          setStalkerDiscoveryError("The provider temporarily limited discovery. Try again later.");
+        } else {
+          setStalkerDiscoveryError(error.message || "Provider discovery failed");
+        }
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setStalkerDiscoveryItems(discovered.slice(0, 80));
+        setStalkerDiscoveryPartial(partial);
+        setStalkerDiscoveryLoading(false);
+      }
+      if (stalkerDiscoveryRequestRef.current === controller) stalkerDiscoveryRequestRef.current = null;
+    }
+  }
+
   const contentSaveTimer = useRef(null);
   useEffect(() => {
-    if (!conn) return;
+    if (!conn || (conn.type === "stalker" && STALKER_LAZY_ENABLED)) return;
     const cId = connId(conn);
     if (!cId) return;
     clearTimeout(contentSaveTimer.current);
@@ -2804,17 +3169,69 @@ export default function App() {
       stalkerResolveRef.current?.abort();
       stalkerResolveRef.current = controller;
     }
-    const cmd = item._stalkerCmd;
-    let fallbackUrl = stalkerPlayUrl(cmd, contentType, options.episode, contentType === "live" ? item.id : null, options.episodeMeta || {});
-    if (options.start) fallbackUrl += `&start=${options.start}`;
-    if (options.end) fallbackUrl += `&end=${options.end}`;
-    if (options.duration) fallbackUrl += `&duration=${options.duration}`;
-    if (options.programId != null) fallbackUrl += `&program_id=${encodeURIComponent(options.programId)}`;
+    let currentItem = item;
+    let retriedExpiredReference = false;
+    const refreshCatalogItem = async ({ forceProvider = false } = {}) => {
+      const request = currentItem?._stalkerCatalogRequest;
+      if (!request || !STALKER_LAZY_ENABLED) return null;
+      const tools = await getStalkerLazyTools();
+      const page = request.source === 'search'
+        ? await tools.api.searchProvider({
+            kind: request.kind,
+            category: request.category,
+            query: request.query,
+            page: request.page,
+            pageSize: request.pageSize,
+            contentToken: contentSessionToken(),
+            signal,
+          })
+        : await tools.api.fetchCatalogPage({
+            kind: request.kind,
+            category: request.category,
+            page: request.page,
+            pageSize: request.pageSize,
+            contentToken: contentSessionToken(),
+            refresh: forceProvider,
+            signal,
+          });
+      if (request.source !== 'search') await tools.cache.putPage(page);
+      let match = findExactCatalogItem(page.items, currentItem);
+      if (!match && !forceProvider && request.source !== 'search') {
+        return refreshCatalogItem({ forceProvider: true });
+      }
+      if (!match?.playRef) return null;
+      currentItem = {
+        ...currentItem,
+        ...match,
+        url: match.playRef,
+        _stalkerCmd: match.playRef,
+        _stalkerCatalogRequest: request,
+      };
+      return currentItem;
+    };
     try {
-      const refreshFlag = options.reason ? "&refresh=1" : "";
-      const res = await fetch(`${fallbackUrl}&resolve=1${refreshFlag}`, { signal });
-      if (!res.ok) throw new Error(`Stream resolution returned ${res.status}`);
-      const data = await res.json();
+      if (!currentItem._stalkerCmd && await refreshCatalogItem()) {
+        retriedExpiredReference = true;
+      }
+      while (true) {
+        const cmd = currentItem._stalkerCmd;
+        let fallbackUrl = stalkerPlayUrl(cmd, contentType, options.episode, contentType === "live" ? currentItem.id : null, options.episodeMeta || {});
+        if (options.start) fallbackUrl += `&start=${options.start}`;
+        if (options.end) fallbackUrl += `&end=${options.end}`;
+        if (options.duration) fallbackUrl += `&duration=${options.duration}`;
+        if (options.programId != null) fallbackUrl += `&program_id=${encodeURIComponent(options.programId)}`;
+        const refreshFlag = options.reason ? "&refresh=1" : "";
+        const res = await fetch(`${fallbackUrl}&resolve=1${refreshFlag}`, { signal });
+        let data = null;
+        try { data = await res.json(); } catch { data = null; }
+        if (!res.ok) {
+          const expired = res.status === 410 || data?.code === "play_ref_expired";
+          if (expired && !retriedExpiredReference && await refreshCatalogItem()) {
+            retriedExpiredReference = true;
+            continue;
+          }
+          throw Object.assign(new Error(data?.error || `Stream resolution returned ${res.status}`), { code: data?.code, status: res.status });
+        }
       if (!data.url) throw new Error("Portal did not return a stream URL");
       const directUrl = data.url;
       const direct = data.direct !== false;
@@ -2839,6 +3256,7 @@ export default function App() {
         streamGeneration: data.generation || null,
         streamWarnings: Array.isArray(data.warnings) ? data.warnings : [],
       };
+      }
     } catch (error) {
       if (error?.name === "AbortError") throw error;
       console.warn("Stalker direct-play resolution failed", error);
@@ -2944,6 +3362,8 @@ export default function App() {
     } else if (s === "series") {
       if (conn?.type === "stalker") { setCat(null); loadStalkerCats("series"); }
       else { setCat("All"); fetchSeries(); }
+    } else if (s === "live" && conn?.type === "stalker" && STALKER_LAZY_ENABLED) {
+      setCat(stalkerLiveCategoryRef.current.title || "All");
     } else {
       setCat("All");
     }
@@ -3047,7 +3467,7 @@ export default function App() {
     
     track("play", { name: item.name, type: item.type || "live" });
     track("history");
-    if (conn?.type === "stalker" && item._stalkerCmd) {
+    if (conn?.type === "stalker" && (item._stalkerCmd || item._stalkerCatalogRequest)) {
       try {
         const resolved = await resolveStalkerStream(item);
         if (!resolved?.url) return;
@@ -3280,6 +3700,7 @@ export default function App() {
       return;
     }
     if (!target) return;
+    abortStalkerCatalogRequests();
     if (!httpContentMode) {
       setContentSessionOpening(true);
       setConnError("");
@@ -3306,9 +3727,11 @@ export default function App() {
     // Clear current content
     setChannels([]); setVod([]); setSeries([]);
     setActiveEpgSource("all");
+    setStalkerLiveCats([]);
     setStalkerVodCats([]); setStalkerSeriesCats([]);
+    stalkerLiveCategoryRef.current = { id: "all", title: "All" };
 
-    fetchingCatRef.current.clear(); setPrefetchProgress(null);
+    fetchingCatRef.current.clear();
     setPlaying(null); setCat("All");
     // Set conn to new config FIRST so useEffect [activeConnId] sees correct conn
     setConn(target.config);
@@ -3320,6 +3743,15 @@ export default function App() {
   }
 
   function removeConnection(id) {
+    const removedConnection = connections.find(connection => connection.id === id);
+    if (removedConnection?.type === "stalker" || removedConnection?.config?.type === "stalker") {
+      const ownerId = authUser?.id ? `user:${authUser.id}` : `guest:${GUEST_ID}`;
+      const config = removedConnection.config || removedConnection;
+      void createStalkerCatalogCache({ ownerId, connection: config })
+        .then(cache => cache.clearConnection(config))
+        .catch(() => {});
+    }
+    if (id === activeConnId) abortStalkerCatalogRequests();
     const newConns = connections.filter(c => c.id !== id);
     setConnections(newConns);
     // Clean up localStorage
@@ -3388,8 +3820,10 @@ export default function App() {
       setChannels([]);
       setVod([]);
       setSeries([]);
+      setStalkerLiveCats([]);
       setStalkerVodCats([]);
       setStalkerSeriesCats([]);
+      stalkerLiveCategoryRef.current = { id: "all", title: "All" };
       fetchingCatRef.current.clear();
       setCat(null);
 
@@ -3405,16 +3839,20 @@ export default function App() {
       // For Xtream, just clear data without reloading since the API will handle it
       setVod([]);
       setSeries([]);
+      setStalkerLiveCats([]);
       setStalkerVodCats([]);
       setStalkerSeriesCats([]);
+      stalkerLiveCategoryRef.current = { id: "all", title: "All" };
       fetchingCatRef.current.clear();
       setCat(null);
     } else if (updatedConn.type === "m3u" && updatedConn.config?.url) {
       // For M3U, just clear data without reloading
       setVod([]);
       setSeries([]);
+      setStalkerLiveCats([]);
       setStalkerVodCats([]);
       setStalkerSeriesCats([]);
+      stalkerLiveCategoryRef.current = { id: "all", title: "All" };
       fetchingCatRef.current.clear();
       setCat(null);
     }
@@ -3428,10 +3866,13 @@ export default function App() {
       navigateToAppHome({ location: window.location });
       return;
     }
+    abortStalkerCatalogRequests();
     setConn(null); setChannels([]); setVod([]); setSeries([]);
+    setStalkerLiveCats([]);
     setStalkerVodCats([]); setStalkerSeriesCats([]);
+    stalkerLiveCategoryRef.current = { id: "all", title: "All" };
 
-    fetchingCatRef.current.clear(); setPrefetchProgress(null);
+    fetchingCatRef.current.clear();
     setSection("live"); setPlaying(null); setCat("All");
     setActiveConnId(null);
     db.set("sv-activeConn", null);
@@ -3442,13 +3883,13 @@ export default function App() {
 
   const curCatsAll = useMemo(() => {
     if (section === "favorites") return ["All"];
-    if (conn?.type === "stalker" && (section === "vod" || section === "series")) {
-      const apiCats = section === "vod" ? stalkerVodCats : stalkerSeriesCats;
+    if (conn?.type === "stalker" && (section === "live" || section === "vod" || section === "series")) {
+      const apiCats = section === "live" ? stalkerLiveCats : section === "vod" ? stalkerVodCats : stalkerSeriesCats;
       if (apiCats.length) return apiCats.map(c => c.title);
     }
     const items = getItems(section) || [];
     return ["All", ...new Set(items.map(i=>i.group).filter(Boolean))];
-  }, [conn, section, stalkerVodCats, stalkerSeriesCats, getItems]);
+  }, [conn, section, stalkerLiveCats, stalkerVodCats, stalkerSeriesCats, getItems]);
 
   const curItemsAll = useMemo(() => {
     if (!cat || section === "favorites") return [];
@@ -3514,6 +3955,50 @@ export default function App() {
     return candidates.slice(0, 20);
   }, [section, vod, series, history, favs]);
 
+  const [providerSearchResults, setProviderSearchResults] = useState([]);
+  const [cachedStalkerSearchResults, setCachedStalkerSearchResults] = useState([]);
+  useEffect(() => {
+    if (!STALKER_LAZY_ENABLED || conn?.type !== "stalker" || deferredGlobalQ.trim().length < 2) {
+      setProviderSearchResults([]);
+      setCachedStalkerSearchResults([]);
+      return undefined;
+    }
+    const controller = new AbortController();
+    const query = deferredGlobalQ.trim();
+    setProviderSearchResults([]);
+    const run = async () => {
+      try {
+        const tools = await getStalkerLazyTools();
+        const cached = await tools.cache.searchPages(query);
+        if (!controller.signal.aborted) setCachedStalkerSearchResults(cached);
+        const results = [];
+        let stopAfterFailure = false;
+        for (const kind of ["live", "vod", "series"]) {
+          if (controller.signal.aborted || stopAfterFailure) return;
+          const supportsProviderSearch = [...stalkerPageRef.current.entries()]
+            .filter(([key]) => key.startsWith(`${kind}:`))
+            .some(([, state]) => state?.capabilities?.search === "supported");
+          if (!supportsProviderSearch) continue;
+          try {
+            const data = await tools.api.searchProvider({ kind, query, page: 1, pageSize: 80, contentToken: contentSessionToken(), signal: controller.signal });
+            results.push(...(data.items || []).map(item => transformStalkerItem(annotateStalkerCatalogItem({ ...item, url: item.playRef }, { source: 'search', kind, category: 'all', query, page: 1, pageSize: 80 }), conn.server)));
+          } catch (error) {
+            if (error?.code === "provider_cooldown" || error?.status === 429 || error?.status === 401 || error?.status === 403) {
+              stopAfterFailure = true;
+              break;
+            }
+            if (error?.code !== "provider_search_unsupported") console.warn("Stalker provider search failed:", error.message);
+          }
+        }
+        if (!controller.signal.aborted) setProviderSearchResults(results);
+      } catch (error) {
+        if (!controller.signal.aborted) console.warn("Stalker provider search setup failed:", error.message);
+      }
+    };
+    const timer = setTimeout(run, 400);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [conn, deferredGlobalQ, getStalkerLazyTools]);
+
   // ── global search
   const searchResults = useMemo(() => {
     if (deferredGlobalQ.length <= 1) return [];
@@ -3522,8 +4007,19 @@ export default function App() {
       const haystack = [item?.name, item?.group, item?.genre, item?.plot, item?.description].filter(Boolean).join(" ").toLowerCase();
       return haystack.includes(q);
     };
-    return [...channels, ...vod, ...series].filter(matches).slice(0, 80);
-  }, [deferredGlobalQ, channels, vod, series]);
+    const local = [...cachedStalkerSearchResults, ...channels, ...vod, ...series].filter(matches);
+    const provider = providerSearchResults.filter(matches);
+    const seen = new Set();
+    return [...local, ...provider].filter(item => {
+      const key = `${item.type}:${item.id || item.name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 80);
+  }, [deferredGlobalQ, channels, vod, series, cachedStalkerSearchResults, providerSearchResults]);
+
+  const stalkerSearchLimited = STALKER_LAZY_ENABLED && conn?.type === "stalker"
+    && ![...stalkerPageRef.current.values()].some(state => state?.capabilities?.search === "supported");
 
   const onAllowedPage = (authUser || isGuest) && !!conn;
   const LABEL = {discover:t("discover"),live:t("live"),vod:t("movies"),series:t("series"),favs:t("favorites"),continue:t("continueWatching"),epg:t("tvGuide"),search:t("globalSearch"),hls:t("directPlay"),settings:t("settings")};
@@ -3549,7 +4045,12 @@ export default function App() {
   const channelCount = channels.length + vod.length + series.length;
   const curCats = ["live","vod","series"].includes(section) ? curCatsAll : [];
   const curItems = ["live","vod","series"].includes(section) ? curItemsAll : [];
-  const hasMore = page * PAGE_SIZE < curItems.length;
+  const lazyStateKey = `${section}:${section === "live"
+    ? stalkerLiveCategoryRef.current.id
+    : ((section === "vod" ? stalkerVodCats : stalkerSeriesCats).find(item => item.title === cat)?.id || "all")}`;
+  const lazyState = STALKER_LAZY_ENABLED && conn?.type === "stalker" ? stalkerPageRef.current.get(lazyStateKey) : null;
+  const lazyHasMore = Boolean(lazyState?.hasMore);
+  const hasMore = lazyHasMore || page * PAGE_SIZE < curItems.length;
   const paginatedItems = curItems.slice(0, page * PAGE_SIZE);
 
   const contentScrollRef = useRef(null);
@@ -4106,7 +4607,7 @@ export default function App() {
           <span className="c-title">
             {LABEL[section]}
             {["live","vod","series"].includes(section) && curItems.length > 0 &&
-              <span className="c-count">{curItems.length.toLocaleString()} items</span>}
+              <span className="c-count">{lazyState?.totalKnown ? `${curItems.length.toLocaleString()} of ${Number(lazyState.total).toLocaleString()}` : `${curItems.length.toLocaleString()} items`}</span>}
           </span>
           {section==="live" && (
             <span style={{fontSize:".73rem"}}><span className="live-dot" />LIVE</span>
@@ -4196,7 +4697,19 @@ export default function App() {
         {loading ? (
           <div className="loading" role="status" aria-live="polite"><div className="spinner" /><div style={{width:"min(360px, 72vw)", display:"flex", flexDirection:"column", gap:".45rem"}}><div style={{height:"6px", width:"100%", background:"var(--s2)", borderRadius:"999px", overflow:"hidden"}}><div style={{height:"100%", width:(contentLoad?.value ?? 24)+"%", background:"var(--accent)", borderRadius:"999px", transition:"width .35s ease"}} /></div><span>{contentLoad?.label || t("loadingSection", LABEL[section])}</span></div></div>
         ) : section==="discover" ? (
-          <DiscoverView tmdbKey={tmdbKey} setTmdbKey={setTmdbKey} vod={vod} series={series} onPlay={playItem} />
+          <DiscoverView
+            tmdbKey={tmdbKey}
+            setTmdbKey={setTmdbKey}
+            vod={vod}
+            series={series}
+            onPlay={playItem}
+            stalkerDiscoveryEnabled={STALKER_LAZY_ENABLED && conn?.type === "stalker"}
+            stalkerDiscoveryItems={stalkerDiscoveryItems}
+            stalkerDiscoveryLoading={stalkerDiscoveryLoading}
+            stalkerDiscoveryError={stalkerDiscoveryError}
+            stalkerDiscoveryPartial={stalkerDiscoveryPartial}
+            onLoadStalkerDiscovery={loadStalkerDiscovery}
+          />
         ) : section==="settings" ? (
           <SettingsView connections={connections}
             authUser={authUser} activeConnId={activeConnId}
@@ -4214,7 +4727,7 @@ export default function App() {
             epgSources={epgSources} activeEpgSource={activeEpgSource} setActiveEpgSource={setActiveEpgSource}
             epgLoading={epgLoading} loadEPG={loadEPG} onPlay={playItem} onPlayCatchup={playCatchup} showCatchup={conn?.type === "stalker"} t={t} />
         ) : section==="search" ? (
-          <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} />
+          <GlobalSearch results={searchResults} query={globalQ} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} limited={stalkerSearchLimited} />
         ) : section==="favs" ? (
           <FavsView favItems={favItems} onPlay={playItem} toggleFav={toggleFav} isFav={isFav} t={t} />
         ) : section==="continue" ? (
@@ -4247,10 +4760,13 @@ export default function App() {
                       title={c}
                       onClick={() => {
                         setCat(c); setPage(1);
-                        if (conn?.type === "stalker" && (section === "vod" || section === "series")) {
-                          const apiCats = section === "vod" ? stalkerVodCats : stalkerSeriesCats;
+                        if (conn?.type === "stalker" && (section === "live" || section === "vod" || section === "series")) {
+                          const apiCats = section === "live" ? stalkerLiveCats : section === "vod" ? stalkerVodCats : stalkerSeriesCats;
                           const catObj = apiCats.find(sc => sc.title === c);
-                          if (catObj) loadStalkerCatItems(section, catObj.id, c);
+                          if (catObj) {
+                            if (section === "live") loadStalkerLiveCategoryItems(catObj.id, c);
+                            else loadStalkerCatItems(section, catObj.id, c);
+                          }
                         }
                       }}
                       onContextMenu={e => {
@@ -4309,7 +4825,7 @@ export default function App() {
                         onPlay={playItem}
                         onPlayCatchup={playCatchup}
                         hasMore={hasMore}
-                        onLoadMore={() => setPage(p=>p+1)}
+                        onLoadMore={() => STALKER_LAZY_ENABLED && conn?.type === "stalker" ? loadNextStalkerPage("live") : setPage(p=>p+1)}
                         loadText={`${t("loadMore")} (${paginatedItems.length}/${curItems.length})`}
                       />
                     </div>
@@ -4330,6 +4846,10 @@ export default function App() {
                     toggleFav={toggleFav}
                     setExpandedItem={setExpandedItem}
                     imgSrc={imgSrc}
+                    canLoadMore={STALKER_LAZY_ENABLED && conn?.type === "stalker" && Boolean(stalkerPageRef.current.get(`${section}:${section === "live"
+                      ? stalkerLiveCategoryRef.current.id
+                      : ((section === "vod" ? stalkerVodCats : stalkerSeriesCats).find(item => item.title === cat)?.id || "all")}`)?.hasMore)}
+                    onEndReached={() => loadNextStalkerPage(section)}
                     header={
                       recommendations.length > 0 && !search && cat === "All" && (
                         <div style={{marginBottom:".8rem",flexShrink:0}}>
@@ -4588,9 +5108,7 @@ export default function App() {
                     {(() => {
                       const season = seriesDetail.seasons[seriesDetail.activeSeason];
                       if (!season) return null;
-                      const episodes = conn?.type === "xtream"
-                        ? season.episodes.map(ep => ({ num: ep.num || ep.id, label: ep.title || `Episode ${ep.num}` }))
-                        : season.episodes.map(ep => ({ num: ep, label: `Episode ${ep}` }));
+                      const episodes = toSeriesEpisodeDisplay(season.episodes, conn?.type === "xtream");
                       return episodes.map(ep => (
                         <div key={ep.num}
                           className={`series-ep-item ${episodeLoading === ep.num ? "loading" : ""}`}
@@ -4765,12 +5283,19 @@ const ContinueView = memo(function ContinueView({ items, onPlay, history, t }) {
   );
 });
 
-const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggleFav, isFav, t }) {
+const GlobalSearch = memo(function GlobalSearch({ results, query, onPlay, toggleFav, isFav, t, limited = false }) {
   if (!query || query.length < 2) return (
     <div className="empty">
       <div className="empty-icon">🔍</div>
       <div className="empty-t">{t("searchEverything")}</div>
       <div className="empty-s">{t("searchHint")}</div>
+    </div>
+  );
+  if (!results.length && limited) return (
+    <div className="empty">
+      <div className="empty-icon">?</div>
+      <div className="empty-t">{t("noResults", query)}</div>
+      <div className="empty-s">Provider search is unavailable or not verified yet; results cover loaded content only.</div>
     </div>
   );
   if (!results.length) return (

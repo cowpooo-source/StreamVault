@@ -253,6 +253,21 @@ describe("redirect targets", () => {
     }
   });
 
+  it('treats an empty successful catalog response as an empty catalog', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '',
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = { base: 'http://portal.example/', apiPath: 'load.php', headers: {} };
+
+    await expect(helpers.portalFetchRetry(session, {
+      type: 'itv',
+      action: 'get_ichannels_via_api',
+    })).resolves.toEqual({ js: [] });
+  });
+
   it('streams a channel catalog and stops at the requested item limit', async () => {
     const payload = JSON.stringify({
       js: {
@@ -279,6 +294,75 @@ describe("redirect targets", () => {
       { id: 'ch1', name: 'One', cmd: 'http://stream.example/1' },
       { id: 'ch2', name: 'Two', cmd: 'http://stream.example/2' },
     ]);
+  });
+
+  it('streams only the requested live category page without reading the full catalog', async () => {
+    const payload = JSON.stringify({
+      js: {
+        data: [
+          { id: 'ch1', tv_genre_id: 7 },
+          { id: 'ch2', tv_genre_id: 8 },
+          { id: 'ch3', tv_genre_id: 7 },
+          { id: 'ch4', tv_genre_id: 7 },
+        ],
+      },
+    });
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: Readable.from([payload]),
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const session = { base: 'http://portal.example/', apiPath: 'load.php', headers: {} };
+
+    const page = await helpers.portalFetchChannelCatalogPage(session, {
+      category: '7',
+      page: 2,
+      pageSize: 1,
+    });
+
+    expect(page).toMatchObject({
+      js: {
+        data: [{ id: 'ch3', tv_genre_id: 7 }],
+        max_page_items: 1,
+      },
+    });
+    expect(page.js.total_items).toBeUndefined();
+  });
+
+  it('treats the provider wildcard category as All', async () => {
+    const payload = JSON.stringify({ js: { data: [
+      { id: 'ch1', tv_genre_id: 7 },
+      { id: 'ch2', tv_genre_id: 8 },
+    ] } });
+    const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, body: Readable.from([payload]) });
+    const helpers = createProxyHelpers({ fetch });
+    const session = { base: 'http://portal.example/', apiPath: 'load.php', headers: {} };
+
+    const page = await helpers.portalFetchChannelCatalogPage(session, { category: '*', page: 1, pageSize: 1 });
+
+    expect(page.js.data.map(item => item.id)).toEqual(['ch1']);
+    expect(page.js.total_items).toBeUndefined();
+  });
+
+  it('emits catalog items through a callback without retaining the full array', async () => {
+    const payload = JSON.stringify({ js: { data: [{ id: 'ch1' }, { id: 'ch2' }, { id: 'ch3' }] } });
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: vi.fn().mockReturnValue(null) },
+      body: Readable.from([payload]),
+    });
+    const helpers = createProxyHelpers({ fetch });
+    const seen = [];
+    const session = { base: 'http://portal.example/', apiPath: 'load.php', headers: {} };
+
+    const count = await helpers.portalFetchChannelCatalog(session, 2, undefined, {
+      onItem: item => seen.push(item),
+    });
+
+    expect(count).toBe(2);
+    expect(seen).toEqual([{ id: 'ch1' }, { id: 'ch2' }]);
   });
 
   it('deduplicates identical in-flight channel catalog streams', async () => {

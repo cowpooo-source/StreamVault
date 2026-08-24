@@ -137,6 +137,18 @@ function deleteByPrefix(connId) {
   }
 }
 
+function deleteKeysByPrefix(prefix) {
+  if (!prefix) return;
+  db.prepare("DELETE FROM cache WHERE key LIKE ?").run(`${prefix}%`);
+}
+
+function keysByPrefix(prefix) {
+  if (!prefix) return [];
+  return db.prepare("SELECT key FROM cache WHERE key LIKE ? AND expires > ?")
+    .all(`${prefix}%`, Date.now())
+    .map(row => row.key);
+}
+
 function cleanup() {
   const result = stmtCleanup.run(Date.now());
   if (result.changes > 0) {
@@ -477,4 +489,4 @@ cleanup();
 // Backward-compatible ready export (sync init, but consumers may still .then() on it)
 const ready = Promise.resolve();
 
-module.exports = { db, get, set, del, deleteByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackPortalHealth, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, trackPlaybackHeartbeat, getPlaybackSummary, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };
+module.exports = { db, get, set, del, deleteByPrefix, deleteKeysByPrefix, keysByPrefix, cleanup, cacheKey, ready, trackRequest, trackVisitor, trackPortal, trackPortalHealth, trackCacheHit, trackCacheMiss, trackGuest, trackGuestActivity, trackWatch, trackPlaybackHeartbeat, getPlaybackSummary, getStats, saveFeedback, getFeedback, saveGuestData, getGuestData, deleteGuestData, cleanupGuestData };

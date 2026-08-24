@@ -25,6 +25,16 @@ describe("privacy-safe analytics", () => {
     expect(globalThis.gtag).not.toHaveBeenCalledWith("event", expect.anything(), expect.anything());
   });
 
+  it("reports analytics as available when the frontend GA ID is configured", () => {
+    expect(analytics.isAnalyticsAvailable()).toBe(true);
+
+    analytics.initializeAnalytics();
+
+    expect(globalThis.gtag).toHaveBeenCalledWith("consent", "default", expect.objectContaining({
+      analytics_storage: "denied",
+    }));
+  });
+
   it("updates consent and emits only sanitized dimensions", () => {
     const { setAnalyticsConsent, trackAnalytics } = analytics;
     setAnalyticsConsent("granted");

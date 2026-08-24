@@ -5,6 +5,7 @@ const baseURL = process.env.E2E_BASE_URL || "http://localhost:5173";
 const externalTestIgnore = [
   "**/canary/**",
   "**/deployment-smoke.spec.js",
+  "**/stalker-catalog.spec.js",
 ];
 
 export default defineConfig({
