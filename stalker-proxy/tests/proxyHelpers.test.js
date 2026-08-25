@@ -151,6 +151,26 @@ describe("redirect targets", () => {
       expect(fetch.mock.calls.length).toBeGreaterThan(callsAfterFirst + 1);
     });
   });
+
+  it('falls back to POST when a portal requires POST handshakes', async () => {
+    const fetch = vi.fn().mockImplementation(async (url, options = {}) => {
+      if (!url.includes('/c/server/load.php')) return { ok: false, status: 404 };
+      if (options.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ js: { token: 'post-token' } }) };
+      }
+      return { ok: false, status: 405 };
+    });
+    const helpers = createProxyHelpers({ fetch });
+
+    const session = await helpers.getSession(
+      'http://main.light-ott.net:80/c',
+      '00:1A:79:50:1E:E5',
+    );
+
+    expect(session.token).toBe('post-token');
+    expect(fetch.mock.calls.some(([, options]) => options.method === 'POST')).toBe(true);
+  });
+
   it('preserves handshake random and performs device auth after an auth failure', async () => {
     const random = 'handshake-random';
     let catalogCalls = 0;

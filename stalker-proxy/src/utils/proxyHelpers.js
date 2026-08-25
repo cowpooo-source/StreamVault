@@ -495,18 +495,33 @@ function createProxyHelpers(deps) {
     const url = `${base}${apiPath}?${qs}`;
     const headers = stalkerHeaders(mac, "", portalUrl, normalizeStalkerOpts(opts));
 
-    try {
-      const res = await fetch(url, { headers, timeout: 8000, agent: agentFor(url) });
-      if (res.status === 429) { console.log(`  ${base}${apiPath} → 429 rate limited`); throw Object.assign(new Error("rate limited"), {code:"RATE_LIMITED"}); }
-      if (res.status === 404) return null;
-      if (res.ok) {
-        const data = await res.json();
-        const token = data?.js?.token;
-        const random = data?.js?.random || null;
-        const notValidToken = data?.js?.not_valid_token ?? null;
-        if (token) return { token, random, notValidToken, base, apiPath };
-      }
-    } catch(e) { if (e.code === "RATE_LIMITED") throw e; /* other errors: skip */ }
+    // Some portals reject GET handshakes with 405/404 and only accept the
+    // MAG client's POST form. Try GET first for legacy portals, then mirror
+    // the client request before abandoning this candidate path.
+    const attempts = [
+      { headers, timeout: 8000, agent: agentFor(url) },
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+        body: qs,
+        timeout: 8000,
+        agent: agentFor(url),
+      },
+    ];
+    for (const options of attempts) {
+      try {
+        const res = await fetch(url, options);
+        if (res.status === 429) { console.log(`  ${base}${apiPath} → 429 rate limited`); throw Object.assign(new Error("rate limited"), {code:"RATE_LIMITED"}); }
+        if (res.status === 404) continue;
+        if (res.ok) {
+          const data = await res.json();
+          const token = data?.js?.token;
+          const random = data?.js?.random || null;
+          const notValidToken = data?.js?.not_valid_token ?? null;
+          if (token) return { token, random, notValidToken, base, apiPath };
+        }
+      } catch(e) { if (e.code === "RATE_LIMITED") throw e; /* try the next method/path */ }
+    }
     return null;
   }
 
