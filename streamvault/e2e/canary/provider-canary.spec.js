@@ -21,6 +21,7 @@ const XTREAM_USER = process.env.CANARY_XTREAM_USER;
 const XTREAM_PASS = process.env.CANARY_XTREAM_PASS;
 const STALKER_PORTAL = process.env.CANARY_STALKER_PORTAL;
 const STALKER_MAC = process.env.CANARY_STALKER_MAC;
+const STALKER_CONTENT_TOKEN = process.env.CANARY_STALKER_CONTENT_TOKEN;
 const M3U_URL = process.env.CANARY_M3U_URL;
 const CANARY_TARGET_CONFIGURED = Boolean(
   process.env.E2E_BASE_URL
@@ -222,7 +223,10 @@ test.describe("Stalker canary", () => {
     const result = await page.evaluate(async ({ portal, mac }) => {
       const res = await fetch("/stalker/validate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Guest-Id": "canary-guest-00000000-0000-4000-8000-000000000001",
+        },
         body: JSON.stringify({ portal, mac }),
       });
       if (!res.ok) return { ok: false, status: res.status };
@@ -246,18 +250,19 @@ test.describe("Stalker canary", () => {
   });
 
   test("catalog — loads channels with non-empty commands", async ({ page }) => {
+    test.skip(!STALKER_CONTENT_TOKEN, "CANARY_STALKER_CONTENT_TOKEN not set");
     const start = Date.now();
     await goApp(page);
 
-    const result = await page.evaluate(async ({ portal, mac }) => {
-      const params = new URLSearchParams({ portal, mac });
+    const result = await page.evaluate(async contentToken => {
+      const params = new URLSearchParams({ contentToken });
       const res = await fetch(`/stalker/channels?${params.toString()}`);
       if (!res.ok) return { ok: false, status: res.status };
       const data = await res.json();
       const channels = data?.channels || [];
       const withCmd = channels.filter((ch) => ch?.url && ch.url.length > 0).length;
       return { ok: true, total: channels.length, withCmd };
-    }, { portal: STALKER_PORTAL, mac: STALKER_MAC });
+    }, STALKER_CONTENT_TOKEN);
 
     recordResult("Stalker", "catalog", result.ok && result.total > 0 && result.withCmd > 0, start,
       `${result.total} channels, ${result.withCmd} with cmd`);
@@ -268,12 +273,13 @@ test.describe("Stalker canary", () => {
   });
 
   test("resolve — first live channel resolves to a playable URL", async ({ page }) => {
+    test.skip(!STALKER_CONTENT_TOKEN, "CANARY_STALKER_CONTENT_TOKEN not set");
     const start = Date.now();
     await goApp(page);
 
-    const result = await page.evaluate(async ({ portal, mac }) => {
+    const result = await page.evaluate(async contentToken => {
       // 1. Get channels.
-      const chParams = new URLSearchParams({ portal, mac });
+      const chParams = new URLSearchParams({ contentToken });
       const chRes = await fetch(`/stalker/channels?${chParams.toString()}`);
       if (!chRes.ok) return { ok: false, phase: "channels", status: chRes.status };
       const { channels } = await chRes.json();
@@ -282,7 +288,7 @@ test.describe("Stalker canary", () => {
 
       // 2. Resolve stream.
       const playParams = new URLSearchParams({
-        portal, mac,
+        contentToken,
         cmd: channel.url,
         content_type: "live",
         resolve: "1",
@@ -299,7 +305,7 @@ test.describe("Stalker canary", () => {
         direct: playData.direct,
         hasFallbackUrl: !!playData.fallbackUrl,
       };
-    }, { portal: STALKER_PORTAL, mac: STALKER_MAC });
+    }, STALKER_CONTENT_TOKEN);
 
     recordResult("Stalker", "resolve", result.ok && !!result.streamUrl, start,
       `kind=${result.streamKind} direct=${result.direct} fallback=${result.hasFallbackUrl} channel="${result.channelName}"`);
@@ -311,16 +317,17 @@ test.describe("Stalker canary", () => {
   });
 
   test("profile — returns expected account fields", async ({ page }) => {
+    test.skip(!STALKER_CONTENT_TOKEN, "CANARY_STALKER_CONTENT_TOKEN not set");
     const start = Date.now();
     await goApp(page);
 
-    const result = await page.evaluate(async ({ portal, mac }) => {
-      const params = new URLSearchParams({ portal, mac });
+    const result = await page.evaluate(async contentToken => {
+      const params = new URLSearchParams({ contentToken });
       const res = await fetch(`/stalker/profile?${params.toString()}`);
       if (!res.ok) return { ok: false, status: res.status };
       const data = await res.json();
       return { ok: true, hasId: !!data?.id, hasTariff: !!data?.tariff_plan };
-    }, { portal: STALKER_PORTAL, mac: STALKER_MAC });
+    }, STALKER_CONTENT_TOKEN);
 
     recordResult("Stalker", "profile", result.ok, start, "");
 

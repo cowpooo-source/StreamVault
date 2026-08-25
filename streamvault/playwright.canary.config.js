@@ -10,7 +10,7 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * Required environment variables (per provider):
  *   CANARY_XTREAM_SERVER, CANARY_XTREAM_USER, CANARY_XTREAM_PASS
- *   CANARY_STALKER_PORTAL, CANARY_STALKER_MAC
+ *   CANARY_STALKER_PORTAL, CANARY_STALKER_MAC, CANARY_STALKER_CONTENT_TOKEN
  *   CANARY_M3U_URL
  */
 
