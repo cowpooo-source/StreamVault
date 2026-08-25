@@ -1,60 +1,72 @@
-# Stalker Proxy
+# StreamVault Backend
 
-A lightweight Node.js proxy that handles Stalker/Ministra portal authentication and CORS so StreamVault can talk to IPTV portals from a browser.
-
-## Why is this needed?
-
-Stalker portals require:
-1. A **token handshake** — the portal issues a session token tied to your MAC address
-2. Specific **User-Agent and Cookie headers** that browsers won't send cross-origin
-3. **CORS headers** that most portal servers don't include
-
-This proxy handles all three transparently.
+Express backend for Portal Heaven. It provides account authentication, connection synchronization, provider metadata requests, Stalker portal compatibility, content-session authorization, analytics, and bounded compatibility routes.
 
 ## Setup
 
-```bash
-cp .env.example .env
-npm install
+~~~powershell
+copy .env.example .env
+npm ci
+npm test
 npm start
-# Runs at http://localhost:3001
-```
+~~~
 
-## API
+The default port is 3001. The backend creates SQLite account and cache tables on startup. Use a persistent CACHE_DB path in any deployment.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/stalker/handshake` | POST | Token handshake `{ portal, mac }` → `{ token }` |
-| `/stalker/channels` | GET | All channels with genres merged |
-| `/stalker/vod/categories` | GET | VOD category list |
-| `/stalker/vod` | GET | VOD items by category |
-| `/stalker/series/categories` | GET | Series category list |
-| `/stalker/series` | GET | Series items by category |
-| `/stalker/series/seasons` | GET | Seasons and episodes |
-| `/stalker/stream` | GET | Resolve `cmd` to stream URL |
-| `/stalker/epg` | GET | EPG program data |
-| `/stalker/api` | GET | Generic portal API passthrough |
-| `/stream` | GET | HTTP stream proxy with HLS rewriting |
-| `/proxy` | GET | Generic CORS proxy |
-| `/health` | GET | Health check |
+## Runtime data model
 
-## Deploy
+- SQLite stores users, sessions, email tokens, provider cache, sync data, and operational records.
+- DATABASE_URL is optional and is used for the content-session store when configured.
+- The PostgreSQL migration files that existed in this branch were not used by the running application and have been removed.
+- Setting DATABASE_URL does not automatically migrate SQLite account data.
+- Back up SQLite using a consistent database backup while the service is quiesced. Include WAL state when applicable.
 
-### Koyeb (recommended)
+## Main routes
 
-`koyeb.yaml` is pre-configured. Set `ALLOWED_ORIGIN` to your frontend URL.
+| Route | Purpose |
+| --- | --- |
+| /api/auth/* | Login, registration, logout, password, account status, and SSO support |
+| /api/content-session | Create, validate, refresh, and revoke token-gated content sessions |
+| /api/sync/* | Account and guest connection, favorite, and history synchronization |
+| /stalker/handshake | Portal device handshake |
+| /stalker/validate | Validate a Stalker connection |
+| /stalker/channels | Load live channels and metadata |
+| /stalker/vod* | Load VOD categories and items |
+| /stalker/series* | Load series categories, seasons, and episodes |
+| /stalker/play | Resolve a Stalker link and use an explicitly authorized fallback when enabled |
+| /stalker/epg | Load EPG data |
+| /proxy | Metadata and playlist compatibility proxy |
+| /img | Image compatibility proxy |
+| /stream | Compatibility media relay; keep disabled unless explicitly required |
+| /health | Service health check |
 
-### Railway
+## Direct playback controls
 
-`railway.json` is pre-configured. Add env var `ALLOWED_ORIGIN`.
+The direct-play deployment should use:
 
-### Render
+~~~env
+STALKER_PLAYBACK_MODE=direct_only
+STALKER_DIRECT_PLAY_ENABLED=true
+STALKER_MEDIA_RELAY_ENABLED=false
+~~~
 
-Build: `npm install` · Start: `npm start` · Free tier works.
+Direct URLs are classified and validated before they are returned. Stalker credentials are carried in opaque content-session data rather than query parameters. Redirect targets, protocols, range behavior, response limits, concurrency, and relay grants are bounded server-side.
 
 ## Environment
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3001` | Server port |
-| `ALLOWED_ORIGIN` | `*` | CORS origin — lock down in production |
+Use .env.example as the source of configuration names. Production must provide stable random values for JWT_SECRET and TOKEN_MASTER_KEY, a restrictive ALLOWED_ORIGIN, the real APP_URL, Turnstile credentials, and OAuth callback configuration. Never commit .env or provider credentials.
+
+New public registrations receive the free role. Existing roles remain unchanged unless an administrator updates them. Account limits are enforced by the backend and must not be trusted from frontend input.
+
+## Verification
+
+~~~powershell
+npm test
+npm run test:coverage
+~~~
+
+Tests use local fixtures and mocked upstream responses. Live provider canaries belong in a protected environment and must be run manually with credentials supplied through environment variables.
+
+## Operations
+
+The files under ops/ target the non-production stalker-proxy-play service. They are not a production deployment script. Review the release runbook before copying them to another host, especially the service name, working directory, port, database path, log path, and alert webhook.

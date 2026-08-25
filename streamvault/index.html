@@ -1,13 +1,632 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>streamvault</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="clckd" content="db372cb165ffe75d5eb9d1df6075ded9">
+  <meta name="google-adsense-account" content="ca-pub-6795112280725010">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Play your authorized Xtream Codes, M3U and Stalker Portal sources in a modern source-available IPTV web player. No APK or emulator required.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://portalheaven.stream/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0a0c12">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Portal Heaven">
+  <meta property="og:url" content="https://portalheaven.stream/">
+  <meta property="og:title" content="Portal Heaven: Source-Available IPTV Web Player">
+  <meta property="og:description" content="A browser-based player for authorized Xtream Codes, M3U and Stalker Portal sources. Source available and self-hostable for noncommercial use.">
+  <meta property="og:image" content="https://portalheaven.stream/portal-heaven-social.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Portal Heaven web player interface">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Portal Heaven: Source-Available IPTV Web Player">
+  <meta name="twitter:description" content="A browser-based player for authorized Xtream Codes, M3U and Stalker Portal sources.">
+  <meta name="twitter:image" content="https://portalheaven.stream/portal-heaven-social.jpg">
+  <title>Portal Heaven: Source-Available IPTV Web Player</title>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {"@type": "Organization", "@id": "https://portalheaven.stream/#organization", "name": "Portal Heaven", "url": "https://portalheaven.stream/", "logo": "https://portalheaven.stream/icon-512.png", "sameAs": ["https://github.com/cowpooo-source/StreamVault"]},
+      {"@type": "WebApplication", "@id": "https://portalheaven.stream/#application", "name": "Portal Heaven", "url": "https://portalheaven.stream/app", "applicationCategory": "MultimediaApplication", "operatingSystem": "Web browser", "isAccessibleForFree": true, "description": "A source-available web player for authorized Xtream Codes, M3U and Stalker Portal sources.", "license": "https://polyformproject.org/licenses/noncommercial/1.0.0/", "codeRepository": "https://github.com/cowpooo-source/StreamVault", "publisher": {"@id": "https://portalheaven.stream/#organization"}, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}},
+      {"@type": "WebSite", "@id": "https://portalheaven.stream/#website", "url": "https://portalheaven.stream/", "name": "Portal Heaven", "publisher": {"@id": "https://portalheaven.stream/#organization"}},
+      {"@type": "FAQPage", "@id": "https://portalheaven.stream/#faq", "mainEntity": [{"@type": "Question", "name": "Does Portal Heaven provide any TV channels or movies?", "acceptedAnswer": {"@type": "Answer", "text": "No. Portal Heaven is a media player for sources that users are authorized to access. It does not provide content, streams or IPTV subscriptions."}}, {"@type": "Question", "name": "Does video pass through Portal Heaven servers?", "acceptedAnswer": {"@type": "Answer", "text": "Portal Heaven prioritizes direct browser-to-provider playback. An operator can enable an optional compatibility relay for sources that cannot play directly in a browser."}}, {"@type": "Question", "name": "Can I install this on my Smart TV or iPhone?", "acceptedAnswer": {"@type": "Answer", "text": "On supported mobile and desktop browsers, Portal Heaven can be installed as a PWA. Smart TV support depends on the television browser and its available media codecs."}}]}
+    ]
+  }
+  </script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: linear-gradient(145deg, #0a0c12 0%, #0f111a 100%);
+      font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, sans-serif;
+      color: #eef2ff;
+      line-height: 1.5;
+      scroll-behavior: smooth;
+    }
+
+    /* Container */
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    /* Typography */
+    h1, h2, h3 {
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    h1 {
+      font-size: clamp(2.5rem, 8vw, 4rem);
+      line-height: 1.2;
+      background: linear-gradient(135deg, #ffffff, #b1b9ff);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      margin-bottom: 1.25rem;
+    }
+
+    h2 {
+      font-size: clamp(1.8rem, 5vw, 2.5rem);
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+
+    .section-title {
+      position: relative;
+      display: inline-block;
+      width: 100%;
+    }
+
+    .section-title::after {
+      content: '';
+      display: block;
+      width: 80px;
+      height: 4px;
+      background: linear-gradient(90deg, #4f46e5, #7c3aed);
+      margin: 0.75rem auto 0;
+      border-radius: 4px;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.25rem 0;
+      flex-wrap: wrap;
+      gap: 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .logo {
+      font-size: 1.7rem;
+      font-weight: 700;
+      background: linear-gradient(120deg, #c084fc, #818cf8);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      text-decoration: none;
+    }
+
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .nav-links a {
+      color: #cbd5e1;
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+      font-size: 0.95rem;
+    }
+
+    .nav-links a:hover {
+      color: #a78bfa;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.7rem 1.5rem;
+      border-radius: 40px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.25s ease;
+      cursor: pointer;
+      border: none;
+      font-size: 1rem;
+    }
+
+    .btn-primary {
+      background: linear-gradient(95deg, #4f46e5, #7c3aed);
+      color: white;
+      box-shadow: 0 8px 20px -8px rgba(79, 70, 229, 0.4);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      background: linear-gradient(95deg, #6366f1, #8b5cf6);
+      box-shadow: 0 12px 28px -10px #4f46e5;
+    }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #e2e8ff;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255,255,255,0.12);
+      border-color: #8b5cf6;
+      transform: translateY(-2px);
+    }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 4rem 0 3rem;
+    }
+
+    .hero p {
+      max-width: 720px;
+      margin: 0 auto 2rem auto;
+      font-size: 1.2rem;
+      color: #b9c3e6;
+    }
+
+    .hero .eyebrow {
+      margin-bottom: 1rem;
+      color: #67e8f9;
+      font: 700 0.76rem/1.4 "Courier New", monospace;
+      letter-spacing: 0.14em;
+    }
+
+    .cta-group {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      margin-bottom: 3rem;
+    }
+
+    /* Hero promo */
+    .promo-stage {
+      width: min(100%, 1180px);
+      margin: 2.5rem auto 0;
+      padding: 0.65rem;
+      border: 1px solid rgba(167, 139, 250, 0.28);
+      border-radius: 1.75rem;
+      background: linear-gradient(145deg, rgba(79, 70, 229, 0.22), rgba(15, 18, 28, 0.86));
+      box-shadow: 0 28px 80px rgba(44, 33, 126, 0.3), 0 0 0 1px rgba(103, 232, 249, 0.08);
+    }
+
+    .promo-video {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      height: auto;
+      object-fit: cover;
+      border-radius: 1.25rem;
+      background: #07090f;
+    }
+
+    /* Sections */
+    .section {
+      padding: 4rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .arch-container {
+      background: rgba(15, 18, 28, 0.7);
+      backdrop-filter: blur(2px);
+      border-radius: 2rem;
+      padding: 2rem;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .tech-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.7rem;
+      margin-top: 1.5rem;
+    }
+
+    .tech-badge {
+      background: #1e2235;
+      padding: 0.3rem 1rem;
+      border-radius: 40px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #c4b5fd;
+    }
+
+    /* Feature grid & cards */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 2rem;
+      margin-top: 1rem;
+    }
+
+    .feature-card {
+      background: rgba(20, 24, 36, 0.6);
+      backdrop-filter: blur(4px);
+      padding: 1.8rem;
+      border-radius: 1.8rem;
+      border: 1px solid rgba(255,255,255,0.05);
+      transition: all 0.2s;
+    }
+
+    .feature-card:hover {
+      border-color: #4f46e5;
+      background: rgba(30, 34, 58, 0.7);
+      transform: translateY(-4px);
+    }
+
+    .feature-icon {
+      font-size: 2.4rem;
+      margin-bottom: 1rem;
+    }
+
+    .feature-card h3 {
+      font-size: 1.4rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .feature-card p {
+      color: #b9c3e6;
+      font-size: 0.95rem;
+    }
+
+    /* FAQ */
+    .faq-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .faq-item {
+      background: rgba(12, 15, 24, 0.6);
+      padding: 1.5rem;
+      border-radius: 1.5rem;
+      border-left: 3px solid #4f46e5;
+    }
+
+    .faq-item h3 {
+      font-size: 1.2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .faq-item p {
+      color: #b9c3e6;
+    }
+
+    /* Footer */
+    footer {
+      background: #07090f;
+      padding: 3rem 1rem;
+      text-align: center;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      font-size: 0.85rem;
+    }
+
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .footer-links a {
+      color: #a5b4fc;
+      text-decoration: none;
+    }
+
+    .footer-links a:hover {
+      text-decoration: underline;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(6px);
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-content {
+      background: #0f1222;
+      max-width: 550px;
+      width: 90%;
+      padding: 2rem;
+      border-radius: 2rem;
+      border: 1px solid #2d2f46;
+      position: relative;
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 1rem;
+      right: 1.5rem;
+      background: none;
+      border: none;
+      font-size: 2rem;
+      cursor: pointer;
+      color: #cbd5e1;
+    }
+
+    .legal-text h4 {
+      margin: 1rem 0 0.5rem;
+    }
+
+    /* Trust + testimonials */
+    .trust-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(79,70,229,0.15);
+      padding: 0.3rem 1rem;
+      border-radius: 40px;
+      font-size: 0.8rem;
+      color: #c4b5fd;
+    }
+
+    .testimonials {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      justify-content: center;
+      margin: 2rem 0;
+    }
+
+    .testimonial-card {
+      background: rgba(20,24,40,0.7);
+      padding: 1.5rem;
+      border-radius: 1.5rem;
+      max-width: 300px;
+      flex: 1;
+    }
+
+    .testimonial-text {
+      font-style: italic;
+      color: #cbd5ff;
+    }
+
+    .testimonial-author {
+      margin-top: 1rem;
+      font-weight: 600;
+      color: #a78bfa;
+    }
+
+    /* How it works steps */
+    .steps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      justify-content: center;
+      margin: 2rem 0;
+    }
+    .step {
+      background: #11131f;
+      border-radius: 2rem;
+      padding: 1.5rem;
+      text-align: center;
+      flex: 1;
+      min-width: 180px;
+    }
+    .step-number {
+      font-size: 2rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #818cf8, #c084fc);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    @media (max-width: 700px) {
+      header {
+        flex-direction: column;
+      }
+      .nav-links {
+        justify-content: center;
+      }
+      .promo-stage {
+        margin-top: 2rem;
+        padding: 0.35rem;
+        border-radius: 1.15rem;
+      }
+      .promo-video {
+        border-radius: 0.85rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <a href="/" class="logo">Portal Heaven</a>
+    <nav class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://media.portalheaven.stream/app" class="btn btn-secondary" style="padding: 0.5rem 1rem; margin-left: 0;">Open Player</a>
+    </nav>
+  </header>
+
+  <!-- Hero section -->
+  <section class="hero">
+    <p class="eyebrow">SOURCE AVAILABLE / BROWSER BASED / SELF-HOSTABLE</p>
+    <h1>Source-Available IPTV Web Player for Xtream, M3U and Stalker</h1>
+    <p>Play live TV, movies and series from sources you own or are authorized to access. Use the hosted web player or deploy Portal Heaven on your own server - without an APK or emulator.</p>
+    <div class="cta-group">
+      <a href="https://media.portalheaven.stream/app" class="btn btn-primary">Open Web Player</a>
+      <a href="https://github.com/cowpooo-source/StreamVault" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">Self-Host with GitHub</a>
+    </div>
+    <!-- Trust badges -->
+    <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; margin: 1rem 0 2rem;">
+      <span class="trust-badge">PolyForm Noncommercial 1.0.0</span>
+      <span class="trust-badge">Client-side credential encryption</span>
+      <span class="trust-badge">Installable PWA</span>
+      <span class="trust-badge">Player only - no content included</span>
+    </div>
+
+    <div class="promo-stage">
+      <video class="promo-video" width="1920" height="1080" autoplay muted loop playsinline preload="metadata" poster="/hero-marketing.jpg" aria-label="Portal Heaven promo video">
+        <source src="/portal-heaven-promo.mp4" type="video/mp4">
+        Your browser does not support HTML video.
+      </video>
+    </div>
+  </section>
+
+  <!-- How it works (new) -->
+  <section class="section">
+    <h2 class="section-title">Get started in 3 steps</h2>
+    <div class="steps">
+      <div class="step"><div class="step-number">1</div><h3>Create free account</h3><p style="color:#b9c3e6;">Google/GitHub SSO or email</p></div>
+      <div class="step"><div class="step-number">2</div><h3>Add your IPTV source</h3><p style="color:#b9c3e6;">Stalker / Xtream / M3U</p></div>
+      <div class="step"><div class="step-number">3</div><h3>Stream anywhere</h3><p style="color:#b9c3e6;">Web, PWA, or mobile</p></div>
+    </div>
+  </section>
+
+  <!-- Architecture -->
+  <section id="architecture" class="section">
+    <h2 class="section-title">Source-Available Architecture</h2>
+    <div class="arch-container">
+      <h3>Built in public for browser-based playback</h3>
+      <p>Portal Heaven combines a React interface with a Node.js backend for provider authentication, metadata requests and Stalker compatibility. The source code and deployment configuration are available for review on GitHub.</p>
+      <p>Media uses direct browser-to-provider playback whenever the browser and provider support it. A compatibility relay is optional for exceptional provider or browser limitations; it is not the default playback path.</p>
+      <div class="tech-badges">
+        <span class="tech-badge">React 19</span>
+        <span class="tech-badge">Vite</span>
+        <span class="tech-badge">Node.js</span>
+        <span class="tech-badge">Express</span>
+        <span class="tech-badge">SQLite</span>
+        <span class="tech-badge">HLS.js</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Security -->
+  <section id="security" class="section">
+    <h2 class="section-title">Security by Design</h2>
+    <div class="features-grid">
+      <div class="feature-card"><div class="feature-icon">01</div><h3>Client-Side AES-GCM</h3><p>Saved connection credentials are encrypted in the browser before synchronization. Review the implementation and threat model on the security page.</p></div>
+      <div class="feature-card"><div class="feature-icon">02</div><h3>Bot Protection</h3><p>Cloudflare Turnstile protects account forms against automated abuse without relying on a traditional image CAPTCHA.</p></div>
+      <div class="feature-card"><div class="feature-icon">03</div><h3>Session Protection</h3><p>OAuth and password sessions use HttpOnly cookies and scoped content-session tokens for the HTTP playback surface.</p></div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features" class="section">
+    <h2 class="section-title">Core Capabilities</h2>
+    <div class="features-grid">
+      <div class="feature-card"><div class="feature-icon">01</div><h3>Zero Install</h3><p>Works entirely in the browser - no APK, emulator, or app store.</p></div>
+      <div class="feature-card"><div class="feature-icon">02</div><h3>Cloud Sync</h3><p>Portals, favorites, watch history synced across all devices.</p></div>
+      <div class="feature-card"><div class="feature-icon">03</div><h3>Multi-Device Streaming</h3><p>Watch simultaneously on several devices (provider limits apply).</p></div>
+      <div class="feature-card"><div class="feature-icon">04</div><h3>Advanced Analytics</h3><p>Real-time dashboard: concurrent users, bandwidth, telemetry.</p></div>
+      <div class="feature-card"><div class="feature-icon">05</div><h3>Live TV & EPG</h3><p>Electronic Program Guide with Catch-up support.</p></div>
+      <div class="feature-card"><div class="feature-icon">06</div><h3>Universal Format Support</h3><p>Stalker Portal, Xtream Codes, M3U/M3U8, HLS and MPEG-TS.</p></div>
+    </div>
+  </section>
+
+  <!-- Verifiable project evidence -->
+  <section class="section">
+    <h2 class="section-title">Built in public</h2>
+    <div class="testimonials">
+      <div class="testimonial-card"><div class="testimonial-text">Inspect the implementation, deployment files and issue history.</div><div class="testimonial-author"><a href="https://github.com/cowpooo-source/StreamVault">Source code on GitHub</a></div></div>
+      <div class="testimonial-card"><div class="testimonial-text">Use the hosted player or deploy the source-available project for permitted noncommercial use.</div><div class="testimonial-author"><a href="/self-host">Self-hosting overview</a></div></div>
+      <div class="testimonial-card"><div class="testimonial-text">Understand direct playback, compatibility relay behavior and credential handling.</div><div class="testimonial-author"><a href="/security">Security and architecture</a></div></div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq" class="section">
+    <h2 class="section-title">Frequently Asked Questions</h2>
+    <div class="faq-container">
+      <div class="faq-item"><h3>Does Portal Heaven provide any TV channels or movies?</h3><p><strong>No.</strong> Portal Heaven is strictly a media player and proxy tool. We do not host, distribute, or provide any content, streams, or IPTV subscriptions. You must provide your own legal content or possess a valid subscription to a third-party IPTV service.</p></div>
+      <div class="faq-item"><h3>What is a Stalker Portal?</h3><p>A Stalker Portal (Ministra) is middleware used by IPTV providers. Portal Heaven emulates the hardware environment in your browser.</p></div>
+      <div class="faq-item"><h3>Does video pass through Portal Heaven servers?</h3><p>Portal Heaven prioritizes direct browser-to-provider playback. Provider authentication and metadata may use the backend. An optional compatibility relay may be used only when direct browser playback is not possible.</p></div>
+      <div class="faq-item"><h3>Can I install this on my Smart TV or iPhone?</h3><p>On supported mobile and desktop browsers, Portal Heaven can be installed as a PWA. Smart TV support depends on the television browser and its available media codecs.</p></div>
+      <div class="faq-item"><h3>Is my MAC address and password safe?</h3><p>Saved credentials are encrypted client-side with AES-GCM before synchronization. Review the security page for the deployment model, limitations and operator controls.</p></div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="section" style="text-align: center; border-bottom: none;">
+    <h2 class="section-title">Ready to Stream?</h2>
+    <p style="color: #b9c3e6; max-width: 600px; margin: 0 auto 2rem;">Open your authorized source in the hosted player, or review and deploy the project yourself.</p>
+    <a href="https://media.portalheaven.stream/app" class="btn btn-primary" style="font-size: 1.2rem; padding: 0.9rem 2.8rem;">Open Portal Heaven</a>
+    <p style="margin-top: 2rem; font-size: 0.8rem;">No credit card / Source available / Self-host friendly / No content included</p>
+  </section>
+</div>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="https://github.com/cowpooo-source/StreamVault" target="_blank" rel="noopener noreferrer">GitHub Source</a>
+      <a href="https://media.portalheaven.stream/app">Open Web Player</a>
+      <a href="/security">Security</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/terms">Terms of Service</a>
+      <a id="email-support">Contact Us</a>
+    </div>
+    <p>Portal Heaven is a source-available media player utility. It does not provide, host, or distribute any copyrighted media, streams, or IPTV subscriptions. Users are entirely responsible for the content they choose to access using this software.</p>
+    <p style="margin-top: 1rem; opacity: 0.5;">&copy; 2026 Portal Heaven Project - Built for the self-hosted community</p>
+  </div>
+</footer>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const u = "portalheavenstream";
+    const d = "gmail.com";
+    const link = document.getElementById("email-support");
+    link.href = "mailto:" + u + "@" + d;
+  });
+  // Smooth scroll for anchor links
+  document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+    anchor.addEventListener('click', function(e) {
+      const href = this.getAttribute('href');
+      if (href === "#" || href === "") return;
+      const target = document.querySelector(href);
+      if (target) {
+        e.preventDefault();
+        target.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+  });
+</script>
+</body>
 </html>

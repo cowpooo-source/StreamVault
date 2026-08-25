@@ -1,0 +1,9 @@
+[Unit]
+Description=Monitor StreamVault media production service
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+EnvironmentFile=-/etc/streamvault/httpstatic-monitor.env
+ExecStart=/usr/bin/bash /home/opc/StreamVault-HttpStatic-monitor.sh

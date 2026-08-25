@@ -1,0 +1,21 @@
+const fs = require('fs');
+const lines = fs.readFileSync('stalker-proxy/src/index.js', 'utf8').split('\n');
+lines.forEach((line, i) => {
+  if (line.includes('function isPrivateIP')) console.log('isPrivateIP: ' + i);
+  if (line.includes('app.get("/health"')) console.log('/health: ' + i);
+  if (line.includes('app.post("/api/track"')) console.log('/api/track: ' + i);
+  if (line.includes('// ── GET /api/vast')) console.log('/api/vast: ' + i);
+  if (line.includes('// ── POST /api/diagnose')) console.log('/api/diagnose: ' + i);
+  if (line.includes('app.post("/stalker/handshake"')) console.log('/stalker/handshake: ' + i);
+  if (line.includes('// ── GET /proxy')) console.log('/proxy: ' + i);
+  if (line.includes('// ── GET /img')) console.log('/img: ' + i);
+  if (line.includes('// ── GET /api/tmdb')) console.log('/api/tmdb: ' + i);
+  if (line.includes('app.options("/stream"')) console.log('/stream: ' + i);
+  if (line.includes('app.use("/", analyticsRoutes)')) console.log('analyticsRoutes: ' + i);
+  if (line.includes('app.use("/api", authRoutes)')) console.log('authRoutes: ' + i);
+  if (line.includes('function getSession(')) console.log('getSession: ' + i);
+  if (line.includes('function tryHandshake(')) console.log('tryHandshake: ' + i);
+  if (line.includes('const pathCache = new Map();')) console.log('pathCache: ' + i);
+  if (line.includes('// ─────────────────────────────────────────────────────────────────')) console.log('DELIMITER: ' + i);
+  if (line.includes('const { trackDailyBandwidth } = require("./services/system");')) console.log('trackDailyBandwidth: ' + i);
+});

@@ -1,256 +1,141 @@
-# StreamVault
+# Portal Heaven
 
-A browser-based IPTV client — no app install, no subscription, bring your own service.
+Portal Heaven is a browser media player for provider accounts that the user is authorized to access. It does not provide channels, movies, subscriptions, or source content.
 
 **Try it now:** https://portalheaven.stream/
 
-Supports **Xtream Codes**, **M3U playlists**, **Stalker/Ministra portals**, and **direct HLS/MP4 URLs**.
+The application supports Stalker portals, Xtream-compatible APIs, M3U playlists, and direct HLS or file URLs. Direct browser playback is preferred. The backend handles authentication, provider metadata, content-session authorization, and compatibility operations. Media relay is an explicit fallback and is disabled by default in the direct-play deployment.
 
----
+## Current deployment model
 
-## Features
+| Host | Purpose |
+| --- | --- |
+| portalheaven.stream | Public marketing and documentation site |
+| media.portalheaven.stream | HTTPS application, authentication, setup, browsing, and account settings |
+| Legacy host | Temporary old application during migration |
+| HTTP content host | Token-gated content shell used when the browser must play HTTP provider media |
 
-| Category | Details |
-|----------|---------|
-| **Live TV** | Channel grid with logos, EPG now-playing, quick channel switcher |
-| **Movies & Series** | Poster grid with year, rating, seasons/episodes, resume progress |
-| **TV Guide** | XMLTV EPG grid — load any provider's XML feed |
-| **Global Search** | Searches live, movies, and series simultaneously |
-| **Favorites** | Per-profile favorites across all content types |
-| **Continue Watching** | Watch history with resume support (last 60 items) |
-| **Themes** | Dark, Navy, AMOLED, Forest |
-| **Player** | HLS.js + mpegts.js, keyboard shortcuts, PiP, OSD overlay |
-| **Offline-ready** | IndexedDB caching — channels/categories persist across sessions |
+The exact content host and deployment paths are environment configuration, not source-code constants. The HTTPS application should never be used to proxy provider media unless the configured compatibility fallback is required.
 
-**Player keyboard shortcuts:**
-`Space` play/pause · `F` fullscreen · `M` mute · `←→` ±10s or channels · `↑↓` volume or channels · `P` PiP · `Esc` close
+## Repository layout
 
----
+~~~text
+streamvault/                   React and Vite frontend
+stalker-proxy/                 Express backend and SQLite-backed account/cache services
+docker/                        Local Nginx gateway
+docs/                          Release, testing, and historical design documentation
+docker-compose.yml             Local development stack
+docker-compose.feature.yml     Non-production direct-play stack
+~~~
 
-## Architecture
+## Requirements
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Browser (React SPA)                                        │
-│  streamvault/src/App.jsx                                    │
-│  - IndexedDB for offline content cache                      │
-│  - HLS.js / mpegts.js for playback                         │
-└────────┬───────────────────────────┬────────────────────────┘
-         │                           │
-         ▼                           ▼
-┌─────────────────────┐   ┌──────────────────────────────────┐
-│  stalker-proxy       │   │  CF Worker (optional)            │
-│  Express on Node.js  │   │  streamvault-worker/             │
-│  - Stalker handshake │   │  - Stalker/Xtream/M3U proxy     │
-│  - CORS proxy        │   │  - Stream proxy (HTTP→HTTPS)     │
-│  - Stream proxy      │   │  - D1 database (persistent)      │
-│  Deploy: Koyeb/      │   │  - KV cache (session paths)      │
-│    Railway/Render     │   │  - Usage analytics               │
-└─────────────────────┘   └──────────────────────────────────┘
-```
+- Node.js 22 LTS
+- npm
+- Docker and Docker Compose for the container workflow
+- A persistent writable data directory for the backend database
+- HTTPS and correctly scoped secrets for hosted deployments
 
-You can run **either** the stalker-proxy (simple) **or** the CF Worker (full-featured), or both.
+## Local development
 
----
+Run the backend and frontend separately when debugging source changes:
 
-## Project structure
-
-```
-StreamVault/
-├── streamvault/              # React + Vite frontend
-│   ├── src/App.jsx           # Entire app (single-file architecture)
-│   ├── functions/worker.js   # CF Pages stream proxy (legacy)
-│   └── .env.example
-├── stalker-proxy/            # Node.js CORS proxy
-│   ├── src/index.js          # Express server
-│   ├── koyeb.yaml            # Koyeb deploy config
-│   ├── railway.json          # Railway deploy config
-│   └── .env.example
-└── streamvault-worker/       # Cloudflare Worker (optional)
-    ├── src/
-    │   ├── index.js           # Router + CORS
-    │   ├── handlers/          # stalker, stream, catalog, analytics
-    │   └── utils/             # auth, cors, stalker session mgmt
-    ├── migrations/            # D1 database schema
-    └── wrangler.toml
-```
-
----
-
-## Quick start (local dev)
-
-### 1. Clone
-
-```bash
-git clone https://github.com/YOUR-USERNAME/StreamVault.git
-cd StreamVault
-```
-
-### 2. Start the proxy *(needed for Stalker portals and CORS)*
-
-```bash
+~~~powershell
 cd stalker-proxy
-cp .env.example .env
-npm install
-npm start
-# Runs at http://localhost:3001
-```
-
-### 3. Start the frontend
-
-```bash
-cd streamvault
-cp .env.example .env
-npm install
+npm ci
+npm test
 npm run dev
-# Runs at http://localhost:5173
-```
+~~~
 
-### 4. Connect
+In another terminal:
 
-Open `http://localhost:5173` and choose a connection type:
+~~~powershell
+cd streamvault
+npm ci
+npm test
+npm run dev
+~~~
 
-| Type | What you need |
-|------|--------------|
-| **Xtream Codes** | Server URL, username, password |
-| **M3U Playlist** | Direct `.m3u` or `.m3u8` URL |
-| **Stalker Portal** | Portal URL, MAC address (proxy must be running) |
-| **Direct HLS** | Any `.m3u8` or media URL |
+The frontend runs on http://localhost:5173 and the backend on http://localhost:3001. Copy the .env.example files before starting and use only local test credentials.
 
----
+## Docker development
 
-## Environment variables
+The compose files require secrets instead of embedding credentials in source control:
 
-### Frontend (`streamvault/.env`)
+~~~powershell
+$env:ADMIN_PASS = 'local-test-password'
+$env:TOKEN_MASTER_KEY = 'replace-with-a-random-64-character-hex-key'
+docker compose -f docker-compose.yml up --build
+~~~
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VITE_PROXY_URL` | `http://localhost:3001` | Stalker proxy / Koyeb backend URL |
-| `VITE_CATALOG_URL` | same as PROXY | CF Worker URL for catalog API (optional) |
-| `VITE_STREAM_PROXY_URL` | same as PROXY | Stream proxy URL (optional, for split routing) |
+For the direct-play feature stack:
 
-### Proxy (`stalker-proxy/.env`)
+~~~powershell
+$env:ADMIN_PASS = 'local-test-password'
+$env:TOKEN_MASTER_KEY = 'replace-with-a-random-64-character-hex-key'
+docker compose -f docker-compose.feature.yml up --build
+~~~
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3001` | Server port |
-| `ALLOWED_ORIGIN` | `*` | CORS origin — set to your frontend URL in production |
+Never use production passwords, JWT secrets, Turnstile secrets, provider credentials, or webhook URLs in local compose files.
 
----
+## Verification
 
-## Deploying (free tier)
+Backend:
 
-### Frontend — Cloudflare Pages
+~~~powershell
+cd stalker-proxy
+npm test
+~~~
 
-1. Fork this repo
-2. Go to [pages.cloudflare.com](https://pages.cloudflare.com) → Create project → Connect to Git
-3. Root directory: `streamvault` · Build: `npm run build` · Output: `dist`
-4. Add env var: `VITE_PROXY_URL` = your proxy URL
-5. Deploy
+Frontend:
 
-### Proxy — Koyeb (recommended)
+~~~powershell
+cd streamvault
+npm run lint
+npm test
+$env:VITE_SECURE_APP_BASE_URL = 'https://media.portalheaven.stream/app'
+npm run build
+npm run e2e
+~~~
 
-1. Go to [koyeb.com](https://koyeb.com) → Create App → GitHub
-2. Select your fork, work directory: `stalker-proxy`
-3. Build: `npm install` · Run: `npm start`
-4. Add env var: `ALLOWED_ORIGIN` = your Pages URL
-5. Deploy
+The Playwright suite uses mocked provider and media routes. Staging smoke tests and provider canaries are separate and must be run deliberately with credentials supplied through environment variables. See streamvault/README.md for test commands and fixtures.
 
-> `koyeb.yaml` pre-fills these settings. Also works on [Railway](https://railway.app) or [Render](https://render.com).
+## Configuration
 
-### CF Worker (optional, replaces proxy)
+Backend configuration is documented in stalker-proxy/.env.example. Frontend build configuration is documented in streamvault/.env.example.
 
-```bash
-cd streamvault-worker
+Important production settings include:
 
-# Create resources
-wrangler kv namespace create SV_CACHE
-wrangler d1 create streamvault-db
+- JWT_SECRET and TOKEN_MASTER_KEY must be stable, random, and stored outside Git.
+- ALLOWED_ORIGIN must list the real HTTPS application origin.
+- APP_URL and VITE_SECURE_APP_BASE_URL must point to the media application.
+- DEFAULT_ROLE=free must remain explicit for new registrations.
+- STALKER_PLAYBACK_MODE=direct_only and STALKER_MEDIA_RELAY_ENABLED=false preserve the direct-first audit requirement.
+- STALKER_LAZY_CATALOG_ENABLED and VITE_STALKER_LAZY_CATALOG_ENABLED default to false; enable the backend first, verify the versioned catalog endpoints, then enable the frontend.
+- Turnstile and OAuth credentials must be configured for the production hostnames.
 
-# Add the returned IDs to wrangler.toml
-# Run migrations
-wrangler d1 migrations apply streamvault-db
+## Data and account behavior
 
-# Deploy
-wrangler deploy
-```
+Authentication and the account/cache database are currently SQLite-backed. Content sessions can use the configured PostgreSQL store, but this does not automatically migrate account data. Review docs/production-release.md before copying production data or running separate legacy and media deployments.
 
-Set `VITE_CATALOG_URL` in your frontend to the Worker URL.
+New registrations are assigned the free role by the backend. Existing roles are not changed automatically. Guest and free accounts are subject to their configured limits and advertising policy.
 
----
+## Stalker catalog loading
 
-## Proxy API
+The optional lazy catalog mode loads bounded pages instead of downloading every VOD or series item during connection setup. It retains lazy catalog metadata for 48 hours on the VPS and in an owner-scoped browser IndexedDB store, searches loaded pages locally, and uses provider search only when capability detection confirms it works. A provider that ignores live pagination uses one connection-scoped bounded snapshot capped at 50,000 items; VOD and series never use a full-catalog fallback. Playback links are resolved only when selected and direct playback remains preferred. Legacy non-lazy endpoint TTLs are unchanged.
 
-### Stalker endpoints
+Enable it for staging with `STALKER_LAZY_CATALOG_ENABLED=true` in the backend and `VITE_STALKER_LAZY_CATALOG_ENABLED=true` at frontend build time. Roll back by rebuilding the frontend with the flag false; legacy catalog endpoints remain available during the rollout window.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/stalker/handshake` | POST | Token handshake with portal |
-| `/stalker/channels` | GET | All live channels with genres |
-| `/stalker/vod/categories` | GET | VOD category list |
-| `/stalker/vod` | GET | VOD items by category |
-| `/stalker/series/categories` | GET | Series category list |
-| `/stalker/series` | GET | Series items by category |
-| `/stalker/series/seasons` | GET | Seasons and episodes for a series |
-| `/stalker/stream` | GET | Resolve stream `cmd` to playable URL |
-| `/stalker/epg` | GET | EPG program data |
-| `/stalker/profile` | GET | STB profile info |
-| `/stalker/api` | GET | Generic portal API passthrough |
+## Release documentation
 
-### Utility endpoints
+- Production release and migration runbook: docs/production-release.md
+- Documentation index: docs/README.md
+- Manual release checklist: docs/testing/manual-release-checklist.md
+- Frontend and E2E guide: streamvault/README.md
+- Backend and API guide: stalker-proxy/README.md
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/stream` | GET | Proxy HTTP streams over HTTPS with HLS manifest rewriting |
-| `/proxy` | GET | Generic CORS proxy for any URL |
-| `/health` | GET | Health check |
-
-All endpoints return JSON with CORS headers (`Access-Control-Allow-Origin: *`).
-
----
-
-## How it works
-
-### Stream routing
-
-| Protocol | Path |
-|----------|------|
-| **Stalker (HTTPS page)** | Browser → Proxy `/stalker/play` → Portal `create_link` → Proxy `/stream` → IPTV server |
-| **Xtream (HTTPS page)** | Browser → Proxy `/proxy` → Xtream API; Browser → Proxy `/stream` → TS/HLS stream |
-| **M3U (HTTPS page)** | Browser → Proxy `/proxy` → M3U fetch; Browser → Proxy `/stream` → stream |
-| **Any (HTTP page)** | Browser → IPTV server directly (no proxy needed) |
-
-### Stalker session management
-
-Stalker portals require a specific handshake flow:
-1. **Path discovery** — try multiple API paths (`server/load.php`, `portal.php`, etc.)
-2. **Handshake** — get a session token tied to the MAC address
-3. **Token refresh** — auto-refresh on 401 responses
-4. **`create_link`** — resolve channel commands to stream URLs (tokens may be IP-bound)
-
-The proxy (and CF Worker) handle this transparently, including caching discovered paths.
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 19, Vite 8, single-file App.jsx |
-| Player | HLS.js (adaptive), mpegts.js (raw TS), native `<video>` |
-| Proxy | Node.js 18+, Express, node-fetch |
-| Worker | Cloudflare Workers, D1 (SQLite), KV |
-| Storage | IndexedDB (browser), D1 (cloud sync) |
-| Styling | CSS-in-JS via template literal `<style>` tag |
-
----
-
-## Disclaimer
-
-StreamVault is a **client application** — it does not provide any IPTV content. You must supply your own IPTV service credentials. Ensure you comply with your provider's terms of service and local laws.
-
----
+Dated files under docs/superpowers/ are design and implementation history. They may describe earlier hosts or deployment experiments and are not the current production runbook.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal and noncommercial use. Commercial use requires a separate license.
+This repository is distributed under the license in LICENSE. Review the license and applicable law before operating a hosted service.

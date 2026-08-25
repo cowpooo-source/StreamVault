@@ -1,0 +1,37 @@
+name: Canary
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: Real-Provider Canary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: streamvault/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: streamvault
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: streamvault
+      - name: Run canary
+        run: npx playwright test --config playwright.canary.config.js
+        working-directory: streamvault
+        env:
+          CANARY_XTREAM_SERVER: ${{ secrets.CANARY_XTREAM_SERVER }}
+          CANARY_XTREAM_USER: ${{ secrets.CANARY_XTREAM_USER }}
+          CANARY_XTREAM_PASS: ${{ secrets.CANARY_XTREAM_PASS }}
+          CANARY_STALKER_PORTAL: ${{ secrets.CANARY_STALKER_PORTAL }}
+          CANARY_STALKER_MAC: ${{ secrets.CANARY_STALKER_MAC }}
+          CANARY_M3U_URL: ${{ secrets.CANARY_M3U_URL }}
+      - name: Notify canary degraded (report only, non-blocking)
+        if: failure()
+        run: echo "::warning ::Real-provider canary degraded — one or more providers are unreachable. This does not block merges."

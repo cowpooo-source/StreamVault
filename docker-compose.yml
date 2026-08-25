@@ -1,0 +1,49 @@
+services:
+  backend:
+    build:
+      context: ./stalker-proxy
+      dockerfile: Dockerfile
+    volumes:
+      - ./stalker-proxy/src:/home/node/app/src
+      - ./stalker-proxy/package.json:/home/node/app/package.json
+      - ./stalker-proxy/data:/home/node/app/data
+    environment:
+      - PORT=3001
+      - NODE_ENV=${NODE_ENV:-development}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost}
+      - ADMIN_PASS=${ADMIN_PASS:?ADMIN_PASS must be set}
+      - TOKEN_MASTER_KEY=${TOKEN_MASTER_KEY:?TOKEN_MASTER_KEY must be set}
+      - TURNSTILE_REQUIRED=${TURNSTILE_REQUIRED:-false}
+      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-}
+      - CONTENT_BASE_URL=${CONTENT_BASE_URL:-http://localhost}
+    networks:
+      - streamvault-net
+
+  frontend:
+    build:
+      context: ./streamvault
+      dockerfile: Dockerfile
+    volumes:
+      - ./streamvault:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-}
+      - VITE_TURNSTILE_SITE_KEY
+    networks:
+      - streamvault-net
+
+  gateway:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - streamvault-net
+
+networks:
+  streamvault-net:
+    driver: bridge

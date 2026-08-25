@@ -1,0 +1,5 @@
+Contact: https://github.com/cowpooo-source/StreamVault/security/advisories/new
+Canonical: https://portalheaven.stream/.well-known/security.txt
+Policy: https://portalheaven.stream/security
+Preferred-Languages: en
+Expires: 2027-07-21T00:00:00Z

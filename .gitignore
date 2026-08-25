@@ -21,6 +21,7 @@ wrangler.local.toml
 
 # ── Claude Code ──────────────────────────────────────────────────
 .claude/
+.superpowers/
 
 # ── Logs ──────────────────────────────────────────────────────────
 logs/
@@ -35,6 +36,12 @@ lerna-debug.log*
 
 # ── Test coverage ─────────────────────────────────────────────────
 coverage/
+
+# ── Playwright ───────────────────────────────────────────────────
+playwright-report/
+playwright-report-staging/
+playwright-report-canary/
+test-results/
 
 # ── OS ────────────────────────────────────────────────────────────
 .DS_Store
@@ -53,4 +60,52 @@ Desktop.ini
 
 # ── Archives ──────────────────────────────────────────────────────
 *.zip
+*.tar
 *.tar.gz
+
+# SQLite temp files (test databases)
+*.db-shm
+*.db-wal
+stalker-proxy/tests/test-*.db
+
+# ── Temporary Dev Files ──────────────────────────────────────────
+# Ignore one-off scripts and data snapshots in the root
+check.js
+extract.js
+find_diagnose.js
+get_routes.js
+missing_routes.js
+parse_json.js
+patch.js
+query.js
+run_test.js
+strip.js
+test_render.js
+update-app.js
+*.html
+!streamvault/index.html
+!streamvault/landing.html
+!streamvault/app.html
+!streamvault/404.html
+!streamvault/features.html
+!streamvault/security.html
+!streamvault/self-host.html
+!streamvault/faq.html
+!streamvault/privacy.html
+!streamvault/terms.html
+!stalker-proxy/src/analytics.html
+*.json
+!package.json
+!package-lock.json
+!wrangler.jsonc
+!koyeb.yaml
+!railway.json
+temp_*
+old_*
+*.cjs
+!*.config.cjs
+!eslint.config.js
+!*.config.js
+
+# Worker tests
+streamvault-worker/test/
