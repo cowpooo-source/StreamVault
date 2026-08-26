@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import "./app.css";
 import { imgSrc, fmtTime, parseM3U, genCSS, API, ENABLE_ADSTERRA, ENABLE_HILLTOP, ADSTERRA_URL, debounce, trackAnalytics, trackAnalyticsScreen, resolveUrl } from "./utils.js";
 import Player from "./components/Player.jsx";
+import PlaybackLoadingOverlay from "./components/PlaybackLoadingOverlay.jsx";
+import { createPlaybackResolveCoordinator } from "./playback-resolve.js";
 import DirectHLSView from "./components/DirectHLSView.jsx";
 import TimelineGrid from "./components/TimelineGrid.jsx";
 import VirtualGrid from "./components/VirtualGrid.jsx";
@@ -29,7 +31,7 @@ import {
 } from "./direct-content-session.js";
 import { hydrateContentSession } from "./app-session.js";
 import { describeStalkerCatalogLoading, loadInitialStalkerCatalog, shouldUseGlobalCatalogLoader } from "./stalker-catalog-loading.js";
-import { createStalkerCatalogApi } from "./stalker-catalog-api.js";
+import { createStalkerCatalogApi, formatStalkerCatalogError } from "./stalker-catalog-api.js";
 import { createStalkerCatalogCache } from "./stalker-catalog-cache.js";
 import { stalkerCatalogConnectionFingerprint } from "./stalker-catalog-identity.js";
 import { discoverySeed, selectDiscoveryCategories } from "./stalker-discovery.js";
@@ -1843,6 +1845,7 @@ export default function App() {
   async function handleLogout() {
     // Stop media before waiting on the network so logout cannot leave a
     // provider stream running behind a slow or failed auth request.
+    cancelPlaybackResolve();
     setPlaying(null);
     localStorage.removeItem("sv-guest-mode");
     const ownerId = authUser?.id ? `user:${authUser.id}` : `guest:${GUEST_ID}`;
@@ -1945,6 +1948,7 @@ export default function App() {
   const [globalQ, setGlobalQ] = useState("");
   const deferredGlobalQ = useDeferredValue(globalQ);
   const [playing, setPlaying] = useState(null);
+  const [playbackLoading, setPlaybackLoading] = useState(null);
   const [ctx, setCtx]         = useState(null); // context menu {x,y,catName}
   const [showCatEditor, setShowCatEditor] = useState(null); // section name or null
 
@@ -2047,6 +2051,7 @@ export default function App() {
         setMobileMenuOpen(false);
         setEditingConn(null);
         setShowUpgradePrompt(false);
+        cancelPlaybackResolve();
         setPlaying(null);
         setChannels([]);
         setVod([]);
@@ -2086,6 +2091,7 @@ export default function App() {
           || [401, 403, 410].includes(error?.status);
         if (terminal && !stopped) {
           clearContentSessionToken();
+          cancelPlaybackResolve();
           setPlaying(null);
           setConn(null);
           setEphemeralConnection(null);
@@ -2111,6 +2117,36 @@ export default function App() {
   const [epgLoading, setEpgLoading] = useState(false);
   const epgLoadToken = useRef(0);
   const stalkerResolveRef = useRef(null); // Tracks current connection to ignore stale loads
+  const playbackResolveCoordinatorRef = useRef(null);
+  const playbackResolveGenerationRef = useRef(0);
+  if (!playbackResolveCoordinatorRef.current) {
+    playbackResolveCoordinatorRef.current = createPlaybackResolveCoordinator();
+  }
+
+  function cancelPlaybackResolve() {
+    playbackResolveGenerationRef.current += 1;
+    playbackResolveCoordinatorRef.current?.cancel();
+    setPlaybackLoading(null);
+  }
+
+  async function runPlaybackResolve({ name, operation }) {
+    const generation = ++playbackResolveGenerationRef.current;
+    setPlaybackLoading({ name });
+    try {
+      return await playbackResolveCoordinatorRef.current.run(operation);
+    } finally {
+      if (generation === playbackResolveGenerationRef.current) setPlaybackLoading(null);
+    }
+  }
+
+  function isPlaybackResolveCancellation(error) {
+    return error?.code === "playback_resolve_cancelled" || error?.name === "AbortError";
+  }
+
+  useEffect(() => () => {
+    playbackResolveGenerationRef.current += 1;
+    playbackResolveCoordinatorRef.current?.cancel();
+  }, []);
 
   const epgData = useMemo(() => {
     if (!epgSources.length) return null;
@@ -2781,7 +2817,7 @@ export default function App() {
     } catch (e) {
       if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") {
         console.error("Stalker lazy live category error:", e);
-        setConnError(e.message);
+        setConnError(formatStalkerCatalogError(e));
       }
     } finally {
       if (!silent) endContentLoad();
@@ -2810,7 +2846,7 @@ export default function App() {
           : null;
         const firstCategory = selected || categories.find(item => String(item.id) !== "all") || categories[0] || { id: "all", title: "All" };
         await loadStalkerLiveCategoryItems(firstCategory.id, firstCategory.title, force, true);
-      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error("Stalker lazy channels error:", e); setConnError(e.message); } }
+      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error("Stalker lazy channels error:", e); setConnError(formatStalkerCatalogError(e)); } }
       finally { endContentLoad(); }
       return;
     }
@@ -2867,7 +2903,7 @@ export default function App() {
           setCat(cats[0].title);
           await loadStalkerCatItems(sec, cats[0].id, cats[0].title, false, force);
         }
-      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error(`Stalker lazy ${sec} categories:`, e); setConnError(e.message); } }
+      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error(`Stalker lazy ${sec} categories:`, e); setConnError(formatStalkerCatalogError(e)); } }
       return;
     }
     const cId = connId(conn);
@@ -2934,7 +2970,7 @@ export default function App() {
         if (kind === "vod") setVod(prev => [...prev.filter(item => item.group !== catTitle), ...mapped]);
         else setSeries(prev => [...prev.filter(item => item.group !== catTitle), ...mapped]);
         stalkerPageRef.current.set(`${kind}:${catId}`, { nextPage: data.nextPage, hasMore: data.hasMore, loading: false, total: data.total, totalKnown: data.totalKnown, complete: data.complete, capabilities: data.capabilities });
-      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error(`Stalker lazy ${sec} items:`, e); setConnError(e.message); } }
+      } catch (e) { if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") { console.error(`Stalker lazy ${sec} items:`, e); setConnError(formatStalkerCatalogError(e)); } }
       finally {
         if (!silent) {
           setCatLoading(false);
@@ -3027,7 +3063,12 @@ export default function App() {
       stalkerPageRef.current.set(stateKey, { ...state, nextPage: data.nextPage, hasMore: data.hasMore, loading: false, total: data.total ?? state.total, totalKnown: data.totalKnown ?? state.totalKnown, complete: data.complete, capabilities: data.capabilities ?? state.capabilities });
     } catch (error) {
       state.loading = false;
-      if (error?.name !== "AbortError" && error?.code !== "ABORT_ERR") console.error(`Stalker ${kind} next page failed:`, error);
+      if (error?.name !== "AbortError" && error?.code !== "ABORT_ERR") {
+        console.error(`Stalker ${kind} next page failed:`, error);
+        if (error?.code === "provider_cooldown" || error?.code === "provider_rate_limited" || error?.status === 429) {
+          setConnError(formatStalkerCatalogError(error));
+        }
+      }
     }
   }
 
@@ -3039,7 +3080,7 @@ export default function App() {
     try {
       tools = await getStalkerLazyTools();
     } catch (error) {
-      setStalkerDiscoveryError(error.message || "Provider discovery failed");
+      setStalkerDiscoveryError(formatStalkerCatalogError(error, "Provider discovery failed"));
       return;
     }
     if (!tools) return;
@@ -3098,10 +3139,12 @@ export default function App() {
     } catch (error) {
       if (error?.name !== "AbortError" && error?.code !== "ABORT_ERR") {
         partial = true;
-        if (error?.code === "provider_cooldown" || error?.status === 429 || error?.status === 401 || error?.status === 403) {
+        if (error?.code === "provider_cooldown" || error?.code === "provider_rate_limited" || error?.status === 429) {
+          setStalkerDiscoveryError(formatStalkerCatalogError(error));
+        } else if (error?.status === 401 || error?.status === 403) {
           setStalkerDiscoveryError("The provider temporarily limited discovery. Try again later.");
         } else {
-          setStalkerDiscoveryError(error.message || "Provider discovery failed");
+          setStalkerDiscoveryError(formatStalkerCatalogError(error, "Provider discovery failed"));
         }
       }
     } finally {
@@ -3466,12 +3509,22 @@ export default function App() {
     track("history");
     if (conn?.type === "stalker" && (item._stalkerCmd || item._stalkerCatalogRequest)) {
       try {
-        const resolved = await resolveStalkerStream(item);
-        if (!resolved?.url) return;
+        const resolved = await runPlaybackResolve({
+          name: item.name || "Selected content",
+          operation: ({ signal }) => resolveStalkerStream(item, item.type || "live", { signal }),
+        });
+        if (!resolved?.url) {
+          return;
+        }
         const resolved_item = { ...item, ...resolved };
         setPlaying(resolved_item);
         addHistory(resolved_item);
       } catch (error) {
+        if (isPlaybackResolveCancellation(error)) return;
+        if (error?.code === "playback_resolve_timeout") {
+          setConnError(`${error.message} Try again later.`);
+          return;
+        }
         console.error("Stalker direct playback unavailable:", error);
         setConnError(error?.message || "The provider did not return a direct browser-playable stream");
       }
@@ -3532,11 +3585,14 @@ export default function App() {
 
     try {
       if (conn?.type === "stalker" && channel._stalkerCmd) {
-        const resolved = await resolveStalkerStream(
-          { id: channel.id, _stalkerCmd: program.cmd || channel._stalkerCmd, type: "live" },
-          "live",
-          { start: startUTC, end: endUTC, duration: Math.max(1, endUTC - startUTC), programId: program.id || program.programId },
-        );
+        const resolved = await runPlaybackResolve({
+          name: catchupItem.name,
+          operation: ({ signal }) => resolveStalkerStream(
+            { id: channel.id, _stalkerCmd: program.cmd || channel._stalkerCmd, type: "live" },
+            "live",
+            { signal, start: startUTC, end: endUTC, duration: Math.max(1, endUTC - startUTC), programId: program.id || program.programId },
+          ),
+        });
         Object.assign(catchupItem, resolved);
       } else if (conn?.type === "xtream" && channel.url) {
         // Xtream Codes: try timeshift URL formats
@@ -3553,6 +3609,11 @@ export default function App() {
         catchupItem.url = `${channel.url}${sep}utc=${startUTC}&lutc=${endUTC}`;
       }
     } catch (e) {
+      if (isPlaybackResolveCancellation(e)) return;
+      if (e?.code === "playback_resolve_timeout") {
+        setConnError(`${e.message} Try again later.`);
+        return;
+      }
       console.error("Catchup URL construction failed:", e);
     }
 
@@ -3610,19 +3671,23 @@ export default function App() {
     try {
       if (conn?.type === "stalker") {
         const episode = season.episodes?.find(ep => ep.num == episodeNum || ep.id == episodeNum) || {};
-        const resolved = await resolveStalkerStream(
-          { _stalkerCmd: episode.cmd || season.cmd, type: "series" },
-          "series",
-          {
-            episode: episode.num ?? episodeNum,
-            episodeMeta: {
-              episodeId: episode.id,
-              seasonId: season.id,
-              seriesNumber: episode.series_number ?? episode.seriesNumber ?? episode.num ?? episodeNum,
-              videoId: episode.video_id ?? episode.videoId,
+        const resolved = await runPlaybackResolve({
+          name: `${seriesDetail.item.name} - ${season.name} E${episodeNum}`,
+          operation: ({ signal }) => resolveStalkerStream(
+            { _stalkerCmd: episode.cmd || season.cmd, type: "series" },
+            "series",
+            {
+              signal,
+              episode: episode.num ?? episodeNum,
+              episodeMeta: {
+                episodeId: episode.id,
+                seasonId: season.id,
+                seriesNumber: episode.series_number ?? episode.seriesNumber ?? episode.num ?? episodeNum,
+                videoId: episode.video_id ?? episode.videoId,
+              },
             },
-          },
-        );
+          ),
+        });
         const epItem = {
           id: `${seriesDetail.item.id}-s${seriesDetail.activeSeason}-e${episodeNum}`,
           name: `${seriesDetail.item.name} - ${season.name} E${episodeNum}`,
@@ -3650,6 +3715,11 @@ export default function App() {
         addHistory(epItem);
       }
     } catch(e) {
+      if (isPlaybackResolveCancellation(e)) return;
+      if (e?.code === "playback_resolve_timeout") {
+        setConnError(`${e.message} Try again later.`);
+        return;
+      }
       console.error("Episode play error:", e);
     } finally {
       setEpisodeLoading(null);
@@ -3697,6 +3767,7 @@ export default function App() {
       return;
     }
     if (!target) return;
+    cancelPlaybackResolve();
     abortStalkerCatalogRequests();
     if (!httpContentMode) {
       setContentSessionOpening(true);
@@ -3856,6 +3927,7 @@ export default function App() {
   }
 
   function disconnect() {
+    cancelPlaybackResolve();
     if (httpContentMode) {
       clearContentSessionToken();
       setEphemeralConnection(null);
@@ -3980,8 +4052,11 @@ export default function App() {
             const data = await tools.api.searchProvider({ kind, query, page: 1, pageSize: 80, contentToken: contentSessionToken(), signal: controller.signal });
             results.push(...(data.items || []).map(item => transformStalkerItem(annotateStalkerCatalogItem({ ...item, url: item.playRef }, { source: 'search', kind, category: 'all', query, page: 1, pageSize: 80 }), conn.server)));
           } catch (error) {
-            if (error?.code === "provider_cooldown" || error?.status === 429 || error?.status === 401 || error?.status === 403) {
+            if (error?.code === "provider_cooldown" || error?.code === "provider_rate_limited" || error?.status === 429 || error?.status === 401 || error?.status === 403) {
               stopAfterFailure = true;
+              if (error?.code === "provider_cooldown" || error?.code === "provider_rate_limited" || error?.status === 429) {
+                setConnError(formatStalkerCatalogError(error));
+              }
               break;
             }
             if (error?.code !== "provider_search_unsupported") console.warn("Stalker provider search failed:", error.message);
@@ -4436,6 +4511,12 @@ export default function App() {
 
   return (
     <div className="app" dir={isRTL ? "rtl" : "ltr"}>
+      {playbackLoading && (
+        <PlaybackLoadingOverlay
+          message={`Connecting to ${playbackLoading.name || "stream"}...`}
+          onCancel={cancelPlaybackResolve}
+        />
+      )}
       <AdsterraSocialBar onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
       <HilltopPushAd onAllowedPage={onAllowedPage} isAdEligible={isAdEligible} />
       {/* ── MOBILE TOP BAR + DRAWER ── */}

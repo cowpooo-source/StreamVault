@@ -13,6 +13,22 @@ export class StalkerCatalogError extends Error {
   }
 }
 
+export function formatStalkerCatalogError(error, fallback = 'Provider catalog request failed.') {
+  const status = Number(error?.status);
+  const code = String(error?.code || '');
+  const retryAfter = Number(error?.retryAfterSeconds);
+
+  if (code === 'provider_cooldown' || code === 'provider_rate_limited' || status === 429) {
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      const seconds = Math.ceil(retryAfter);
+      return `Provider cooldown active. Please wait ${seconds} ${seconds === 1 ? 'second' : 'seconds'} before trying again.`;
+    }
+    return 'Provider cooldown active. Please wait before trying again.';
+  }
+
+  return error?.message || fallback;
+}
+
 function requireFeature(enabled) {
   if (!enabled) throw new StalkerCatalogError('Lazy catalog is disabled', 'feature_disabled', 404);
 }

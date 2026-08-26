@@ -86,6 +86,27 @@ test.describe("HLS playback", () => {
     await expect(appPage.getByTestId("player-loading")).toBeHidden();
   });
 
+  test("Player close remains usable while media is loading", async ({ appPage }) => {
+    await setupHlsPlayback(appPage);
+
+    await appPage.goto("/app");
+    await appPage.getByPlaceholder("Username").fill("test-user");
+    await appPage.getByPlaceholder("Password").fill("test-pass");
+    await appPage.getByRole("button", { name: "Login" }).last().click();
+    await expect(appPage.getByText("Portal Heaven")).toBeVisible({ timeout: 10000 });
+
+    await appPage.getByPlaceholder("http://server.com:8080").fill("http://provider.test");
+    await appPage.getByPlaceholder("username").fill("test-user");
+    await appPage.getByPlaceholder("password").fill("test-pass");
+    await appPage.getByRole("button", { name: /Connect .*→/ }).click();
+
+    await expect(appPage.getByText("HLS Channel")).toBeVisible({ timeout: 15000 });
+    await appPage.getByText("HLS Channel").click();
+    await expect(appPage.getByTestId("player-loading")).toBeVisible();
+    await appPage.getByRole("button", { name: /close/i }).click({ timeout: 1000 });
+    await expect(appPage.locator(".player-ov")).toHaveCount(0);
+  });
+
   test("manual retry creates a new playback generation", async ({ appPage }) => {
     await setupHlsPlayback(appPage);
 

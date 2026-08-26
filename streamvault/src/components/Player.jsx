@@ -6,6 +6,7 @@ import { classifyStreamUrl } from "../stream-classifier.js";
 import { shouldProxyStreamUrl, xtreamHlsCandidate } from "../stream-routing.js";
 import { shouldStopAutomaticRecovery, playbackHttpError } from "../iptv-errors.js";
 import { canStalkerRefresh, canStallRecover, chooseStallAction } from "../player-recovery.js";
+import PlaybackLoadingOverlay from "./PlaybackLoadingOverlay.jsx";
 
 function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, onRequestRelay, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
@@ -1186,9 +1187,12 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
         <div style={{ position:"relative" }}>
           <video ref={videoRef} className="player-video" controls playsInline />
           {isLoading && !streamErr && (
-            <div data-testid="player-loading" style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.35)",pointerEvents:"none"}}>
-              <div className="spinner" aria-label="Loading stream" />
-            </div>
+            <PlaybackLoadingOverlay
+              testId="player-loading"
+              fullScreen={false}
+              message="Loading stream..."
+              detail="Waiting for playable media"
+            />
           )}
           {current._stalkerRelayActive && (
             <div style={{position:"absolute",top:10,left:10,zIndex:4,padding:".35rem .6rem",borderRadius:6,background:"#9a3412",color:"white",fontSize:".72rem",fontWeight:700}}>

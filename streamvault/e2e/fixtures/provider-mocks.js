@@ -210,15 +210,21 @@ const STALKER_CHANNELS = [
  * @param {object} options
  * @param {"valid"|"unauthorized"|"rate-limited"} options.handshake
  * @param {"direct-hls"|"direct-ts"|"direct-file"|"relay"|"failure"} options.createLink
+ * @param {number} options.playDelayMs
  * @param {object[]} options.redirects
  * @param {number} options.catalogSize
+ * @param {"none"|"past-catchup"} options.epg
+ * @param {"none"|"one-episode"} options.series
  */
 export function installStalkerMock(page, options = {}) {
   const {
     handshake = "valid",
     createLink = "direct-hls",
+    playDelayMs = 0,
     redirects = [],
     catalogSize = 3,
+    epg = "none",
+    series = "none",
   } = options;
 
   const requestLog = [];
@@ -270,19 +276,68 @@ export function installStalkerMock(page, options = {}) {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ categories: [] }),
+        body: JSON.stringify({ categories: series === "one-episode" ? [{ id: "20", title: "Drama" }] : [] }),
+      });
+    }
+
+    if (url.pathname.endsWith("/stalker/series/seasons")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          seasons: series === "one-episode" ? [{
+            id: "601:1",
+            name: "Season 1",
+            episodes: [{
+              id: "episode-1",
+              num: 1,
+              title: "Episode 1",
+              cmd: "auto http://media.test/vod/episode-1.mp4",
+              episode_id: "episode-1",
+              season_id: "601:1",
+              series_number: 1,
+              video_id: "video-1",
+            }],
+          }] : [],
+        }),
+      });
+    }
+
+    if (url.pathname.endsWith("/stalker/series")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: series === "one-episode" ? [{
+            id: "601",
+            name: "Stalker Series",
+            type: "series",
+            url: "/media/series-601.mpg",
+            cmd: "auto http://media.test/vod/series-601.mp4",
+          }] : [],
+        }),
       });
     }
 
     if (url.pathname.endsWith("/stalker/epg")) {
+      const now = Date.now();
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ programs: [] }),
+        body: JSON.stringify({ programs: epg === "past-catchup" ? {
+          "501": [{
+            id: "epg-past-1",
+            title: "Past News",
+            start: now - 30 * 60 * 1000,
+            stop: now - 5 * 60 * 1000,
+            cmd: "ffmpeg http://media.test/live/catchup.ts",
+          }],
+        } : {} }),
       });
     }
 
     if (url.pathname.endsWith("/stalker/play")) {
+      if (playDelayMs > 0) await new Promise(resolve => setTimeout(resolve, playDelayMs));
       const directUrls = {
         "direct-hls": "http://media.test/edge/stream.m3u8",
         "direct-ts": "http://media.test/edge/stream.ts",

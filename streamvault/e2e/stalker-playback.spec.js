@@ -73,6 +73,101 @@ test.describe("Stalker playback", () => {
     expect(log.hlsLoadCalls.some(u => u.includes("stream.m3u8"))).toBe(true);
   });
 
+  test("shows loading feedback while Stalker playback is resolving", async ({ appPage }) => {
+    await setupStalkerTest(appPage, { handshake: "valid", createLink: "direct-hls", playDelayMs: 500 });
+
+    await appPage.goto("/app");
+    await expect(appPage.getByText("Portal Heaven", { exact: true })).toBeVisible({ timeout: 10000 });
+    await appPage.getByRole("button", { name: "Stalker Portal" }).click();
+    await appPage.getByPlaceholder("http://server/stalker_portal/c/").fill("http://portal.test");
+    await appPage.getByPlaceholder("00:1A:79:XX:XX:XX").fill("00:1A:79:00:00:01");
+    await appPage.getByRole("button", { name: /Connect .*→/ }).click();
+    await appPage.locator(".sidebar .nav", { hasText: "Live TV" }).click();
+    await expect(appPage.getByText("Stalker News")).toBeVisible({ timeout: 15000 });
+
+    await appPage.getByText("Stalker News").click();
+    await expect(appPage.getByTestId("playback-loading")).toBeVisible();
+    await expect(appPage.getByTestId("playback-loading")).toContainText("Connecting to Stalker News");
+    await expect(appPage.getByTestId("playback-loading")).toBeHidden({ timeout: 5000 });
+  });
+
+  test("cancels a slow Stalker resolution without opening Player", async ({ appPage }) => {
+    await setupStalkerTest(appPage, { handshake: "valid", createLink: "direct-hls", playDelayMs: 120_000 });
+
+    await appPage.goto("/app");
+    await expect(appPage.getByText("Portal Heaven", { exact: true })).toBeVisible({ timeout: 10000 });
+    await appPage.getByRole("button", { name: "Stalker Portal" }).click();
+    await appPage.getByPlaceholder("http://server/stalker_portal/c/").fill("http://portal.test");
+    await appPage.getByPlaceholder("00:1A:79:XX:XX:XX").fill("00:1A:79:00:00:01");
+    await appPage.getByRole("button", { name: /Connect .*→/ }).click();
+    await appPage.locator(".sidebar .nav", { hasText: "Live TV" }).click();
+    await expect(appPage.getByText("Stalker News")).toBeVisible({ timeout: 15000 });
+
+    await appPage.getByText("Stalker News").click();
+    await expect(appPage.getByTestId("playback-loading")).toBeVisible();
+    await appPage.getByRole("button", { name: "Cancel loading" }).click();
+    await expect(appPage.getByTestId("playback-loading")).toHaveCount(0);
+    await expect(appPage.locator(".player-ov")).toHaveCount(0);
+    await expect(appPage.getByText("Stalker News")).toBeVisible();
+  });
+
+  test("removes pending feedback and reports a failed Stalker resolution", async ({ appPage, allowBrowserError }) => {
+    await setupStalkerTest(appPage, { handshake: "valid", createLink: "failure" });
+    await allowBrowserError(/Stalker direct playback unavailable: Error: Stream not available/);
+    await allowBrowserError(/400 GET .*\/stalker\/play/);
+
+    await appPage.goto("/app");
+    await expect(appPage.getByText("Portal Heaven", { exact: true })).toBeVisible({ timeout: 10000 });
+    await appPage.getByRole("button", { name: "Stalker Portal" }).click();
+    await appPage.getByPlaceholder("http://server/stalker_portal/c/").fill("http://portal.test");
+    await appPage.getByPlaceholder("00:1A:79:XX:XX:XX").fill("00:1A:79:00:00:01");
+    await appPage.getByRole("button", { name: /Connect .*→/ }).click();
+    await appPage.locator(".sidebar .nav", { hasText: "Live TV" }).click();
+    await expect(appPage.getByText("Stalker News")).toBeVisible({ timeout: 15000 });
+
+    await appPage.getByText("Stalker News").click();
+    await expect(appPage.getByTestId("playback-loading")).toHaveCount(0);
+    await expect(appPage.getByText("Stream not available")).toBeVisible();
+    await expect(appPage.locator(".player-ov")).toHaveCount(0);
+  });
+
+  test("shows feedback while Stalker catch-up resolves", async ({ appPage }) => {
+    await setupStalkerTest(appPage, { handshake: "valid", playDelayMs: 1000, epg: "past-catchup" });
+
+    await appPage.goto("/app");
+    await expect(appPage.getByText("Portal Heaven", { exact: true })).toBeVisible({ timeout: 10000 });
+    await appPage.getByRole("button", { name: "Stalker Portal" }).click();
+    await appPage.getByPlaceholder("http://server/stalker_portal/c/").fill("http://portal.test");
+    await appPage.getByPlaceholder("00:1A:79:XX:XX:XX").fill("00:1A:79:00:00:01");
+    await appPage.getByRole("button", { name: /Connect/ }).click();
+    await appPage.locator(".sidebar .nav", { hasText: "TV Guide" }).click();
+
+    const pastProgram = appPage.locator("[data-prog-idx]").filter({ hasText: "Past News" });
+    await expect(pastProgram).toBeVisible({ timeout: 15000 });
+    await pastProgram.click();
+    await expect(appPage.getByTestId("playback-loading")).toContainText("Stalker News - Past News");
+    await expect(appPage.getByTestId("playback-loading")).toBeHidden({ timeout: 5000 });
+  });
+
+  test("shows feedback while a Stalker series episode resolves", async ({ appPage }) => {
+    await setupStalkerTest(appPage, { handshake: "valid", playDelayMs: 1000, series: "one-episode" });
+
+    await appPage.goto("/app");
+    await expect(appPage.getByText("Portal Heaven", { exact: true })).toBeVisible({ timeout: 10000 });
+    await appPage.getByRole("button", { name: "Stalker Portal" }).click();
+    await appPage.getByPlaceholder("http://server/stalker_portal/c/").fill("http://portal.test");
+    await appPage.getByPlaceholder("00:1A:79:XX:XX:XX").fill("00:1A:79:00:00:01");
+    await appPage.getByRole("button", { name: /Connect/ }).click();
+    await appPage.locator(".sidebar .nav", { hasText: "Series" }).click();
+
+    await expect(appPage.getByText("Stalker Series", { exact: true })).toBeVisible({ timeout: 15000 });
+    await appPage.getByText("Stalker Series", { exact: true }).click();
+    await expect(appPage.getByText("Episode 1", { exact: true })).toBeVisible({ timeout: 10000 });
+    await appPage.getByText("Episode 1", { exact: true }).click();
+    await expect(appPage.getByTestId("playback-loading")).toContainText("Stalker Series - Season 1 E1");
+    await expect(appPage.getByTestId("playback-loading")).toBeHidden({ timeout: 5000 });
+  });
+
   test("direct TS URL is attempted first for TS content", async ({ appPage }) => {
     await setupStalkerTest(appPage, { handshake: "valid", createLink: "direct-ts" });
 

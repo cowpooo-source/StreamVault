@@ -1,9 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createStalkerCatalogApi, StalkerCatalogError } from '../src/stalker-catalog-api.js';
+import { createStalkerCatalogApi, StalkerCatalogError, formatStalkerCatalogError } from '../src/stalker-catalog-api.js';
 
 const page = { kind: 'vod', category: '1', items: [], page: 1, pageSize: 100, hasMore: false, nextPage: null, total: 0, totalKnown: true, complete: true };
 
 describe('stalker catalog API', () => {
+  it('explains how long the user must wait during a provider cooldown', () => {
+    const error = new StalkerCatalogError('Portal cooldown active. Retry in 98s.', 'provider_cooldown', 429, 98);
+
+    expect(formatStalkerCatalogError(error)).toBe('Provider cooldown active. Please wait 98 seconds before trying again.');
+  });
+
+  it('gives a cooldown instruction when a rate limit has no retry duration', () => {
+    const error = new StalkerCatalogError('Too many requests', 'provider_rate_limited', 429);
+
+    expect(formatStalkerCatalogError(error)).toBe('Provider cooldown active. Please wait before trying again.');
+  });
+
   it('builds authenticated catalog requests and validates pages', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(page), { status: 200, headers: { 'content-type': 'application/json' } }));
     const api = createStalkerCatalogApi({ fetcher, enabled: true });
