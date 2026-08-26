@@ -58,11 +58,11 @@ function encodeOpaqueCommand(command, { expires = true, binding = null } = {}) {
   };
   return OPAQUE_COMMAND_PREFIX + encryptToken(JSON.stringify(payload));
 }
-function decodeOpaqueCommand(command, expectedBinding = null) {
+function decodeOpaqueCommand(command, expectedBinding = null, { allowExpired = false } = {}) {
   if (!String(command || '').startsWith(OPAQUE_COMMAND_PREFIX)) return command;
   const payload = JSON.parse(decryptToken(String(command).slice(OPAQUE_COMMAND_PREFIX.length)));
   if (!payload?.command) throw new Error('Opaque Stalker command is invalid');
-  if (payload.exp && Number(payload.exp) <= Date.now()) {
+  if (!allowExpired && payload.exp && Number(payload.exp) <= Date.now()) {
     const error = new Error('Opaque Stalker command expired');
     error.code = 'EXPIRED';
     error.status = 410;
@@ -1344,7 +1344,13 @@ function createStalkerRouter(deps) {
 
     const { cmd: rawCmd, content_type, episode, episode_id, season_id, series_number, video_id, start, end, duration, program_id, channel_id } = req.query;
     let cmd;
-    try { cmd = decodeOpaqueCommand(rawCmd, catalogBinding(portal, mac, { serial, deviceId, deviceId2 })); }
+    try {
+      cmd = decodeOpaqueCommand(
+        rawCmd,
+        catalogBinding(portal, mac, { serial, deviceId, deviceId2 }),
+        { allowExpired: req.query.refresh === '1' },
+      );
+    }
     catch (error) {
       if (error?.status === 410 || error?.code === 'EXPIRED') {
         return res.status(410).json({ error: 'Stalker playback reference expired', code: 'play_ref_expired' });
@@ -1530,11 +1536,12 @@ function createStalkerRouter(deps) {
   });
 
   router.get("/epg", requireStalkerAuth, validateQuery("epg"), async (req, res) => {
-    const { portal, mac, period = 4, serial, refresh } = req.query;
-    const ck = cache.cacheKey(portal, mac, "epg", period);
+    const { portal, mac, period = 4, serial, deviceId, deviceId2, refresh } = req.query;
+    const epgIdentity = catalogIdentityHash({ portal, mac, serial, deviceId, deviceId2 });
+    const ck = `stalker-epg-v2|${epgIdentity}|${hashPart(period)}`;
     if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(opaqueSeasonCommands(cached)); }
     try {
-      const session = await getSession(portal, mac, { serial });
+      const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
       const epgData = await portalFetchRetry(session, { type: "itv", action: "get_epg_info", period });
       const programs = {};
       for (const [id, shows] of Object.entries(epgData?.js?.data || {})) {

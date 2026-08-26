@@ -171,6 +171,37 @@ describe("redirect targets", () => {
     expect(fetch.mock.calls.some(([, options]) => options.method === 'POST')).toBe(true);
   });
 
+  it('does not reuse a session across Stalker device profiles', async () => {
+    let handshakeCount = 0;
+    const fetch = vi.fn().mockImplementation(async (url) => {
+      if (url.includes('action=handshake')) {
+        handshakeCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ js: { token: `token-${handshakeCount}` } }),
+        };
+      }
+      return { ok: false, status: 404 };
+    });
+    const helpers = createProxyHelpers({ fetch });
+
+    const first = await helpers.getSession(
+      'http://profiled.example.com/c',
+      '00:11:22:33:44:55',
+      { serial: 'SERIAL-1', deviceId: 'DEVICE-1', deviceId2: 'DEVICE-2' },
+    );
+    const second = await helpers.getSession(
+      'http://profiled.example.com/c',
+      '00:11:22:33:44:55',
+      { serial: 'SERIAL-1', deviceId: 'DEVICE-3', deviceId2: 'DEVICE-4' },
+    );
+
+    expect(first.token).toBe('token-1');
+    expect(second.token).toBe('token-2');
+    expect(handshakeCount).toBe(2);
+  });
+
   it('preserves handshake random and performs device auth after an auth failure', async () => {
     const random = 'handshake-random';
     let catalogCalls = 0;

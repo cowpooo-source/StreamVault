@@ -3211,6 +3211,7 @@ export default function App() {
     }
     let currentItem = item;
     let retriedExpiredReference = false;
+    let forceReferenceRefresh = false;
     const refreshCatalogItem = async ({ forceProvider = false } = {}) => {
       const request = currentItem?._stalkerCatalogRequest;
       if (!request || !STALKER_LAZY_ENABLED) return null;
@@ -3260,14 +3261,22 @@ export default function App() {
         if (options.end) fallbackUrl += `&end=${options.end}`;
         if (options.duration) fallbackUrl += `&duration=${options.duration}`;
         if (options.programId != null) fallbackUrl += `&program_id=${encodeURIComponent(options.programId)}`;
-        const refreshFlag = options.reason ? "&refresh=1" : "";
+        const refreshFlag = options.reason || forceReferenceRefresh ? "&refresh=1" : "";
         const res = await fetch(`${fallbackUrl}&resolve=1${refreshFlag}`, { signal });
         let data = null;
         try { data = await res.json(); } catch { data = null; }
         if (!res.ok) {
           const expired = res.status === 410 || data?.code === "play_ref_expired";
-          if (expired && !retriedExpiredReference && await refreshCatalogItem()) {
+          if (expired && !retriedExpiredReference) {
+            if (await refreshCatalogItem()) {
+              retriedExpiredReference = true;
+              continue;
+            }
+            // Legacy aggregate catalog responses have no page origin to
+            // rehydrate. Ask the backend to rematerialize the same bound
+            // command instead of rebuilding the full catalog.
             retriedExpiredReference = true;
+            forceReferenceRefresh = true;
             continue;
           }
           throw Object.assign(new Error(data?.error || `Stream resolution returned ${res.status}`), { code: data?.code, status: res.status });

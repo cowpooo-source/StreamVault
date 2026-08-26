@@ -1826,6 +1826,32 @@ describe('dedicated Stalker route validation', () => {
     expect(deps.getSession).not.toHaveBeenCalled();
   });
 
+  it('re-materializes an expired opaque reference after an explicit refresh request', async () => {
+    const command = 'ffrt http://provider/ch/1';
+    const payload = encryptToken(JSON.stringify({ command, iat: Date.now() - 60_000, exp: Date.now() - 1 }));
+    const portalFetchRetry = vi.fn().mockResolvedValue({ js: { cmd: 'http://cdn.example/live.ts' } });
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry,
+      fetchWithRedirectCheck: vi.fn().mockResolvedValue({
+        response: { ok: true, status: 200, body: { cancel: vi.fn() } },
+        url: 'http://cdn.example/live.ts',
+      }),
+    });
+
+    const res = await request(makeApp(deps)).get(
+      `/stalker/play?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cmd=svopaque%3A${encodeURIComponent(payload)}&content_type=live&channel_id=1&resolve=1&refresh=1`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe('http://cdn.example/live.ts');
+    expect(portalFetchRetry).toHaveBeenCalledTimes(1);
+    expect(portalFetchRetry.mock.calls[0][1]).toMatchObject({
+      action: 'create_link',
+      cmd: expect.stringContaining('/ch/1'),
+    });
+  });
+
   it('rejects a catalog playback reference bound to another connection', async () => {
     const payload = encryptToken(JSON.stringify({
       command: 'ffrt http://provider/ch/1',

@@ -4,6 +4,7 @@ import express from 'express';
 import { Readable } from 'stream';
 import crypto from 'node:crypto';
 import { createStalkerRouter } from '../src/routes/stalker';
+import { encryptToken } from '../src/middleware/encrypt';
 
 describe('Integration Tests - Routes', () => {
   let app;
@@ -1502,6 +1503,69 @@ describe('Integration Tests - Routes', () => {
     expect(res.body.programs['ch1']).toBeDefined();
     expect(res.body.programs['ch1'][0]).toMatchObject({ title: 'Show A' });
     expect(res.body.programs['ch1'][0].start).toBe(1716403200000);
+  });
+
+  it('GET /stalker/epg preserves the complete device profile from a content session', async () => {
+    const encryptedConnection = encryptToken(JSON.stringify({
+      type: 'stalker',
+      config: {
+        type: 'stalker',
+        server: 'http://portal.example.com/c',
+        mac: '00:11:22:33:44:55',
+        serial: 'SERIAL-1',
+        deviceId: 'DEVICE-1',
+        deviceId2: 'DEVICE-2',
+      },
+    }));
+    const getSession = vi.fn().mockResolvedValue({
+      token: 't',
+      base: 'https://portal/',
+      apiPath: 'server/load.php',
+      headers: {},
+      refresh: vi.fn(),
+    });
+    const deps = {
+      cache: {
+        get: vi.fn(),
+        set: vi.fn(),
+        trackCacheHit: vi.fn(),
+        trackCacheMiss: vi.fn(),
+        trackWatch: vi.fn(),
+        trackPortalHealth: vi.fn(),
+        cacheKey: (portal, mac, endpoint, extra) => `${portal}|${mac}|${endpoint}|${extra || ''}`,
+      },
+      auth: mockAuth,
+      fetch: vi.fn(),
+      isUrlAllowed: vi.fn().mockResolvedValue(true),
+      contentSessionStore: {
+        findByTokenHash: vi.fn().mockResolvedValue({
+          encryptedConnection,
+          expiresAt: Date.now() + 60_000,
+        }),
+        deleteByTokenHash: vi.fn(),
+        extendByTokenHash: vi.fn(),
+      },
+      getSession,
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: {} } }),
+      safeError: vi.fn((e) => e?.message || 'error'),
+      buildStalkerStreamHeaders: vi.fn().mockReturnValue({}),
+      summarizeUpstreamHeaders: vi.fn().mockReturnValue({}),
+    };
+    const miniApp = express();
+    miniApp.use(express.json());
+    miniApp.use('/stalker', createStalkerRouter(deps));
+
+    const res = await authenticatedGet(
+      miniApp,
+      '/stalker/epg?contentToken=scoped-token&period=24',
+    );
+
+    expect(res.status).toBe(200);
+    expect(getSession).toHaveBeenCalledWith(
+      'http://portal.example.com/c',
+      '00:11:22:33:44:55',
+      { serial: 'SERIAL-1', deviceId: 'DEVICE-1', deviceId2: 'DEVICE-2' },
+    );
   });
 
   it('GET /stalker/epg returns 502 on upstream failure', async () => {

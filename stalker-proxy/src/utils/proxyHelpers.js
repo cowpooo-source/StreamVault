@@ -226,7 +226,12 @@ function createProxyHelpers(deps) {
 
   function sessionCacheKey(portal, mac, opts = {}) {
     const normalized = normalizeStalkerOpts(opts);
-    return `${cacheKey(portal, mac)}|${normalized.serial || ""}`;
+    return [
+      cacheKey(portal, mac),
+      normalized.serial || "",
+      normalized.deviceId || "",
+      normalized.deviceId2 || "",
+    ].join("|");
   }
 
   // ── Cache: path resolution cached long-term, tokens are never cached (portals invalidate on re-handshake)
@@ -682,6 +687,8 @@ function createProxyHelpers(deps) {
       session.apiPath || '',
       session.mac || '',
       session.opts?.serial || '',
+      session.opts?.deviceId || '',
+      session.opts?.deviceId2 || '',
       sortedParams,
     ]);
   }
