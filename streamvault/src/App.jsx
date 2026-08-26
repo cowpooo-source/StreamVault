@@ -1844,6 +1844,7 @@ export default function App() {
     // Stop media before waiting on the network so logout cannot leave a
     // provider stream running behind a slow or failed auth request.
     setPlaying(null);
+    localStorage.removeItem("sv-guest-mode");
     const ownerId = authUser?.id ? `user:${authUser.id}` : `guest:${GUEST_ID}`;
     abortStalkerCatalogRequests();
     await Promise.resolve(stalkerCatalogCacheRef.current?.clearOwner?.(ownerId)).catch(() => {});
@@ -1851,7 +1852,6 @@ export default function App() {
     stalkerCatalogCacheRef.current = null;
     stalkerPageRef.current.clear();
     await authFetch(`${API}/api/auth/logout`, { method: "POST" }).catch(() => {});
-    localStorage.removeItem("sv-guest-mode");
     clearContentSessionToken();
     setEphemeralConnection(null);
     // Clear current user's connections from local state

@@ -22,6 +22,9 @@ export const test = base.extend({
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
       "base64",
     );
+    // Keep unrelated consent UI from intercepting interactions. Consent behavior
+    // is covered by component tests and can be enabled explicitly per E2E test.
+    await page.addInitScript(() => localStorage.setItem("sv-analytics-consent", "denied"));
     await page.route("https://fonts.gstatic.com/**", (route) =>
       route.fulfill({ status: 200, contentType: "font/woff2", body: "" }),
     );

@@ -18,7 +18,7 @@ test.describe("Authentication flows", () => {
   test("displays login when /api/auth/me returns 401", async ({ appPage }) => {
     await mockLoggedOutUser(appPage);
     await appPage.goto("/app");
-    await expect(appPage.getByText("Portal Heaven")).toBeVisible();
+    await expect(appPage.getByText("Portal Heaven", { exact: true })).toBeVisible();
     await expect(appPage.getByPlaceholder("Username")).toBeVisible();
     await expect(appPage.getByPlaceholder("Password")).toBeVisible();
   });
@@ -34,7 +34,7 @@ test.describe("Authentication flows", () => {
     await appPage.getByRole("button", { name: "Login" }).last().click();
 
     // After login the Setup screen loads with connection options.
-    await expect(appPage.getByText("Portal Heaven")).toBeVisible({ timeout: 10000 });
+    await expect(appPage.getByText("Portal Heaven", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(appPage.getByText("Xtream Codes")).toBeVisible();
   });
 
@@ -99,6 +99,7 @@ test.describe("Authentication flows", () => {
   test("guest can enter setup, connect, and send a stable guest ID", async ({ appPage }) => {
     await mockLoggedOutUser(appPage);
     const guestLogin = await mockGuestLoginSuccess(appPage);
+    await mockTurnstile(appPage);
     await mockAppBackend(appPage);
     installXtreamMock(appPage, { auth: "valid" });
     await appPage.addInitScript(() => localStorage.setItem("sv-disclaimer-accepted", "1"));
@@ -134,6 +135,7 @@ test.describe("Authentication flows", () => {
   test("guest mode survives a page reload without another guest login request", async ({ appPage }) => {
     await mockLoggedOutUser(appPage);
     const guestLogin = await mockGuestLoginSuccess(appPage);
+    await mockTurnstile(appPage);
     await appPage.goto("/app");
 
     await appPage.getByRole("button", { name: /guest/i }).click();
@@ -151,12 +153,13 @@ test.describe("Authentication flows", () => {
   test("guest logout clears guest mode and returns to login", async ({ appPage }) => {
     await mockLoggedOutUser(appPage);
     await mockGuestLoginSuccess(appPage);
+    await mockTurnstile(appPage);
     await mockLogoutSuccess(appPage);
     await appPage.goto("/app");
 
     await appPage.getByRole("button", { name: /guest/i }).click();
     await expect(appPage.getByText("Xtream Codes")).toBeVisible({ timeout: 10000 });
-    await appPage.getByRole("button", { name: "Logout" }).click();
+    await appPage.getByRole("button", { name: "Logout", exact: true }).click();
 
     await expect(appPage.getByPlaceholder("Username")).toBeVisible({ timeout: 10000 });
     expect(await appPage.evaluate(() => localStorage.getItem("sv-guest-mode"))).toBeNull();
@@ -165,6 +168,7 @@ test.describe("Authentication flows", () => {
   test("guest remains on setup when provider validation fails", async ({ appPage }) => {
     await mockLoggedOutUser(appPage);
     await mockGuestLoginSuccess(appPage);
+    await mockTurnstile(appPage);
     installXtreamMock(appPage, { auth: "invalid" });
     await appPage.addInitScript(() => localStorage.setItem("sv-disclaimer-accepted", "1"));
     await appPage.goto("/app");
@@ -183,6 +187,7 @@ test.describe("Authentication flows", () => {
   test("guest cannot save more than two connections", async ({ appPage }) => {
     await mockLoggedOutUser(appPage);
     await mockGuestLoginSuccess(appPage);
+    await mockTurnstile(appPage);
     installXtreamMock(appPage, { auth: "valid" });
     await appPage.addInitScript(() => {
       localStorage.setItem("sv-disclaimer-accepted", "1");
