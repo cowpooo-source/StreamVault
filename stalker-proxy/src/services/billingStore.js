@@ -275,7 +275,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
           scheduled_start_at = excluded.scheduled_start_at,
           cancel_at_period_end = excluded.cancel_at_period_end,
           grace_until = excluded.grace_until,
-          last_stripe_event_created = excluded.last_stripe_event_created,
+          last_stripe_event_created = CASE WHEN excluded.last_stripe_event_created > 0 THEN excluded.last_stripe_event_created ELSE billing_subscriptions.last_stripe_event_created END,
           updated_at = excluded.updated_at
       `),
       getSubscription: db.prepare(`SELECT * FROM billing_subscriptions WHERE id = ?`),
@@ -661,6 +661,20 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
   function claimEvent({ stripeEventId, eventType, livemode, stripeCreatedAt, payloadSha256 }) {
     if (!stmts) init();
     const ts = getNow();
+    const existing = stmts.getEvent.get(stripeEventId);
+    if (existing) {
+      if (existing.status === "failed") {
+        stmts.updateEventStatus.run({
+          stripeEventId,
+          status: "processing",
+          lastErrorCode: null,
+          processedAt: null,
+        });
+        return { claimed: true, status: "retried" };
+      }
+      return { claimed: false, status: existing.status };
+    }
+
     const result = stmts.claimEvent.run({
       stripeEventId,
       eventType,
@@ -669,7 +683,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       payloadSha256,
       receivedAt: ts,
     });
-    return result.changes > 0;
+    return { claimed: result.changes > 0, status: "claimed" };
   }
 
   function getEvent(stripeEventId) {

@@ -18,14 +18,14 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
     const payloadJson = JSON.stringify(event);
     const payloadSha256 = crypto.createHash("sha256").update(payloadJson).digest("hex");
 
-    const claimed = store.claimEvent({
+    const claim = store.claimEvent({
       stripeEventId: eventId,
       eventType,
       livemode: event.livemode ? 1 : 0,
       stripeCreatedAt: eventCreated,
       payloadSha256,
     });
-    if (!claimed) {
+    if (!claim.claimed && claim.status === "processed") {
       return { received: true, duplicate: true };
     }
 
@@ -97,7 +97,7 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
             }
           } else if (session.mode === "setup") {
             if (order) {
-              store.updateOrderStatus(order.id, "paid", {
+              store.updateOrderStatus(order.id, "setup_completed", {
                 stripeCustomerId: customerId,
                 stripeCheckoutSessionId: session.id,
               });
@@ -135,6 +135,11 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
           const subscriptionId = invoice.subscription;
           if (subscriptionId) {
             const sub = store.getSubscriptionByStripeId(subscriptionId);
+            if (sub && sub.last_stripe_event_created && eventCreated < sub.last_stripe_event_created) {
+              // Skip out-of-order stale event
+              break;
+            }
+
             const periodEnd = invoice.lines?.data?.[0]?.period?.end
               ? invoice.lines.data[0].period.end * 1000
               : null;
@@ -160,6 +165,12 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
           const invoice = event.data?.object || {};
           const subscriptionId = invoice.subscription;
           if (subscriptionId) {
+            const sub = store.getSubscriptionByStripeId(subscriptionId);
+            if (sub && sub.last_stripe_event_created && eventCreated < sub.last_stripe_event_created) {
+              // Skip out-of-order stale event
+              break;
+            }
+
             store.updateSubscriptionStatus(subscriptionId, {
               status: "past_due",
               lastStripeEventCreated: eventCreated,
@@ -175,28 +186,30 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
           const existingSub = store.getSubscriptionByStripeId(subscriptionId);
 
           if (existingSub) {
-            if (!existingSub.last_stripe_event_created || eventCreated >= existingSub.last_stripe_event_created) {
-              const currentPeriodEnd = subObj.current_period_end ? subObj.current_period_end * 1000 : null;
-              store.updateSubscriptionStatus(subscriptionId, {
-                status: subObj.status,
-                cancelAtPeriodEnd: subObj.cancel_at_period_end ? 1 : 0,
-                currentPeriodEnd,
-                lastStripeEventCreated: eventCreated,
-              });
+            if (existingSub.last_stripe_event_created && eventCreated < existingSub.last_stripe_event_created) {
+              // Skip out-of-order stale event
+              break;
+            }
+            const currentPeriodEnd = subObj.current_period_end ? subObj.current_period_end * 1000 : null;
+            store.updateSubscriptionStatus(subscriptionId, {
+              status: subObj.status,
+              cancelAtPeriodEnd: subObj.cancel_at_period_end ? 1 : 0,
+              currentPeriodEnd,
+              lastStripeEventCreated: eventCreated,
+            });
 
-              if (subObj.status === "active") {
-                entitlementService.activateSubscription({
-                  userId: existingSub.user_id,
-                  stripeSubscriptionId: subscriptionId,
-                  endsAt: currentPeriodEnd,
-                });
-              } else if (subObj.status === "past_due" || subObj.status === "unpaid") {
-                entitlementService.startGrace({ subscriptionId });
-              } else if (subObj.status === "canceled") {
-                const ent = store.getEntitlementBySource("subscription", subscriptionId);
-                if (ent) {
-                  store.updateEntitlementStatus(ent.id, "expired");
-                }
+            if (subObj.status === "active") {
+              entitlementService.activateSubscription({
+                userId: existingSub.user_id,
+                stripeSubscriptionId: subscriptionId,
+                endsAt: currentPeriodEnd,
+              });
+            } else if (subObj.status === "past_due" || subObj.status === "unpaid") {
+              entitlementService.startGrace({ subscriptionId });
+            } else if (subObj.status === "canceled") {
+              const ent = store.getEntitlementBySource("subscription", subscriptionId);
+              if (ent) {
+                store.updateEntitlementStatus(ent.id, "expired");
               }
             }
           }
@@ -206,6 +219,12 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
         case "customer.subscription.deleted": {
           const subObj = event.data?.object || {};
           const subscriptionId = subObj.id;
+          const existingSub = store.getSubscriptionByStripeId(subscriptionId);
+          if (existingSub && existingSub.last_stripe_event_created && eventCreated < existingSub.last_stripe_event_created) {
+            // Skip out-of-order stale event
+            break;
+          }
+
           store.updateSubscriptionStatus(subscriptionId, {
             status: "canceled",
             cancelAtPeriodEnd: 1,
@@ -239,7 +258,7 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
       store.updateEventStatus(eventId, "processed");
       return { received: true, duplicate: false };
     } catch (err) {
-      store.updateEventStatus(eventId, "failed", { error: err.message });
+      store.updateEventStatus(eventId, "failed", { lastErrorCode: err.message });
       throw err;
     }
   }

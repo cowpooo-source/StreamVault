@@ -126,4 +126,25 @@ describe("Stripe Webhook Router", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true });
   });
+
+  it("fails closed with 500 when stripe client or webhookSecret is missing", async () => {
+    const unconfiguredApp = express();
+    unconfiguredApp.use(
+      "/api/billing/webhook",
+      createStripeWebhookRouter({
+        stripe: null,
+        processor,
+        webhookSecret: null,
+      })
+    );
+
+    const res = await request(unconfiguredApp)
+      .post("/api/billing/webhook")
+      .set("stripe-signature", "some_sig")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify({ id: "evt_bypass_attempt" }));
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/not configured/);
+  });
 });

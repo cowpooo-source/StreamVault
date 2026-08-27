@@ -145,7 +145,7 @@ describe("billingStore", () => {
         stripeCreatedAt: 1700000000,
         payloadSha256: payloadSha,
       });
-      expect(firstClaim).toBe(true);
+      expect(firstClaim.claimed).toBe(true);
 
       const duplicateClaim = store.claimEvent({
         stripeEventId: "evt_dup_1",
@@ -154,7 +154,7 @@ describe("billingStore", () => {
         stripeCreatedAt: 1700000000,
         payloadSha256: payloadSha,
       });
-      expect(duplicateClaim).toBe(false);
+      expect(duplicateClaim.claimed).toBe(false);
     });
 
     it("verifies billing_events contains no unredacted payload column", () => {

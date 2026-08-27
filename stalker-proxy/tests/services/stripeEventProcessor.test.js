@@ -289,4 +289,115 @@ describe("stripeEventProcessor", () => {
       expect(access.role).toBe("free");
     });
   });
+
+  describe("setup-mode and out-of-order protections and retries", () => {
+    it("records setup-mode checkout as setup_completed and triggers future schedule", async () => {
+      const user = createUser("user_setup_test", "free");
+      store.createOrder({
+        id: "ord_setup_test",
+        userId: user.id,
+        productCode: "standard_monthly",
+        amount: 299,
+        currency: "usd",
+        status: "pending",
+        stripeCheckoutSessionId: "cs_setup_test",
+      });
+
+      const event = {
+        id: "evt_setup_test",
+        type: "checkout.session.completed",
+        created: 100,
+        data: {
+          object: {
+            id: "cs_setup_test",
+            mode: "setup",
+            customer: "cus_setup_123",
+            setup_intent: "seti_123",
+            metadata: { order_id: "ord_setup_test", user_id: String(user.id) },
+          },
+        },
+      };
+
+      await processor.processEvent(event);
+
+      const order = store.getOrder("ord_setup_test");
+      expect(order.status).toBe("setup_completed");
+      expect(mockStripeGateway.createScheduleAfterPass).toHaveBeenCalled();
+    });
+
+    it("retries previously failed event and succeeds on re-delivery", async () => {
+      const user = createUser("user_retry_test", "free");
+      const event = {
+        id: "evt_retry_test",
+        type: "checkout.session.completed",
+        created: 100,
+        data: {
+          object: {
+            id: "cs_retry_test",
+            mode: "payment",
+            customer: "cus_retry_123",
+            payment_intent: "pi_retry_123",
+            metadata: { order_id: "ord_nonexistent", user_id: String(user.id) },
+          },
+        },
+      };
+
+      // First run: simulate failure by mocking store method or throwing
+      const originalActivate = entitlementService.activatePass;
+      entitlementService.activatePass = vi.fn().mockImplementationOnce(() => {
+        throw new Error("Temporary DB lock");
+      });
+
+      await expect(processor.processEvent(event)).rejects.toThrow("Temporary DB lock");
+
+      const failedEventRecord = store.getEvent("evt_retry_test");
+      expect(failedEventRecord.status).toBe("failed");
+      expect(failedEventRecord.last_error_code).toBe("Temporary DB lock");
+
+      // Restore and retry the same event
+      entitlementService.activatePass = originalActivate;
+      const res = await processor.processEvent(event);
+      expect(res.duplicate).toBe(false);
+
+      const processedEventRecord = store.getEvent("evt_retry_test");
+      expect(processedEventRecord.status).toBe("processed");
+    });
+
+    it("ignores out-of-order stale invoice.payment_failed event when newer active event exists", async () => {
+      const user = createUser("user_ooo_test", "free");
+      store.upsertSubscription({
+        stripeSubscriptionId: "sub_ooo_123",
+        userId: user.id,
+        status: "active",
+        lastStripeEventCreated: 500, // Newer timestamp
+      });
+      entitlementService.activateSubscription({
+        userId: user.id,
+        stripeSubscriptionId: "sub_ooo_123",
+        startsAt: fixedNow,
+        endsAt: fixedNow + 30 * DAY_MS,
+      });
+
+      // Older stale event
+      const staleEvent = {
+        id: "evt_stale_failed",
+        type: "invoice.payment_failed",
+        created: 200, // Older than 500
+        data: {
+          object: {
+            subscription: "sub_ooo_123",
+          },
+        },
+      };
+
+      await processor.processEvent(staleEvent);
+
+      // Subscription should remain active, not moved to grace/past_due
+      const sub = store.getSubscriptionByStripeId("sub_ooo_123");
+      expect(sub.status).toBe("active");
+
+      const access = entitlementService.getEffectiveAccess(user.id, fixedNow);
+      expect(access.billingStatus).toBe("active");
+    });
+  });
 });

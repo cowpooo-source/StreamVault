@@ -7,6 +7,10 @@ function createStripeWebhookRouter(deps) {
   const router = express.Router();
 
   router.post("/", express.raw({ type: "application/json" }), async (req, res) => {
+    if (!stripe || !stripe.webhooks || typeof stripe.webhooks.constructEvent !== "function" || !webhookSecret) {
+      return res.status(500).json({ error: "Stripe webhook cryptographic verification is not configured" });
+    }
+
     const signature = req.headers["stripe-signature"];
     if (!signature) {
       return res.status(400).json({ error: "Missing stripe-signature header" });
@@ -14,11 +18,7 @@ function createStripeWebhookRouter(deps) {
 
     let event;
     try {
-      if (stripe && stripe.webhooks && typeof stripe.webhooks.constructEvent === "function") {
-        event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
-      } else {
-        event = JSON.parse(req.body.toString("utf8"));
-      }
+      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
     } catch (err) {
       return res.status(400).json({ error: `Webhook signature verification failed: ${err.message}` });
     }

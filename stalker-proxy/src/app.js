@@ -75,8 +75,16 @@ function createApp(deps) {
   const billingStore = deps.store || (auth?.getBillingStore ? auth.getBillingStore() : null);
   const entitlementService = deps.entitlementService || (auth?.getEntitlementService ? auth.getEntitlementService() : null);
 
-  const stripeGateway = deps.stripeGateway || (billingCatalog?.enabled && deps.stripe ? createStripeGateway({
-    stripe: deps.stripe,
+  let stripeClient = deps.stripe;
+  if (!stripeClient && process.env.STRIPE_SECRET_KEY) {
+    try {
+      const Stripe = require("stripe");
+      stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" });
+    } catch {}
+  }
+
+  const stripeGateway = deps.stripeGateway || (billingCatalog?.enabled && stripeClient ? createStripeGateway({
+    stripe: stripeClient,
     catalog: billingCatalog,
     appUrl: billingCatalog.appUrl,
   }) : null);
@@ -90,7 +98,7 @@ function createApp(deps) {
 
   if (stripeEventProcessor) {
     app.use("/api/billing/webhook", createStripeWebhookRouter({
-      stripe: deps.stripe,
+      stripe: stripeClient,
       processor: stripeEventProcessor,
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
     }));
