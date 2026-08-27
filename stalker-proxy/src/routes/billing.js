@@ -518,26 +518,31 @@ function createBillingRouter(deps) {
         const recon = await stripeGateway.retrieveForReconciliation({
           paymentIntentId: order.stripe_payment_intent_id,
         });
-        if (recon && recon.paymentIntent) {
-          const pi = recon.paymentIntent;
-          if (pi.status && pi.status !== "succeeded") {
-            return res.status(400).json({
-              error: "Payment is not in succeeded state",
-              code: "payment_not_succeeded",
-            });
-          }
-          if (pi.amount_refunded && pi.amount_refunded > 0) {
-            return res.status(400).json({
-              error: "Payment has already been partially or fully refunded",
-              code: "already_refunded",
-            });
-          }
-          if (typeof order.amount_total === "number" && pi.amount && pi.amount !== order.amount_total) {
-            return res.status(400).json({
-              error: "PaymentIntent amount does not match original order total",
-              code: "refund_amount_mismatch",
-            });
-          }
+        if (!recon || recon.paymentIntentError || !recon.paymentIntent) {
+          const errMsg = recon?.paymentIntentError || "Failed to verify payment intent with Stripe";
+          return res.status(502).json({
+            error: `Stripe verification unavailable: ${errMsg}`,
+            code: "stripe_verification_failed",
+          });
+        }
+        const pi = recon.paymentIntent;
+        if (pi.status !== "succeeded") {
+          return res.status(400).json({
+            error: "Payment is not in succeeded state",
+            code: "payment_not_succeeded",
+          });
+        }
+        if (pi.amount_refunded && pi.amount_refunded > 0) {
+          return res.status(400).json({
+            error: "Payment has already been partially or fully refunded",
+            code: "already_refunded",
+          });
+        }
+        if (typeof order.amount_total === "number" && pi.amount && pi.amount !== order.amount_total) {
+          return res.status(400).json({
+            error: "PaymentIntent amount does not match original order total",
+            code: "refund_amount_mismatch",
+          });
         }
       }
 

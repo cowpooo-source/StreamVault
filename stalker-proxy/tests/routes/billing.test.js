@@ -82,6 +82,16 @@ describe("Billing Lifecycle Router", () => {
         id: "re_123",
         status: "succeeded",
       }),
+      retrieveForReconciliation: vi.fn().mockImplementation(async ({ paymentIntentId }) => {
+        return {
+          paymentIntent: {
+            id: paymentIntentId,
+            status: "succeeded",
+            amount: 399,
+            amount_refunded: 0,
+          },
+        };
+      }),
     };
 
     testUser = await auth.createUser("bill_user", "pass1234", "free");
@@ -432,6 +442,37 @@ describe("Billing Lifecycle Router", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("already_refunded");
+    });
+
+    it("fails closed with 502 if Stripe payment verification is unavailable or errors", async () => {
+      store.createOrder({
+        id: "ord_stripe_error",
+        userId: testUser.id,
+        productCode: "standard_pass_30d",
+        checkoutMode: "payment",
+        amountTotal: 399,
+        status: "paid",
+        stripePaymentIntentId: "pi_unreachable",
+        createdAt: fixedNow - 1 * DAY_MS,
+        refundableUntil: fixedNow + 6 * DAY_MS,
+      });
+
+      mockStripeGateway.retrieveForReconciliation = vi.fn().mockResolvedValue({
+        paymentIntentError: "Connection timeout to Stripe API",
+      });
+
+      const res = await request(app)
+        .post("/api/billing/refunds")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ orderId: "ord_stripe_error" });
+
+      expect(res.status).toBe(502);
+      expect(res.body.code).toBe("stripe_verification_failed");
+
+      // Verify createFullRefund was NOT called
+      expect(mockStripeGateway.createFullRefund).not.toHaveBeenCalledWith(
+        expect.objectContaining({ orderId: "ord_stripe_error" })
+      );
     });
   });
 
