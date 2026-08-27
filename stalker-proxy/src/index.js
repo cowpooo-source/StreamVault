@@ -5,6 +5,7 @@ const auth = require("./auth");
 const fetch = require("node-fetch");
 const system = require("./services/system");
 const email = require("./email");
+const { billingConfigStatus } = require("./services/billingCatalog");
 const { Pool } = require("pg");
 
 let pool;
@@ -54,6 +55,19 @@ function logDirectContentConfig() {
   console.log(`[direct-content] session ttl: ${ttl}m, max per user: ${maxPerUser}, store: ${store}`);
 }
 logDirectContentConfig();
+
+// Safe billing configuration logging (never prints secrets)
+function logBillingConfig() {
+  const status = billingConfigStatus(process.env);
+  if (!status.enabled) {
+    console.log("[billing] disabled (BILLING_ENABLED=false)");
+  } else if (!status.configured) {
+    console.warn(`[billing] enabled but incomplete; missing variables: ${status.missing.join(", ")}`);
+  } else {
+    console.log(`[billing] enabled (livemode=${status.livemode}, tax=${status.taxEnabled})`);
+  }
+}
+logBillingConfig();
 
 // Safety nets
 // unhandledRejection: log and survive (process state is still valid)
