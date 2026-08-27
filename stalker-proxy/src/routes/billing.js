@@ -21,6 +21,58 @@ function createBillingRouter(deps) {
     next();
   }
 
+  function validateBillingCsrf(req, res, next) {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
+      return next();
+    }
+
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      return next();
+    }
+
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+    const host = req.headers.host;
+
+    if (origin) {
+      try {
+        const originHost = new URL(origin).host;
+        if (originHost !== host) {
+          return res.status(403).json({ error: "Cross-origin billing request rejected", code: "csrf_rejected" });
+        }
+      } catch {
+        return res.status(403).json({ error: "Invalid request origin", code: "csrf_rejected" });
+      }
+    } else if (referer) {
+      try {
+        const refererHost = new URL(referer).host;
+        if (refererHost !== host) {
+          return res.status(403).json({ error: "Cross-origin billing request rejected", code: "csrf_rejected" });
+        }
+      } catch {
+        return res.status(403).json({ error: "Invalid request referer", code: "csrf_rejected" });
+      }
+    } else {
+      return res.status(403).json({ error: "Missing origin headers on state-changing request", code: "csrf_rejected" });
+    }
+
+    next();
+  }
+
+  function getPolicyHashes(acceptedPolicies) {
+    const policies = catalog.currentPolicies();
+    const termsPayload = `terms:${acceptedPolicies.termsVersion || policies.terms.version}:${policies.terms.publicUrl}`;
+    const privacyPayload = `privacy:${acceptedPolicies.privacyVersion || policies.privacy.version}:${policies.privacy.publicUrl}`;
+    const refundPayload = `refund:${acceptedPolicies.refundVersion || policies.refund.version}:${policies.refund.publicUrl}`;
+
+    return {
+      termsSha256: crypto.createHash("sha256").update(termsPayload).digest("hex"),
+      privacySha256: crypto.createHash("sha256").update(privacyPayload).digest("hex"),
+      refundSha256: crypto.createHash("sha256").update(refundPayload).digest("hex"),
+    };
+  }
+
   // GET /api/billing/config — Public configuration and policies
   router.get("/config", (req, res) => {
     if (!catalog || !catalog.enabled) {
@@ -40,7 +92,7 @@ function createBillingRouter(deps) {
         enabled: true,
         testMode: !catalog.livemode,
         products: catalog.listProducts(),
-        currency: catalog.currency,
+        currency: catalog.currency || "usd",
         policies: catalog.currentPolicies(),
         legalNotice: catalog.legalNotice,
         supportEmail: catalog.supportEmail,
@@ -51,7 +103,7 @@ function createBillingRouter(deps) {
   });
 
   // POST /api/billing/checkout — Create Checkout or Setup Session
-  router.post("/checkout", auth.requireAuth, requireBillingEnabled, async (req, res) => {
+  router.post("/checkout", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, async (req, res) => {
     const { productCode, acceptedPolicies = {}, returnUrl } = req.body;
 
     if (!productCode) {
@@ -72,32 +124,29 @@ function createBillingRouter(deps) {
     }
 
     const userId = req.user.id;
-    const username = req.user.username;
-    const email = req.user.email || undefined;
     const customer = store.getCustomerByUserId(userId);
-    const stripeCustomerId = customer ? customer.stripe_customer_id : null;
+    const stripeCustomerId = customer ? customer.stripe_customer_id : undefined;
     const ts = getNow();
 
-    const termsSha256 = crypto.createHash("sha256").update(acceptedPolicies.termsVersion || "v1").digest("hex");
-    const privacySha256 = crypto.createHash("sha256").update(acceptedPolicies.privacyVersion || "v1").digest("hex");
-    const refundSha256 = crypto.createHash("sha256").update(acceptedPolicies.refundVersion || "v1").digest("hex");
-
+    const { termsSha256, privacySha256, refundSha256 } = getPolicyHashes(acceptedPolicies);
     const orderId = `ord_${crypto.randomBytes(12).toString("hex")}`;
 
     try {
       if (productCode === "standard_pass_30d") {
+        const orderData = {
+          id: orderId,
+          userId,
+          productCode,
+          checkoutMode: "payment",
+          status: "created",
+          priceId: product.priceId,
+          currency: catalog.currency || "usd",
+          amountTotal: product.amount,
+          refundableUntil: ts + 72 * 3600 * 1000,
+        };
+
         store.createOrderWithAgreement({
-          order: {
-            id: orderId,
-            userId,
-            productCode,
-            checkoutMode: "payment",
-            status: "created",
-            priceId: product.priceId,
-            currency: catalog.currency,
-            amountTotal: product.amount,
-            refundableUntil: ts + 72 * 3600 * 1000,
-          },
+          order: orderData,
           agreement: {
             orderId,
             userId,
@@ -112,19 +161,13 @@ function createBillingRouter(deps) {
         });
 
         const checkoutResult = await stripeGateway.createCheckout({
-          userId,
-          username,
-          email,
+          order: orderData,
           customerId: stripeCustomerId,
-          priceId: product.priceId,
-          orderId,
-          returnUrl: returnUrl || catalog.appUrl,
-          mode: "payment",
+          returnPath: returnUrl,
         });
 
         store.updateOrderStatus(orderId, "created", {
           stripeCheckoutSessionId: checkoutResult.sessionId,
-          stripeCustomerId: checkoutResult.customerId,
         });
 
         return res.json({
@@ -142,16 +185,18 @@ function createBillingRouter(deps) {
 
       if (activePass) {
         // Pass-to-subscription transition via Setup Session
+        const orderData = {
+          id: orderId,
+          userId,
+          productCode,
+          checkoutMode: "setup",
+          status: "created",
+          priceId: product.priceId,
+          currency: catalog.currency || "usd",
+        };
+
         store.createOrderWithAgreement({
-          order: {
-            id: orderId,
-            userId,
-            productCode,
-            checkoutMode: "setup",
-            status: "created",
-            priceId: product.priceId,
-            currency: catalog.currency,
-          },
+          order: orderData,
           agreement: {
             orderId,
             userId,
@@ -166,12 +211,9 @@ function createBillingRouter(deps) {
         });
 
         const setupResult = await stripeGateway.createSetupCheckout({
-          userId,
-          username,
-          email,
+          order: orderData,
           customerId: stripeCustomerId,
-          orderId,
-          returnUrl: returnUrl || catalog.appUrl,
+          returnPath: returnUrl,
         });
 
         store.updateOrderStatus(orderId, "created", {
@@ -186,17 +228,19 @@ function createBillingRouter(deps) {
       }
 
       // Standard recurring subscription checkout
+      const orderData = {
+        id: orderId,
+        userId,
+        productCode,
+        checkoutMode: "subscription",
+        status: "created",
+        priceId: product.priceId,
+        currency: catalog.currency || "usd",
+        amountTotal: product.amount,
+      };
+
       store.createOrderWithAgreement({
-        order: {
-          id: orderId,
-          userId,
-          productCode,
-          checkoutMode: "subscription",
-          status: "created",
-          priceId: product.priceId,
-          currency: catalog.currency,
-          amountTotal: product.amount,
-        },
+        order: orderData,
         agreement: {
           orderId,
           userId,
@@ -211,19 +255,13 @@ function createBillingRouter(deps) {
       });
 
       const checkoutResult = await stripeGateway.createCheckout({
-        userId,
-        username,
-        email,
+        order: orderData,
         customerId: stripeCustomerId,
-        priceId: product.priceId,
-        orderId,
-        returnUrl: returnUrl || catalog.appUrl,
-        mode: "subscription",
+        returnPath: returnUrl,
       });
 
       store.updateOrderStatus(orderId, "created", {
         stripeCheckoutSessionId: checkoutResult.sessionId,
-        stripeCustomerId: checkoutResult.customerId,
       });
 
       return res.json({
@@ -238,7 +276,7 @@ function createBillingRouter(deps) {
   });
 
   // POST /api/billing/portal — Customer Portal Session
-  router.post("/portal", auth.requireAuth, requireBillingEnabled, async (req, res) => {
+  router.post("/portal", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, async (req, res) => {
     const customer = store.getCustomerByUserId(req.user.id);
     if (!customer || !customer.stripe_customer_id) {
       return res.status(400).json({
@@ -252,15 +290,15 @@ function createBillingRouter(deps) {
         customerId: customer.stripe_customer_id,
         returnUrl: req.body.returnUrl || catalog.appUrl,
       });
-      res.json({ portalUrl: portalResult.portalUrl });
+      res.json({ portalUrl: portalResult.url || portalResult.portalUrl });
     } catch (err) {
       console.error("Billing portal error:", err.message);
       res.status(500).json({ error: err.message, code: "portal_error" });
     }
   });
 
-  // POST /api/billing/cancel — Subscription Cancellation
-  router.post("/cancel", auth.requireAuth, requireBillingEnabled, async (req, res) => {
+  // POST /api/billing/subscription/cancel (and /cancel) — Subscription Cancellation
+  const handleCancelSubscription = async (req, res) => {
     const sub = store.getSubscriptionByUserId(req.user.id);
     if (!sub || sub.status !== "active") {
       return res.status(400).json({
@@ -270,9 +308,8 @@ function createBillingRouter(deps) {
     }
 
     try {
-      await stripeGateway.cancelSubscription({
+      await stripeGateway.cancelAtPeriodEnd({
         subscriptionId: sub.stripe_subscription_id,
-        idempotencyKey: `cancel_${sub.stripe_subscription_id}_${req.user.id}`,
       });
       store.updateSubscriptionStatus(sub.stripe_subscription_id, { cancelAtPeriodEnd: 1 });
       res.json({ ok: true, cancelAtPeriodEnd: true });
@@ -280,10 +317,43 @@ function createBillingRouter(deps) {
       console.error("Billing cancellation error:", err.message);
       res.status(500).json({ error: err.message, code: "cancel_error" });
     }
+  };
+
+  router.post("/subscription/cancel", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleCancelSubscription);
+  router.post("/cancel", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleCancelSubscription);
+
+  // POST /api/billing/subscription/scheduled/cancel — Cancel Queued Future Schedule
+  router.post("/subscription/scheduled/cancel", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, async (req, res) => {
+    const sub = store.getSubscriptionByUserId(req.user.id);
+    let scheduleId = sub?.stripe_schedule_id;
+
+    if (!scheduleId) {
+      const orders = store.listOrdersForUser(req.user.id);
+      const setupOrder = orders.find((o) => o.stripe_schedule_id);
+      scheduleId = setupOrder?.stripe_schedule_id;
+    }
+
+    if (!scheduleId) {
+      return res.status(400).json({
+        error: "No scheduled subscription found for this account",
+        code: "no_scheduled_subscription",
+      });
+    }
+
+    try {
+      await stripeGateway.cancelSchedule({ scheduleId });
+      if (sub && sub.stripe_schedule_id === scheduleId) {
+        store.updateSubscriptionStatus(sub.stripe_subscription_id, { stripeScheduleId: null });
+      }
+      res.json({ ok: true, canceled: true, scheduleId });
+    } catch (err) {
+      console.error("Scheduled subscription cancellation error:", err.message);
+      res.status(500).json({ error: err.message, code: "cancel_schedule_error" });
+    }
   });
 
-  // POST /api/billing/refund — 72-Hour Automated Refund
-  router.post("/refund", auth.requireAuth, requireBillingEnabled, async (req, res) => {
+  // POST /api/billing/refunds (and /refund) — 72-Hour Automated Refund
+  const handleRefund = async (req, res) => {
     const { orderId } = req.body;
     if (!orderId) {
       return res.status(400).json({ error: "orderId is required", code: "invalid_request" });
@@ -295,7 +365,21 @@ function createBillingRouter(deps) {
     }
 
     if (order.status !== "paid") {
-      return res.status(400).json({ error: "Order is not in paid status", code: "order_not_paid" });
+      return res.status(400).json({ error: "Order is not in paid status", code: "order_not_refundable" });
+    }
+
+    if (!order.stripe_payment_intent_id) {
+      return res.status(400).json({
+        error: "Order has no associated payment intent for automatic refund",
+        code: "no_payment_intent",
+      });
+    }
+
+    if (order.checkout_mode !== "payment") {
+      return res.status(400).json({
+        error: "Only pass orders can be refunded automatically",
+        code: "invalid_checkout_mode",
+      });
     }
 
     const ts = getNow();
@@ -308,25 +392,27 @@ function createBillingRouter(deps) {
     }
 
     try {
-      if (order.stripe_payment_intent_id) {
-        await stripeGateway.createRefund({
-          paymentIntentId: order.stripe_payment_intent_id,
-          idempotencyKey: `refund_${order.id}`,
-        });
-      }
-
-      store.updateOrderStatus(order.id, "refunded", { refundedAt: ts });
-      entitlementService.revokeRefundedEntitlement({
-        userId: req.user.id,
+      await stripeGateway.createFullRefund({
+        paymentIntentId: order.stripe_payment_intent_id,
         orderId: order.id,
-        subscriptionId: order.stripe_subscription_id,
       });
 
-      res.json({ ok: true, refunded: true, orderId: order.id });
+      store.updateOrderStatus(order.id, "refund_pending", { refundedAt: ts });
+
+      res.json({ ok: true, status: "refund_pending", orderId: order.id });
     } catch (err) {
       console.error("Billing refund error:", err.message);
       res.status(500).json({ error: err.message, code: "refund_error" });
     }
+  };
+
+  router.post("/refunds", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleRefund);
+  router.post("/refund", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleRefund);
+
+  // GET /api/billing/orders — User Orders
+  router.get("/orders", auth.requireAuth, (req, res) => {
+    const orders = store.listOrdersForUser(req.user.id);
+    res.json({ orders });
   });
 
   // GET /api/billing/history — Orders, Subscription, Active Pass, Entitlements

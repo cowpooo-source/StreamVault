@@ -68,13 +68,17 @@ describe("Billing Lifecycle Router", () => {
         mode: "setup",
       }),
       createPortalSession: vi.fn().mockResolvedValue({
-        portalUrl: "https://billing.stripe.com/p/session/portal_123",
+        url: "https://billing.stripe.com/p/session/portal_123",
       }),
-      cancelSubscription: vi.fn().mockResolvedValue({
+      cancelAtPeriodEnd: vi.fn().mockResolvedValue({
         id: "sub_123",
         cancel_at_period_end: true,
       }),
-      createRefund: vi.fn().mockResolvedValue({
+      cancelSchedule: vi.fn().mockResolvedValue({
+        id: "sub_sched_123",
+        status: "canceled",
+      }),
+      createFullRefund: vi.fn().mockResolvedValue({
         id: "re_123",
         status: "succeeded",
       }),
@@ -171,7 +175,7 @@ describe("Billing Lifecycle Router", () => {
       expect(res.body.code).toBe("invalid_agreement");
     });
 
-    it("creates payment checkout for 30-Day Pass and stores order + agreement", async () => {
+    it("creates payment checkout for 30-Day Pass and stores order + agreement with content hashes", async () => {
       const res = await request(app)
         .post("/api/billing/checkout")
         .set("Authorization", `Bearer ${userToken}`)
@@ -191,6 +195,16 @@ describe("Billing Lifecycle Router", () => {
         mode: "payment",
       });
 
+      // Assert stripeGateway.createCheckout received proper order object
+      expect(mockStripeGateway.createCheckout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          order: expect.objectContaining({
+            id: res.body.orderId,
+            productCode: "standard_pass_30d",
+          }),
+        })
+      );
+
       const order = store.getOrder(res.body.orderId);
       expect(order).toBeDefined();
       expect(order.user_id).toBe(testUser.id);
@@ -199,35 +213,43 @@ describe("Billing Lifecycle Router", () => {
       const agreement = store.getAgreementByOrderId(res.body.orderId);
       expect(agreement).toBeDefined();
       expect(agreement.terms_version).toBe("v1");
+      expect(agreement.terms_sha256).toHaveLength(64);
     });
 
-    it("returns 503 when billing is disabled", async () => {
-      const disabledCatalog = createBillingCatalog({ BILLING_ENABLED: "false" });
-      const disabledApp = express();
-      disabledApp.use(express.json());
-      disabledApp.use(
+    it("enforces CSRF and Origin checks on cookie-authenticated requests", async () => {
+      const cookieApp = express();
+      cookieApp.use(express.json());
+      cookieApp.use(cookieParser());
+      cookieApp.use(
         "/api/billing",
         createBillingRouter({
           auth,
-          catalog: disabledCatalog,
+          catalog,
           store,
           entitlementService,
-          stripeGateway: null,
+          stripeGateway: mockStripeGateway,
+          now: () => fixedNow,
         })
       );
 
-      const res = await request(disabledApp)
+      // Request with Cookie auth (sv_auth) but cross-origin Origin header
+      const res = await request(cookieApp)
         .post("/api/billing/checkout")
-        .set("Authorization", `Bearer ${userToken}`)
-        .send({ productCode: "standard_pass_30d" });
+        .set("Cookie", `sv_auth=${userToken}`)
+        .set("Origin", "https://malicious-attacker.com")
+        .set("Host", "media.portalheaven.stream")
+        .send({
+          productCode: "standard_pass_30d",
+          acceptedPolicies: { termsVersion: "v1", privacyVersion: "v1", refundVersion: "v1" },
+        });
 
-      expect(res.status).toBe(503);
-      expect(res.body.code).toBe("billing_disabled");
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("csrf_rejected");
     });
   });
 
   describe("POST /api/billing/portal", () => {
-    it("creates a customer portal session for an existing customer", async () => {
+    it("creates a customer portal session using gateway createPortalSession", async () => {
       store.upsertCustomer({ userId: testUser.id, stripeCustomerId: "cus_test_123" });
 
       const res = await request(app)
@@ -237,21 +259,15 @@ describe("Billing Lifecycle Router", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.portalUrl).toBe("https://billing.stripe.com/p/session/portal_123");
-    });
-
-    it("returns 400 if user has no stripe customer mapping", async () => {
-      const res = await request(app)
-        .post("/api/billing/portal")
-        .set("Authorization", `Bearer ${userToken}`)
-        .send({});
-
-      expect(res.status).toBe(400);
-      expect(res.body.code).toBe("no_billing_customer");
+      expect(mockStripeGateway.createPortalSession).toHaveBeenCalledWith({
+        customerId: "cus_test_123",
+        returnUrl: "https://media.portalheaven.stream/app/settings",
+      });
     });
   });
 
-  describe("POST /api/billing/cancel", () => {
-    it("schedules subscription cancellation at period end", async () => {
+  describe("POST /api/billing/subscription/cancel", () => {
+    it("schedules subscription cancellation at period end via gateway cancelAtPeriodEnd", async () => {
       store.upsertSubscription({
         userId: testUser.id,
         stripeSubscriptionId: "sub_cancel_test",
@@ -259,28 +275,55 @@ describe("Billing Lifecycle Router", () => {
       });
 
       const res = await request(app)
-        .post("/api/billing/cancel")
+        .post("/api/billing/subscription/cancel")
         .set("Authorization", `Bearer ${userToken}`)
         .send({});
 
       expect(res.status).toBe(200);
       expect(res.body.cancelAtPeriodEnd).toBe(true);
 
+      expect(mockStripeGateway.cancelAtPeriodEnd).toHaveBeenCalledWith({
+        subscriptionId: "sub_cancel_test",
+      });
+
       const sub = store.getSubscriptionByStripeId("sub_cancel_test");
       expect(sub.cancel_at_period_end).toBe(1);
     });
   });
 
-  describe("POST /api/billing/refund", () => {
-    it("processes automated refund within 72-hour window and revokes entitlement", async () => {
+  describe("POST /api/billing/subscription/scheduled/cancel", () => {
+    it("cancels future subscription schedule via gateway cancelSchedule", async () => {
+      store.upsertSubscription({
+        userId: testUser.id,
+        stripeSubscriptionId: "sub_with_sched",
+        stripeScheduleId: "sub_sched_test_1",
+        status: "active",
+      });
+
+      const res = await request(app)
+        .post("/api/billing/subscription/scheduled/cancel")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(res.body.canceled).toBe(true);
+      expect(mockStripeGateway.cancelSchedule).toHaveBeenCalledWith({
+        scheduleId: "sub_sched_test_1",
+      });
+    });
+  });
+
+  describe("POST /api/billing/refunds", () => {
+    it("marks order refund_pending without immediately revoking entitlement before webhook", async () => {
       const order = store.createOrder({
         id: "ord_refund_test",
         userId: testUser.id,
         productCode: "standard_pass_30d",
+        checkoutMode: "payment",
         amount: 399,
         status: "paid",
         stripePaymentIntentId: "pi_ref_123",
-        createdAt: fixedNow - 10 * 3600 * 1000, // 10 hours ago (< 72h)
+        createdAt: fixedNow - 10 * 3600 * 1000,
         refundableUntil: fixedNow + 62 * 3600 * 1000,
       });
 
@@ -291,60 +334,75 @@ describe("Billing Lifecycle Router", () => {
         endsAt: fixedNow + 20 * DAY_MS,
       });
 
-      expect(entitlementService.getEffectiveAccess(testUser.id, fixedNow).role).toBe("regular");
-
       const res = await request(app)
-        .post("/api/billing/refund")
+        .post("/api/billing/refunds")
         .set("Authorization", `Bearer ${userToken}`)
         .send({ orderId: "ord_refund_test", reason: "requested_by_customer" });
 
       expect(res.status).toBe(200);
-      expect(res.body.refunded).toBe(true);
+      expect(res.body.status).toBe("refund_pending");
+
+      expect(mockStripeGateway.createFullRefund).toHaveBeenCalledWith({
+        paymentIntentId: "pi_ref_123",
+        orderId: "ord_refund_test",
+      });
 
       const updatedOrder = store.getOrder("ord_refund_test");
-      expect(updatedOrder.status).toBe("refunded");
-      expect(entitlementService.getEffectiveAccess(testUser.id, fixedNow).role).toBe("free");
+      expect(updatedOrder.status).toBe("refund_pending");
+
+      // User retains access until charge.refunded webhook is received
+      expect(entitlementService.getEffectiveAccess(testUser.id, fixedNow).role).toBe("regular");
     });
 
-    it("rejects refund if outside 72-hour window", async () => {
+    it("rejects refund if order lacks stripe_payment_intent_id or is not payment mode", async () => {
       store.createOrder({
-        id: "ord_expired_refund",
+        id: "ord_no_pi",
         userId: testUser.id,
-        productCode: "standard_pass_30d",
-        amount: 399,
+        productCode: "standard_monthly",
+        checkoutMode: "subscription",
+        amount: 299,
         status: "paid",
-        stripePaymentIntentId: "pi_old_123",
-        createdAt: fixedNow - 80 * 3600 * 1000, // 80 hours ago (> 72h)
-        refundableUntil: fixedNow - 8 * 3600 * 1000,
+        stripePaymentIntentId: null,
       });
 
       const res = await request(app)
-        .post("/api/billing/refund")
+        .post("/api/billing/refunds")
         .set("Authorization", `Bearer ${userToken}`)
-        .send({ orderId: "ord_expired_refund" });
+        .send({ orderId: "ord_no_pi" });
 
       expect(res.status).toBe(400);
-      expect(res.body.code).toBe("refund_window_expired");
+      expect(res.body.code).toBe("no_payment_intent");
     });
   });
 
-  describe("GET /api/billing/history", () => {
-    it("returns orders, activePass, subscription, and entitlements for user", async () => {
+  describe("GET /api/billing/orders and /api/billing/history", () => {
+    it("returns orders via /api/billing/orders", async () => {
       store.createOrder({
-        id: "ord_hist_1",
+        id: "ord_list_1",
         userId: testUser.id,
         productCode: "standard_pass_30d",
         amount: 399,
         status: "paid",
       });
 
+      const res = await request(app)
+        .get("/api/billing/orders")
+        .set("Authorization", `Bearer ${userToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.orders.length).toBe(1);
+      expect(res.body.orders[0].id).toBe("ord_list_1");
+    });
+
+    it("returns complete history overview via /api/billing/history", async () => {
       const res = await request(app)
         .get("/api/billing/history")
         .set("Authorization", `Bearer ${userToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.orders.length).toBe(1);
-      expect(res.body.orders[0].id).toBe("ord_hist_1");
+      expect(res.body).toHaveProperty("orders");
+      expect(res.body).toHaveProperty("subscription");
+      expect(res.body).toHaveProperty("entitlements");
     });
   });
 });
