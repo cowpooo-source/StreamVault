@@ -528,4 +528,5 @@ module.exports = {
   getBillingStore: () => billingStore,
   getEffectiveAccess,
   getEntitlementService: () => entitlementService,
+  getDb: () => db,
 };

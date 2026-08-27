@@ -190,6 +190,7 @@ function createApp(deps) {
   const { createSupportRouter } = require("./routes/support");
   const { createConnectionAccessService } = require("./services/connectionAccessService");
   const { createSupportService } = require("./services/supportService");
+  const { createReconciliationService } = require("./services/reconciliationService");
 
   const connectionAccessService = deps.connectionAccessService || (billingStore && entitlementService ? createConnectionAccessService({
     store: billingStore,
@@ -201,6 +202,14 @@ function createApp(deps) {
     store: billingStore,
     catalog: billingCatalog,
     mailService: email,
+  }) : null);
+
+  const reconciliationService = deps.reconciliationService || (billingStore && entitlementService ? createReconciliationService({
+    db: auth.getDb ? auth.getDb() : null,
+    store: billingStore,
+    entitlementService,
+    stripeGateway,
+    connectionAccessService,
   }) : null);
 
   const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, connectionAccessService, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, portalFetchChannelCatalog, portalFetchChannelCatalogPage, agentFor };
@@ -226,6 +235,43 @@ function createApp(deps) {
   }
   if (supportService) {
     app.use("/api/support", createSupportRouter({ auth, supportService }));
+  }
+  if (entitlementService) {
+    app.post("/api/admin/entitlements/grant", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
+      const { userId, role = "regular", durationDays = null, reason = "Admin grant" } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required", code: "invalid_request" });
+      const ent = entitlementService.grantFriendFamily({
+        userId: Number(userId),
+        role,
+        durationDays: durationDays ? Number(durationDays) : null,
+        reason,
+        grantedBy: req.user.id,
+      });
+      const effectiveAccess = entitlementService.getEffectiveAccess(Number(userId));
+      res.json({ ok: true, entitlement: ent, effectiveAccess });
+    });
+
+    app.post("/api/admin/entitlements/revoke", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
+      const { userId, reason = "Admin revoke" } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required", code: "invalid_request" });
+      const ent = entitlementService.revokeFriendFamily({
+        userId: Number(userId),
+        revokedBy: req.user.id,
+        reason,
+      });
+      const effectiveAccess = entitlementService.getEffectiveAccess(Number(userId));
+      res.json({ ok: true, entitlement: ent, effectiveAccess });
+    });
+  }
+  if (reconciliationService) {
+    app.post("/api/admin/reconcile", auth.requireAuth, auth.requireRole("admin"), async (req, res) => {
+      try {
+        const summary = await reconciliationService.runFullReconciliation();
+        res.json({ ok: true, summary });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
   }
   app.use("/api", createContentSessionRouter(routerDeps));
   app.use("/api", createPlayerRouter(routerDeps));

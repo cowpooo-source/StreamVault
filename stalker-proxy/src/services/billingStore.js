@@ -27,9 +27,14 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
   }
 
   function hashConnectionId(rawConnectionId) {
+    if (!rawConnectionId) return "";
+    const str = String(rawConnectionId);
+    if (/^[0-9a-f]{64}$/i.test(str)) {
+      return str;
+    }
     return crypto
       .createHmac("sha256", Buffer.from(hmacSecret))
-      .update(String(rawConnectionId))
+      .update(str)
       .digest("hex");
   }
 
@@ -187,10 +192,32 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
         updated_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_notification_outbox_status ON notification_outbox(status, next_attempt_at);
+
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id TEXT PRIMARY KEY,
+        action TEXT NOT NULL,
+        target_type TEXT,
+        target_id TEXT,
+        actor_id TEXT,
+        details_json TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+      CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
     `);
 
     // Prepare statements
     stmts = {
+      // Audit Log
+      insertAuditLog: db.prepare(`
+        INSERT INTO audit_log (id, action, target_type, target_id, actor_id, details_json, created_at)
+        VALUES (@id, @action, @targetType, @targetId, @actorId, @detailsJson, @createdAt)
+      `),
+      listAuditLogs: db.prepare(`SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?`),
+
+      // All Entitlements & Subscriptions
+      listAllActiveEntitlements: db.prepare(`SELECT * FROM billing_entitlements WHERE status = 'active'`),
+      listAllSubscriptions: db.prepare(`SELECT * FROM billing_subscriptions`),
       // Customers
       upsertCustomer: db.prepare(`
         INSERT INTO billing_customers (user_id, stripe_customer_id, created_at, updated_at)
@@ -959,6 +986,33 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     getTicket,
     listTicketsForUser,
     updateTicketStatus,
+    listActiveEntitlements: () => {
+      if (!stmts) init();
+      return stmts.listAllActiveEntitlements.all();
+    },
+    listAllSubscriptions: () => {
+      if (!stmts) init();
+      return stmts.listAllSubscriptions.all();
+    },
+    recordAuditLog: ({ action, targetType = null, targetId = null, actorId = null, details = {} } = {}) => {
+      if (!stmts) init();
+      const ts = getNow();
+      const id = `aud_${crypto.randomBytes(8).toString("hex")}`;
+      stmts.insertAuditLog.run({
+        id,
+        action,
+        targetType,
+        targetId: targetId ? String(targetId) : null,
+        actorId: actorId ? String(actorId) : null,
+        detailsJson: JSON.stringify(details),
+        createdAt: ts,
+      });
+      return id;
+    },
+    listAuditLogs: (limit = 100) => {
+      if (!stmts) init();
+      return stmts.listAuditLogs.all(limit);
+    },
     // Notification Outbox
     enqueueNotification,
     getDueNotifications,

@@ -135,10 +135,18 @@ function createConnectionAccessService({ store, entitlementService, identityHmac
     return store.swapConnectionSelection(numUserId, selectConnectionId, deselectConnectionId, ts);
   }
 
+  function reconcileUser(userId) {
+    const numUserId = Number(userId);
+    const existing = store.listConnectionAccessForUser(numUserId);
+    const connectionIds = existing.map((c) => c.connection_key);
+    return reconcileConnections({ userId: numUserId, connectionIds });
+  }
+
   return {
     assertConnectionAllowed,
     recordSuccessfulConnectionUse,
     reconcileConnections,
+    reconcileUser,
     selectConnection,
   };
 }

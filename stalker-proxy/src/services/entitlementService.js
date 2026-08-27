@@ -357,31 +357,55 @@ function createEntitlementService({ store, db, now = Date.now, gracePeriodHours 
     }
   }
 
-  function grantFriendFamily({ userId }) {
+  function grantFriendFamily({ userId, role = "regular", durationDays = null, reason = "Admin grant", grantedBy = null }) {
     const ts = getNow();
     const sourceId = `admin_grant:${userId}`;
+    const endsAt = typeof durationDays === "number" && durationDays > 0 ? ts + durationDays * 86400 * 1000 : null;
     const existing = store.getEntitlementBySource("friend_family", sourceId);
+
+    let ent;
     if (existing) {
-      store.updateEntitlementStatus(existing.id, "active", { startsAt: ts, endsAt: null });
-      return store.getEntitlement(existing.id);
+      store.updateEntitlementStatus(existing.id, "active", { startsAt: ts, endsAt });
+      ent = store.getEntitlement(existing.id);
+    } else {
+      ent = store.createEntitlement({
+        userId,
+        tier: role === "pro" ? "pro" : "standard",
+        sourceType: "friend_family",
+        sourceId,
+        status: "active",
+        startsAt: ts,
+        endsAt,
+      });
     }
 
-    return store.createEntitlement({
-      userId,
-      tier: "standard",
-      sourceType: "friend_family",
-      sourceId,
-      status: "active",
-      startsAt: ts,
-      endsAt: null,
-    });
+    if (store && typeof store.recordAuditLog === "function") {
+      store.recordAuditLog({
+        action: "grant_friend_family",
+        targetType: "user",
+        targetId: userId,
+        actorId: grantedBy,
+        details: { role, durationDays, reason },
+      });
+    }
+
+    return ent;
   }
 
-  function revokeFriendFamily({ userId }) {
+  function revokeFriendFamily({ userId, revokedBy = null, reason = "Admin revoke" }) {
     const sourceId = `admin_grant:${userId}`;
     const existing = store.getEntitlementBySource("friend_family", sourceId);
     if (existing) {
       store.updateEntitlementStatus(existing.id, "revoked");
+      if (store && typeof store.recordAuditLog === "function") {
+        store.recordAuditLog({
+          action: "revoke_friend_family",
+          targetType: "user",
+          targetId: userId,
+          actorId: revokedBy,
+          details: { reason },
+        });
+      }
       return store.getEntitlement(existing.id);
     }
     return null;
