@@ -186,6 +186,7 @@ function createApp(deps) {
   const { createContentSessionRouter } = require("./routes/contentSession");
   const { createPlayerRouter } = require("./routes/player");
   const { createAccountConnectionsRouter } = require("./routes/accountConnections");
+  const { createBillingRouter } = require("./routes/billing");
   const { createConnectionAccessService } = require("./services/connectionAccessService");
 
   const connectionAccessService = deps.connectionAccessService || (billingStore && entitlementService ? createConnectionAccessService({
@@ -205,6 +206,15 @@ function createApp(deps) {
   app.use("/", createAnalyticsRouter(routerDeps));
   if (connectionAccessService) {
     app.use("/api/account/connections", createAccountConnectionsRouter({ auth, connectionAccessService }));
+  }
+  if (billingStore && entitlementService) {
+    app.use("/api/billing", createBillingRouter({
+      auth,
+      catalog: billingCatalog,
+      store: billingStore,
+      entitlementService,
+      stripeGateway,
+    }));
   }
   app.use("/api", createContentSessionRouter(routerDeps));
   app.use("/api", createPlayerRouter(routerDeps));

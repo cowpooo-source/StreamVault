@@ -203,10 +203,25 @@ function createBillingCatalog(env = process.env) {
     return resolvePolicies(env, true);
   }
 
+  function validatePurchaseAgreement(accepted = {}) {
+    const policies = currentPolicies();
+    if (accepted.termsVersion !== policies.terms.version) {
+      throw billingError(`Outdated or missing terms version: "${accepted.termsVersion}"`, "invalid_agreement", 400);
+    }
+    if (accepted.privacyVersion !== policies.privacy.version) {
+      throw billingError(`Outdated or missing privacy version: "${accepted.privacyVersion}"`, "invalid_agreement", 400);
+    }
+    if (accepted.refundVersion !== policies.refund.version) {
+      throw billingError(`Outdated or missing refund version: "${accepted.refundVersion}"`, "invalid_agreement", 400);
+    }
+    return true;
+  }
+
   return {
     enabled: true,
     livemode,
     taxEnabled,
+    currency: "usd",
     refundWindowDays,
     gracePeriodHours,
     appUrl,
@@ -214,7 +229,9 @@ function createBillingCatalog(env = process.env) {
     products: Object.values(productsMap),
     getProduct,
     listPublicProducts,
+    listProducts: listPublicProducts,
     currentPolicies,
+    validatePurchaseAgreement,
   };
 }
 
