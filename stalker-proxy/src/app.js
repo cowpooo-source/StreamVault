@@ -149,7 +149,6 @@ function createApp(deps) {
   const { createPlayerRouter } = require("./routes/player");
   const { createAccountConnectionsRouter } = require("./routes/accountConnections");
   const { createConnectionAccessService } = require("./services/connectionAccessService");
-  const { stripe, handleWebhook } = require("./stripe.js");
 
   const billingStore = deps.store || (auth.getBillingStore ? auth.getBillingStore() : null);
   const entitlementService = deps.entitlementService || (auth.getEntitlementService ? auth.getEntitlementService() : null);
