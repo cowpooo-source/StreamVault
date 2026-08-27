@@ -1,7 +1,7 @@
-// User authentication module — bcrypt + JWT + SQLite
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const { createBillingStore } = require("./services/billingStore");
 
 const SALT_ROUNDS = 10;
 const TOKEN_EXPIRY = "7d";
@@ -21,6 +21,7 @@ const DEFAULT_ROLE = ALLOWED_DEFAULT_ROLES.has(process.env.DEFAULT_ROLE) ? proce
 
 let db;
 let jwtSecret;
+let billingStore;
 
 // Prepared statements
 let stmts = {};
@@ -73,6 +74,13 @@ async function init(database) {
     attempts INTEGER NOT NULL DEFAULT 0,
     last_attempt INTEGER NOT NULL
   )`);
+
+  // Initialize additive billing ledger tables and store
+  billingStore = createBillingStore({
+    db,
+    identityHmacKey: process.env.CONNECTION_IDENTITY_HMAC_KEY || process.env.TOKEN_MASTER_KEY || "",
+  });
+  billingStore.init();
 
   // Prepare statements
   stmts.getUserByUsername = db.prepare("SELECT * FROM users WHERE username = ?");
@@ -460,4 +468,5 @@ module.exports = {
   requestPasswordReset, resetPassword,
   updateUserEmail,
   getFederatedCredential, linkFederatedCredential, createFederatedUser, generateSSOToken,
+  getBillingStore: () => billingStore,
 };
