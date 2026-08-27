@@ -187,12 +187,20 @@ function createApp(deps) {
   const { createPlayerRouter } = require("./routes/player");
   const { createAccountConnectionsRouter } = require("./routes/accountConnections");
   const { createBillingRouter } = require("./routes/billing");
+  const { createSupportRouter } = require("./routes/support");
   const { createConnectionAccessService } = require("./services/connectionAccessService");
+  const { createSupportService } = require("./services/supportService");
 
   const connectionAccessService = deps.connectionAccessService || (billingStore && entitlementService ? createConnectionAccessService({
     store: billingStore,
     entitlementService,
     identityHmacKey: process.env.CONNECTION_IDENTITY_HMAC_KEY || process.env.TOKEN_MASTER_KEY || "",
+  }) : null);
+
+  const supportService = deps.supportService || (billingStore ? createSupportService({
+    store: billingStore,
+    catalog: billingCatalog,
+    mailService: email,
   }) : null);
 
   const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, connectionAccessService, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, portalFetchChannelCatalog, portalFetchChannelCatalogPage, agentFor };
@@ -215,6 +223,9 @@ function createApp(deps) {
       entitlementService,
       stripeGateway,
     }));
+  }
+  if (supportService) {
+    app.use("/api/support", createSupportRouter({ auth, supportService }));
   }
   app.use("/api", createContentSessionRouter(routerDeps));
   app.use("/api", createPlayerRouter(routerDeps));
