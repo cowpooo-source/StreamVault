@@ -96,7 +96,7 @@ function createApp(deps) {
     stripeGateway,
   }) : null);
 
-  if (stripeEventProcessor) {
+  if (billingCatalog?.enabled && stripeEventProcessor && stripeClient) {
     app.use("/api/billing/webhook", createStripeWebhookRouter({
       stripe: stripeClient,
       processor: stripeEventProcessor,

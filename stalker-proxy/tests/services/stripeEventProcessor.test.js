@@ -399,5 +399,22 @@ describe("stripeEventProcessor", () => {
       const access = entitlementService.getEffectiveAccess(user.id, fixedNow);
       expect(access.billingStatus).toBe("active");
     });
+
+    it("rejects event when event livemode mismatches server configuration", async () => {
+      // Server catalog is configured with livemode: false (STRIPE_LIVE_MODE="false")
+      const liveEvent = {
+        id: "evt_live_in_test_env",
+        type: "invoice.paid",
+        livemode: true, // Mismatches catalog.livemode (false)
+        created: 100,
+        data: {
+          object: {
+            subscription: "sub_live_123",
+          },
+        },
+      };
+
+      await expect(processor.processEvent(liveEvent)).rejects.toThrow(/Livemode mismatch/);
+    });
   });
 });

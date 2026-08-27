@@ -7,6 +7,9 @@ import { createEntitlementService } from "../../src/services/entitlementService.
 import { createBillingCatalog } from "../../src/services/billingCatalog.js";
 import { createStripeEventProcessor } from "../../src/services/stripeEventProcessor.js";
 import { createStripeWebhookRouter } from "../../src/routes/stripeWebhook.js";
+import { createApp } from "../../src/app.js";
+import auth from "../../src/auth.js";
+import cache from "../../src/cache.js";
 
 describe("Stripe Webhook Router", () => {
   let app;
@@ -146,5 +149,20 @@ describe("Stripe Webhook Router", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/not configured/);
+  });
+
+  it("does not mount webhook route and returns 404 when billing is disabled", async () => {
+    const disabledCatalog = createBillingCatalog({ BILLING_ENABLED: "false" });
+    const disabledApp = createApp({
+      cache,
+      auth,
+      billingCatalog: disabledCatalog,
+    });
+
+    const res = await request(disabledApp)
+      .post("/api/billing/webhook")
+      .send(JSON.stringify({ id: "evt_123" }));
+
+    expect(res.status).toBe(404);
   });
 });

@@ -155,6 +155,29 @@ describe("billingStore", () => {
         payloadSha256: payloadSha,
       });
       expect(duplicateClaim.claimed).toBe(false);
+
+      // When event fails, first retry atomically claims it; second concurrent retry is rejected
+      store.updateEventStatus("evt_dup_1", "failed", { lastErrorCode: "timeout" });
+
+      const firstRetry = store.claimEvent({
+        stripeEventId: "evt_dup_1",
+        eventType: "invoice.paid",
+        livemode: 0,
+        stripeCreatedAt: 1700000000,
+        payloadSha256: payloadSha,
+      });
+      expect(firstRetry.claimed).toBe(true);
+      expect(firstRetry.status).toBe("retried");
+
+      const concurrentRetry = store.claimEvent({
+        stripeEventId: "evt_dup_1",
+        eventType: "invoice.paid",
+        livemode: 0,
+        stripeCreatedAt: 1700000000,
+        payloadSha256: payloadSha,
+      });
+      expect(concurrentRetry.claimed).toBe(false);
+      expect(concurrentRetry.status).toBe("processing");
     });
 
     it("verifies billing_events contains no unredacted payload column", () => {

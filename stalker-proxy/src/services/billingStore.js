@@ -311,6 +311,14 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
         )
         ON CONFLICT(stripe_event_id) DO NOTHING
       `),
+      retryClaimEvent: db.prepare(`
+        UPDATE billing_events SET
+          status = 'processing',
+          attempt_count = attempt_count + 1,
+          last_error_code = NULL,
+          processed_at = NULL
+        WHERE stripe_event_id = @stripeEventId AND status = 'failed'
+      `),
       getEvent: db.prepare(`SELECT * FROM billing_events WHERE stripe_event_id = ?`),
       updateEventStatus: db.prepare(`
         UPDATE billing_events SET
@@ -661,19 +669,6 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
   function claimEvent({ stripeEventId, eventType, livemode, stripeCreatedAt, payloadSha256 }) {
     if (!stmts) init();
     const ts = getNow();
-    const existing = stmts.getEvent.get(stripeEventId);
-    if (existing) {
-      if (existing.status === "failed") {
-        stmts.updateEventStatus.run({
-          stripeEventId,
-          status: "processing",
-          lastErrorCode: null,
-          processedAt: null,
-        });
-        return { claimed: true, status: "retried" };
-      }
-      return { claimed: false, status: existing.status };
-    }
 
     const result = stmts.claimEvent.run({
       stripeEventId,
@@ -683,7 +678,18 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       payloadSha256,
       receivedAt: ts,
     });
-    return { claimed: result.changes > 0, status: "claimed" };
+    if (result.changes > 0) {
+      return { claimed: true, status: "claimed" };
+    }
+
+    // Atomic retry claim if status was 'failed'
+    const retryResult = stmts.retryClaimEvent.run({ stripeEventId });
+    if (retryResult.changes > 0) {
+      return { claimed: true, status: "retried" };
+    }
+
+    const existing = stmts.getEvent.get(stripeEventId);
+    return { claimed: false, status: existing ? existing.status : "unknown" };
   }
 
   function getEvent(stripeEventId) {

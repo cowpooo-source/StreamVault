@@ -15,6 +15,17 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
     const eventId = event.id;
     const eventType = event.type;
     const eventCreated = event.created || Math.floor(getNow() / 1000);
+    const eventLivemode = Boolean(event.livemode);
+
+    if (catalog && catalog.livemode !== undefined && eventLivemode !== Boolean(catalog.livemode)) {
+      const err = new Error(
+        `Livemode mismatch: event livemode=${eventLivemode} but server livemode=${Boolean(catalog.livemode)}`
+      );
+      err.code = "livemode_mismatch";
+      err.status = 400;
+      throw err;
+    }
+
     const payloadJson = JSON.stringify(event);
     const payloadSha256 = crypto.createHash("sha256").update(payloadJson).digest("hex");
 
