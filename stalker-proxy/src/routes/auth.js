@@ -95,11 +95,34 @@ function createAuthRouter(deps) {
   });
 
   router.get("/auth/me", auth.requireAuth, (req, res) => {
-    const limits = auth.ROLE_LIMITS[req.user.role] || auth.ROLE_LIMITS.free;
+    const effective = auth.getEffectiveAccess ? auth.getEffectiveAccess(req.user.id) : {
+      role: req.user.role,
+      baseRole: req.user.baseRole || req.user.role,
+      plan: req.user.plan || "free",
+      planSource: req.user.planSource || "base_role",
+      billingStatus: req.user.billingStatus || "none",
+      accessStartsAt: req.user.accessStartsAt || null,
+      accessEndsAt: req.user.accessEndsAt || null,
+      nextBillingAt: req.user.nextBillingAt || null,
+      cancelAtPeriodEnd: req.user.cancelAtPeriodEnd || false,
+      limits: req.user.limits || auth.ROLE_LIMITS[req.user.role] || auth.ROLE_LIMITS.free,
+    };
     res.json({
-      id: req.user.id, username: req.user.username, email: req.user.email,
-      role: req.user.role, emailVerified: !!req.user.email_verified,
-      maxConnections: req.user.max_connections, limits,
+      id: req.user.id,
+      username: req.user.username,
+      email: req.user.email,
+      role: effective.role,
+      baseRole: effective.baseRole,
+      plan: effective.plan,
+      planSource: effective.planSource,
+      billingStatus: effective.billingStatus,
+      accessStartsAt: effective.accessStartsAt,
+      accessEndsAt: effective.accessEndsAt,
+      nextBillingAt: effective.nextBillingAt,
+      cancelAtPeriodEnd: effective.cancelAtPeriodEnd,
+      emailVerified: !!req.user.email_verified,
+      maxConnections: req.user.max_connections,
+      limits: effective.limits,
     });
   });
 

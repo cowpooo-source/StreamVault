@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { createBillingStore } = require("./services/billingStore");
+const { createEntitlementService } = require("./services/entitlementService");
 
 const SALT_ROUNDS = 10;
 const TOKEN_EXPIRY = "7d";
@@ -22,6 +23,7 @@ const DEFAULT_ROLE = ALLOWED_DEFAULT_ROLES.has(process.env.DEFAULT_ROLE) ? proce
 let db;
 let jwtSecret;
 let billingStore;
+let entitlementService;
 
 // Prepared statements
 let stmts = {};
@@ -81,6 +83,13 @@ async function init(database) {
     identityHmacKey: process.env.CONNECTION_IDENTITY_HMAC_KEY || process.env.TOKEN_MASTER_KEY || "",
   });
   billingStore.init();
+
+  // Initialize effective entitlements service
+  entitlementService = createEntitlementService({
+    store: billingStore,
+    db,
+    gracePeriodHours: Number(process.env.BILLING_GRACE_PERIOD_HOURS) || 72,
+  });
 
   // Prepare statements
   stmts.getUserByUsername = db.prepare("SELECT * FROM users WHERE username = ?");
@@ -223,8 +232,9 @@ async function authenticate(username, password, ip = "unknown", force = false) {
     throw new Error("Invalid username or password");
   }
 
-  // Check concurrent login limits
-  const limits = ROLE_LIMITS[user.role] || ROLE_LIMITS.free;
+  // Check concurrent login limits from effective access
+  const effective = getEffectiveAccess(user.id);
+  const limits = effective.limits;
   const activeSessions = stmts.countActiveUserSessions.get(user.id, Date.now()).cnt;
   
   if (activeSessions >= (limits.maxLogins || 1)) {
@@ -256,12 +266,46 @@ async function authenticate(username, password, ip = "unknown", force = false) {
   return {
     token,
     user: {
-      id: user.id, username: user.username, email: user.email, role: user.role,
-      maxConnections: user.max_connections, emailVerified: !!user.email_verified,
-      subscription_cycle: user.subscription_cycle, subscription_expires_at: user.subscription_expires_at,
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: effective.role,
+      baseRole: effective.baseRole,
+      plan: effective.plan,
+      planSource: effective.planSource,
+      billingStatus: effective.billingStatus,
+      accessStartsAt: effective.accessStartsAt,
+      accessEndsAt: effective.accessEndsAt,
+      nextBillingAt: effective.nextBillingAt,
+      cancelAtPeriodEnd: effective.cancelAtPeriodEnd,
+      maxConnections: user.max_connections,
+      emailVerified: !!user.email_verified,
+      subscription_cycle: user.subscription_cycle,
+      subscription_expires_at: user.subscription_expires_at,
       limits,
     }
   };
+}
+
+function getEffectiveAccess(userId, now = Date.now()) {
+  if (!entitlementService) {
+    const user = userId && stmts.getUserById ? stmts.getUserById.get(userId) : null;
+    const role = user?.role || (userId ? "free" : "guest");
+    const plan = role === "admin" ? "admin" : role === "pro" ? "pro" : role === "regular" ? "standard" : "free";
+    return {
+      role,
+      baseRole: role,
+      plan,
+      planSource: role === "regular" ? "grandfathered" : "base_role",
+      billingStatus: "none",
+      accessStartsAt: null,
+      accessEndsAt: null,
+      nextBillingAt: null,
+      cancelAtPeriodEnd: false,
+      limits: ROLE_LIMITS[role] || ROLE_LIMITS.free,
+    };
+  }
+  return entitlementService.getEffectiveAccess(userId, now);
 }
 
 function getAuthStats() {
@@ -299,8 +343,20 @@ function verifyToken(token) {
     const user = stmts.getUserById.get(payload.sub);
     if (!user || user.disabled) return null;
 
-    const limits = ROLE_LIMITS[user.role] || ROLE_LIMITS.free;
-    return { ...user, limits };
+    const effective = getEffectiveAccess(user.id);
+    return {
+      ...user,
+      role: effective.role,
+      baseRole: effective.baseRole,
+      plan: effective.plan,
+      planSource: effective.planSource,
+      billingStatus: effective.billingStatus,
+      accessStartsAt: effective.accessStartsAt,
+      accessEndsAt: effective.accessEndsAt,
+      nextBillingAt: effective.nextBillingAt,
+      cancelAtPeriodEnd: effective.cancelAtPeriodEnd,
+      limits: effective.limits,
+    };
   } catch {
     return null;
   }
@@ -469,4 +525,6 @@ module.exports = {
   updateUserEmail,
   getFederatedCredential, linkFederatedCredential, createFederatedUser, generateSSOToken,
   getBillingStore: () => billingStore,
+  getEffectiveAccess,
+  getEntitlementService: () => entitlementService,
 };

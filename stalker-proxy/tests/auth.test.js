@@ -318,3 +318,49 @@ describe("Auth — Role Limits", () => {
     expect(auth.ROLE_LIMITS.admin.maxVod).toBe(Infinity);
   });
 });
+
+describe("Auth — Effective Entitlements Integration", () => {
+  it("authenticates free user with effective plan metadata", async () => {
+    const free = await auth.createUser("entitle_free", "pass1234", "free");
+    const session = await auth.authenticate(free.username, "pass1234");
+    expect(session.user).toMatchObject({
+      role: "free",
+      baseRole: "free",
+      plan: "free",
+      planSource: "base_role",
+      billingStatus: "none",
+    });
+  });
+
+  it("dynamically reflects Standard pass entitlement without altering base role", async () => {
+    const user = await auth.createUser("entitle_pass", "pass1234", "free");
+    const session = await auth.authenticate(user.username, "pass1234");
+
+    const entitlementService = auth.getEntitlementService();
+    const now = Date.now();
+    entitlementService.activatePass({
+      userId: user.id,
+      orderId: "ord_pass_dyn",
+      startsAt: now,
+      endsAt: now + 30 * 86400000,
+    });
+
+    const access = auth.getEffectiveAccess(user.id);
+    expect(access).toMatchObject({
+      role: "regular",
+      baseRole: "free",
+      plan: "standard",
+      planSource: "paid",
+      billingStatus: "active",
+    });
+
+    const verified = auth.verifyToken(session.token);
+    expect(verified).toMatchObject({
+      role: "regular",
+      baseRole: "free",
+      plan: "standard",
+      planSource: "paid",
+      billingStatus: "active",
+    });
+  });
+});
