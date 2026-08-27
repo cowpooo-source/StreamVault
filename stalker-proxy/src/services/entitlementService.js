@@ -222,28 +222,35 @@ function createEntitlementService({ store, db, now = Date.now, gracePeriodHours 
   function activateSubscription({
     userId,
     subscriptionId,
-    productCode,
+    stripeSubscriptionId,
+    productCode = "standard_monthly",
     currentPeriodStart,
     currentPeriodEnd,
+    startsAt,
+    endsAt,
     cancelAtPeriodEnd = false,
     lastStripeEventCreated = 0,
   }) {
+    const subId = subscriptionId || stripeSubscriptionId;
+    const start = startsAt !== undefined ? startsAt : currentPeriodStart || getNow();
+    const end = endsAt !== undefined ? endsAt : currentPeriodEnd || null;
+
     store.upsertSubscription({
       userId,
       productCode,
-      stripeSubscriptionId: subscriptionId,
+      stripeSubscriptionId: subId,
       status: "active",
-      currentPeriodStart,
-      currentPeriodEnd,
+      currentPeriodStart: start,
+      currentPeriodEnd: end,
       cancelAtPeriodEnd: cancelAtPeriodEnd ? 1 : 0,
       lastStripeEventCreated,
     });
 
-    const existing = store.getEntitlementBySource("subscription", subscriptionId);
+    const existing = store.getEntitlementBySource("subscription", subId);
     if (existing) {
       store.updateEntitlementStatus(existing.id, "active", {
-        startsAt: currentPeriodStart,
-        endsAt: currentPeriodEnd,
+        startsAt: start,
+        endsAt: end,
       });
       return store.getEntitlement(existing.id);
     }
@@ -252,10 +259,10 @@ function createEntitlementService({ store, db, now = Date.now, gracePeriodHours 
       userId,
       tier: "standard",
       sourceType: "subscription",
-      sourceId: subscriptionId,
+      sourceId: subId,
       status: "active",
-      startsAt: currentPeriodStart,
-      endsAt: currentPeriodEnd,
+      startsAt: start,
+      endsAt: end,
     });
   }
 

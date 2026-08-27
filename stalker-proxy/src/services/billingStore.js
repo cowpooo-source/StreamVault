@@ -52,6 +52,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
         checkout_mode TEXT NOT NULL,
         status TEXT NOT NULL,
         stripe_price_id TEXT NOT NULL,
+        stripe_customer_id TEXT,
         stripe_checkout_session_id TEXT UNIQUE,
         stripe_payment_intent_id TEXT UNIQUE,
         stripe_invoice_id TEXT,
@@ -205,13 +206,13 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       insertOrder: db.prepare(`
         INSERT INTO billing_orders (
           id, user_id, product_code, checkout_mode, status, stripe_price_id,
-          stripe_checkout_session_id, stripe_payment_intent_id, stripe_invoice_id,
+          stripe_customer_id, stripe_checkout_session_id, stripe_payment_intent_id, stripe_invoice_id,
           stripe_subscription_id, stripe_schedule_id, currency, amount_subtotal,
           amount_tax, amount_total, requested_start_at, access_start_at,
           access_end_at, refundable_until, refunded_at, created_at, updated_at
         ) VALUES (
           @id, @userId, @productCode, @checkoutMode, @status, @priceId,
-          @stripeCheckoutSessionId, @stripePaymentIntentId, @stripeInvoiceId,
+          @stripeCustomerId, @stripeCheckoutSessionId, @stripePaymentIntentId, @stripeInvoiceId,
           @stripeSubscriptionId, @stripeScheduleId, @currency, @amountSubtotal,
           @amountTax, @amountTotal, @requestedStartAt, @accessStartAt,
           @accessEndAt, @refundableUntil, @refundedAt, @createdAt, @updatedAt
@@ -224,6 +225,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       updateOrderStatus: db.prepare(`
         UPDATE billing_orders SET
           status = @status,
+          stripe_customer_id = COALESCE(@stripeCustomerId, stripe_customer_id),
           stripe_checkout_session_id = COALESCE(@stripeCheckoutSessionId, stripe_checkout_session_id),
           stripe_payment_intent_id = COALESCE(@stripePaymentIntentId, stripe_payment_intent_id),
           stripe_invoice_id = COALESCE(@stripeInvoiceId, stripe_invoice_id),
@@ -418,13 +420,24 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     if (!stmts) init();
     const ts = getNow();
     const id = orderData.id || `ord_${crypto.randomBytes(12).toString("hex")}`;
+    const checkoutMode =
+      orderData.checkoutMode || (orderData.productCode === "standard_pass_30d" ? "payment" : "subscription");
+    const priceId = orderData.priceId || `price_${orderData.productCode}`;
+    const amountTotal =
+      orderData.amountTotal !== undefined
+        ? orderData.amountTotal
+        : orderData.amount !== undefined
+        ? orderData.amount
+        : null;
+
     stmts.insertOrder.run({
       id,
       userId: orderData.userId,
       productCode: orderData.productCode,
-      checkoutMode: orderData.checkoutMode,
+      checkoutMode,
       status: orderData.status || "created",
-      priceId: orderData.priceId,
+      priceId,
+      stripeCustomerId: orderData.stripeCustomerId || null,
       stripeCheckoutSessionId: orderData.stripeCheckoutSessionId || null,
       stripePaymentIntentId: orderData.stripePaymentIntentId || null,
       stripeInvoiceId: orderData.stripeInvoiceId || null,
@@ -433,7 +446,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       currency: orderData.currency || "usd",
       amountSubtotal: orderData.amountSubtotal !== undefined ? orderData.amountSubtotal : null,
       amountTax: orderData.amountTax !== undefined ? orderData.amountTax : null,
-      amountTotal: orderData.amountTotal !== undefined ? orderData.amountTotal : null,
+      amountTotal,
       requestedStartAt: orderData.requestedStartAt || null,
       accessStartAt: orderData.accessStartAt || null,
       accessEndAt: orderData.accessEndAt || null,
@@ -471,6 +484,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     stmts.updateOrderStatus.run({
       id,
       status,
+      stripeCustomerId: extra.stripeCustomerId || null,
       stripeCheckoutSessionId: extra.stripeCheckoutSessionId || null,
       stripePaymentIntentId: extra.stripePaymentIntentId || null,
       stripeInvoiceId: extra.stripeInvoiceId || null,
@@ -507,6 +521,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       stripeCheckoutSessionId: agreementData.stripeCheckoutSessionId || null,
       stripeTermsAccepted: agreementData.stripeTermsAccepted ? 1 : 0,
       stripeConsentRecordedAt: agreementData.stripeConsentRecordedAt || null,
+      createdAt: agreementData.createdAt || ts,
     });
     return getAgreementByOrderId(agreementData.orderId);
   }
@@ -539,10 +554,10 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     stmts.upsertSubscription.run({
       id,
       userId: subData.userId,
-      productCode: subData.productCode,
+      productCode: subData.productCode || "standard_monthly",
       stripeSubscriptionId: subData.stripeSubscriptionId,
       stripeScheduleId: subData.stripeScheduleId || null,
-      status: subData.status,
+      status: subData.status || "active",
       currentPeriodStart: subData.currentPeriodStart || null,
       currentPeriodEnd: subData.currentPeriodEnd || null,
       scheduledStartAt: subData.scheduledStartAt || null,

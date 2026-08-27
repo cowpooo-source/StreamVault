@@ -65,6 +65,37 @@ function createApp(deps) {
   const apiLimit = rateLimit({ windowMs: 60000, max: 60, message: { error: "Too many requests" } });
   const stalkerLimit = rateLimit({ windowMs: 60000, max: 600, message: { error: "Too many requests" } });
 
+  // Mount Stripe Webhook with raw body parser BEFORE global express.json
+  const { createStripeWebhookRouter } = require("./routes/stripeWebhook");
+  const { createStripeEventProcessor } = require("./services/stripeEventProcessor");
+  const { createBillingCatalog } = require("./services/billingCatalog");
+  const { createStripeGateway } = require("./services/stripeGateway");
+
+  const billingCatalog = deps.billingCatalog || createBillingCatalog();
+  const billingStore = deps.store || (auth?.getBillingStore ? auth.getBillingStore() : null);
+  const entitlementService = deps.entitlementService || (auth?.getEntitlementService ? auth.getEntitlementService() : null);
+
+  const stripeGateway = deps.stripeGateway || (billingCatalog?.enabled && deps.stripe ? createStripeGateway({
+    stripe: deps.stripe,
+    catalog: billingCatalog,
+    appUrl: billingCatalog.appUrl,
+  }) : null);
+
+  const stripeEventProcessor = deps.stripeEventProcessor || (billingStore && entitlementService ? createStripeEventProcessor({
+    store: billingStore,
+    entitlementService,
+    catalog: billingCatalog,
+    stripeGateway,
+  }) : null);
+
+  if (stripeEventProcessor) {
+    app.use("/api/billing/webhook", createStripeWebhookRouter({
+      stripe: deps.stripe,
+      processor: stripeEventProcessor,
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    }));
+  }
+
   app.use("/api/sync", express.json({ limit: "5mb" }));
   app.use(express.json({ limit: "1mb" }));
   app.use(compression());
@@ -144,14 +175,11 @@ function createApp(deps) {
   const { createAnalyticsRouter } = require("./routes/analytics");
   const { createApiRouter } = require("./routes/api");
   const { createStalkerRouter } = require("./routes/stalker");
-  const { createBillingRouter } = require("./routes/billing");
   const { createContentSessionRouter } = require("./routes/contentSession");
   const { createPlayerRouter } = require("./routes/player");
   const { createAccountConnectionsRouter } = require("./routes/accountConnections");
   const { createConnectionAccessService } = require("./services/connectionAccessService");
 
-  const billingStore = deps.store || (auth.getBillingStore ? auth.getBillingStore() : null);
-  const entitlementService = deps.entitlementService || (auth.getEntitlementService ? auth.getEntitlementService() : null);
   const connectionAccessService = deps.connectionAccessService || (billingStore && entitlementService ? createConnectionAccessService({
     store: billingStore,
     entitlementService,
@@ -166,7 +194,6 @@ function createApp(deps) {
   if (pool) app.use("/api", createSyncRouter(pool));
   app.use("/stalker", stalkerLimit, createStalkerRouter(routerDeps));
   app.use("/api", createApiRouter(routerDeps));
-  if (pool) app.use("/api/billing", createBillingRouter(pool, auth, stripe, handleWebhook));
   app.use("/", createAnalyticsRouter(routerDeps));
   if (connectionAccessService) {
     app.use("/api/account/connections", createAccountConnectionsRouter({ auth, connectionAccessService }));
