@@ -359,24 +359,79 @@ describe("Billing Lifecycle Router", () => {
       expect(entitlementService.getEffectiveAccess(testUser.id, fixedNow).role).toBe("regular");
     });
 
-    it("rejects refund if order lacks stripe_payment_intent_id or is not payment mode", async () => {
+    it("allows refund within 7-calendar-day window and rejects after 7 calendar days", async () => {
+      // 5 days ago (< 7 days) -> Allowed
       store.createOrder({
-        id: "ord_no_pi",
+        id: "ord_day_5",
         userId: testUser.id,
-        productCode: "standard_monthly",
-        checkoutMode: "subscription",
-        amount: 299,
+        productCode: "standard_pass_30d",
+        checkoutMode: "payment",
+        amountTotal: 399,
         status: "paid",
-        stripePaymentIntentId: null,
+        stripePaymentIntentId: "pi_day_5",
+        createdAt: fixedNow - 5 * DAY_MS,
+        refundableUntil: fixedNow + 2 * DAY_MS,
+      });
+
+      const resValid = await request(app)
+        .post("/api/billing/refunds")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ orderId: "ord_day_5" });
+
+      expect(resValid.status).toBe(200);
+      expect(resValid.body.status).toBe("refund_pending");
+
+      // 8 days ago (> 7 days) -> Rejected
+      store.createOrder({
+        id: "ord_day_8",
+        userId: testUser.id,
+        productCode: "standard_pass_30d",
+        checkoutMode: "payment",
+        amountTotal: 399,
+        status: "paid",
+        stripePaymentIntentId: "pi_day_8",
+        createdAt: fixedNow - 8 * DAY_MS,
+        refundableUntil: fixedNow - 1 * DAY_MS,
+      });
+
+      const resExpired = await request(app)
+        .post("/api/billing/refunds")
+        .set("Authorization", `Bearer ${userToken}`)
+        .send({ orderId: "ord_day_8" });
+
+      expect(resExpired.status).toBe(400);
+      expect(resExpired.body.code).toBe("refund_window_expired");
+    });
+
+    it("rejects refund if payment was already partially refunded in Stripe", async () => {
+      store.createOrder({
+        id: "ord_partial_pi",
+        userId: testUser.id,
+        productCode: "standard_pass_30d",
+        checkoutMode: "payment",
+        amountTotal: 399,
+        status: "paid",
+        stripePaymentIntentId: "pi_partially_refunded",
+        createdAt: fixedNow - 1 * DAY_MS,
+        refundableUntil: fixedNow + 6 * DAY_MS,
+      });
+
+      mockStripeGateway.retrieveForReconciliation = vi.fn().mockResolvedValue({
+        paymentIntent: {
+          id: "pi_partially_refunded",
+          status: "succeeded",
+          amount: 399,
+          amount_refunded: 100, // Partial refund exists!
+        },
       });
 
       const res = await request(app)
         .post("/api/billing/refunds")
         .set("Authorization", `Bearer ${userToken}`)
-        .send({ orderId: "ord_no_pi" });
+        .send({ orderId: "ord_partial_pi" });
 
       expect(res.status).toBe(400);
-      expect(res.body.code).toBe("no_payment_intent");
+      expect(res.body.code).toBe("already_refunded");
     });
   });
 

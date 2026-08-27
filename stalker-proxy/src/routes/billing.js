@@ -215,6 +215,8 @@ function createBillingRouter(deps) {
       const cleanReturnPath = sanitizeReturnPath(returnUrl, catalog.appUrl);
       const orderId = `ord_${crypto.randomBytes(12).toString("hex")}`;
 
+      const refundWindowMs = ((catalog && catalog.refundWindowDays) || 7) * 86400 * 1000;
+
       try {
         if (productCode === "standard_pass_30d") {
           const orderData = {
@@ -226,7 +228,7 @@ function createBillingRouter(deps) {
             priceId: product.priceId,
             currency: catalog.currency || "usd",
             amountTotal: product.amount,
-            refundableUntil: ts + 72 * 3600 * 1000,
+            refundableUntil: ts + refundWindowMs,
           };
 
           store.createOrderWithAgreement({
@@ -501,15 +503,44 @@ function createBillingRouter(deps) {
     }
 
     const ts = getNow();
-    const refundLimit = order.refundable_until || order.created_at + 72 * 3600 * 1000;
+    const refundWindowDays = (catalog && catalog.refundWindowDays) || 7;
+    const refundWindowMs = refundWindowDays * 86400 * 1000;
+    const refundLimit = order.refundable_until || order.created_at + refundWindowMs;
     if (ts > refundLimit) {
       return res.status(400).json({
-        error: "Refund window has expired (72 hours)",
+        error: `Refund window has expired (${refundWindowDays} days)`,
         code: "refund_window_expired",
       });
     }
 
     try {
+      if (stripeGateway && typeof stripeGateway.retrieveForReconciliation === "function") {
+        const recon = await stripeGateway.retrieveForReconciliation({
+          paymentIntentId: order.stripe_payment_intent_id,
+        });
+        if (recon && recon.paymentIntent) {
+          const pi = recon.paymentIntent;
+          if (pi.status && pi.status !== "succeeded") {
+            return res.status(400).json({
+              error: "Payment is not in succeeded state",
+              code: "payment_not_succeeded",
+            });
+          }
+          if (pi.amount_refunded && pi.amount_refunded > 0) {
+            return res.status(400).json({
+              error: "Payment has already been partially or fully refunded",
+              code: "already_refunded",
+            });
+          }
+          if (typeof order.amount_total === "number" && pi.amount && pi.amount !== order.amount_total) {
+            return res.status(400).json({
+              error: "PaymentIntent amount does not match original order total",
+              code: "refund_amount_mismatch",
+            });
+          }
+        }
+      }
+
       await stripeGateway.createFullRefund({
         paymentIntentId: order.stripe_payment_intent_id,
         orderId: order.id,
