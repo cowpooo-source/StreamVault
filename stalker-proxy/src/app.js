@@ -147,9 +147,19 @@ function createApp(deps) {
   const { createBillingRouter } = require("./routes/billing");
   const { createContentSessionRouter } = require("./routes/contentSession");
   const { createPlayerRouter } = require("./routes/player");
+  const { createAccountConnectionsRouter } = require("./routes/accountConnections");
+  const { createConnectionAccessService } = require("./services/connectionAccessService");
   const { stripe, handleWebhook } = require("./stripe.js");
 
-  const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, portalFetchChannelCatalog, portalFetchChannelCatalogPage, agentFor };
+  const billingStore = deps.store || (auth.getBillingStore ? auth.getBillingStore() : null);
+  const entitlementService = deps.entitlementService || (auth.getEntitlementService ? auth.getEntitlementService() : null);
+  const connectionAccessService = deps.connectionAccessService || (billingStore && entitlementService ? createConnectionAccessService({
+    store: billingStore,
+    entitlementService,
+    identityHmacKey: process.env.CONNECTION_IDENTITY_HMAC_KEY || process.env.TOKEN_MASTER_KEY || "",
+  }) : null);
+
+  const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, connectionAccessService, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, portalFetchChannelCatalog, portalFetchChannelCatalogPage, agentFor };
 
   app.use("/api", apiLimit);
   app.use("/api", createAuthRouter(routerDeps));
@@ -159,6 +169,9 @@ function createApp(deps) {
   app.use("/api", createApiRouter(routerDeps));
   if (pool) app.use("/api/billing", createBillingRouter(pool, auth, stripe, handleWebhook));
   app.use("/", createAnalyticsRouter(routerDeps));
+  if (connectionAccessService) {
+    app.use("/api/account/connections", createAccountConnectionsRouter({ auth, connectionAccessService }));
+  }
   app.use("/api", createContentSessionRouter(routerDeps));
   app.use("/api", createPlayerRouter(routerDeps));
 

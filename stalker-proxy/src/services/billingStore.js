@@ -334,11 +334,12 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       getConnectionAccess: db.prepare(`SELECT * FROM connection_access WHERE user_id = ? AND connection_key = ?`),
       listConnectionAccessForUser: db.prepare(`SELECT * FROM connection_access WHERE user_id = ? ORDER BY last_used_at DESC`),
       updateConnectionLock: db.prepare(`
-        UPDATE connection_access SET
-          locked_at = @lockedAt,
-          selected_at = @selectedAt
-        WHERE user_id = @userId AND connection_key = @connectionKey
-      `),
+      INSERT INTO connection_access (user_id, connection_key, locked_at, selected_at)
+      VALUES (@userId, @connectionKey, @lockedAt, @selectedAt)
+      ON CONFLICT(user_id, connection_key) DO UPDATE SET
+        locked_at = excluded.locked_at,
+        selected_at = excluded.selected_at
+    `),
 
       // Support Tickets
       insertTicket: db.prepare(`

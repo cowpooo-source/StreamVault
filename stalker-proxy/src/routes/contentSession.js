@@ -67,6 +67,19 @@ function normalizeConnection(input) {
 const tokenHash = token => crypto.createHash('sha256').update(token).digest('hex');
 const userId = user => String(user?.id || user?.sub || user?.email || user?.username || '');
 const GUEST_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[A-Za-z0-9_-]{16,64})$/i;
+
+function contentSessionAdEligible(session, auth) {
+  const ownerId = String(session?.userId || '');
+  if (ownerId.startsWith('guest:')) return true;
+  if (!/^\d+$/.test(ownerId) || typeof auth?.getUser !== 'function') return false;
+  try {
+    const user = auth.getUser(Number(ownerId));
+    return Boolean(user && !user.disabled && user.role === 'free');
+  } catch {
+    return false;
+  }
+}
+
 function authenticate(req, auth) {
   const header = req.headers.authorization || '';
   const token = req.cookies?.sv_auth || (header.startsWith('Bearer ') ? header.slice(7) : null);
@@ -81,7 +94,7 @@ function authenticate(req, auth) {
 }
 
 function createContentSessionRouter(deps) {
-  const { auth, isUrlAllowed } = deps;
+  const { auth, isUrlAllowed, connectionAccessService } = deps;
   const sqliteDb = deps.cache?.db && typeof deps.cache.db.exec === 'function' ? deps.cache.db : null;
   const store = deps.contentSessionStore || (deps.pool ? createContentSessionStore({ pool: deps.pool }) : sqliteDb ? createContentSessionStore({ db: sqliteDb }) : fallbackStore);
   const ttlMs = boundedInt(process.env.CONTENT_SESSION_TTL_MINUTES, 30, 5, 120) * 60_000;
@@ -95,6 +108,9 @@ function createContentSessionRouter(deps) {
     if (!user || !userId(user)) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const connection = normalizeConnection(req.body?.connection);
+      if (connectionAccessService && !user.guest && user.id) {
+        connectionAccessService.assertConnectionAllowed(user.id, connection.id);
+      }
       const providerUrl = connection.type === 'm3u' ? connection.config.url : connection.config.server;
       if (isUrlAllowed && !(await isUrlAllowed(providerUrl))) return res.status(403).json({ error: 'Provider URL not allowed' });
       const uid = userId(user);
@@ -105,8 +121,14 @@ function createContentSessionRouter(deps) {
       const now = Date.now();
       await store.create({ tokenHash: tokenHash(token), userId: uid,
         encryptedConnection: encryptToken(JSON.stringify(connection)), expiresAt: now + ttlMs, createdAt: now });
+      if (connectionAccessService && !user.guest && user.id) {
+        connectionAccessService.recordSuccessfulConnectionUse(user.id, connection.id, now);
+      }
       return res.json({ token, contentUrl: `${normalizeBaseUrl()}/content?token=${encodeURIComponent(token)}`, expiresAt: now + ttlMs });
     } catch (error) {
+      if (error.code === 'connection_plan_locked' || error.status === 403) {
+        return res.status(403).json({ error: error.message, code: error.code || 'connection_plan_locked' });
+      }
       if (/CONTENT_BASE_URL|TOKEN_MASTER_KEY/.test(error.message)) return res.status(500).json({ error: 'Direct content is not configured' });
       if (/required|Invalid|Unsupported|URL/.test(error.message)) return res.status(400).json({ error: error.message });
       console.error('content-session creation failed:', error.message);
@@ -128,7 +150,11 @@ function createContentSessionRouter(deps) {
       let connection;
       try { connection = JSON.parse(decryptToken(session.encryptedConnection)); }
       catch { await store.deleteByTokenHash(hash); return res.status(404).json({ error: 'Content session invalid' }); }
-      return res.json({ connection, expiresAt: session.expiresAt });
+      return res.json({
+        connection,
+        expiresAt: session.expiresAt,
+        adEligible: contentSessionAdEligible(session, auth),
+      });
     } catch (error) {
       console.error('content-session validation failed:', error.message);
       return res.status(500).json({ error: 'Failed to validate content session' });
