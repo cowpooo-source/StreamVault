@@ -14,6 +14,8 @@ import AuthScreen from './components/AuthScreen.jsx';
 import SettingsView from './components/SettingsView.jsx';
 import DiscoverView from './components/DiscoverView.jsx';
 import Setup from './components/Setup.jsx';
+import AccountSettingsModal from './components/AccountSettingsModal.jsx';
+import { createBillingApi } from './services/billingApi.js';
 import { setEncKeySource, encryptConnections, decryptConnections } from './auth-utils.js';
 import { GUEST_ID, authHeaders, authFetch, track, db, proxyFetch, safeJsonFetch, makeXtreamAPI } from "./app-runtime.js";
 import { useStreamVault } from "./useStreamVault.js";
