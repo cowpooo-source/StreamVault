@@ -6,7 +6,21 @@ function createStripeGateway({ stripe, catalog, appUrl = "https://media.portalhe
   }
 
   function buildUrl(pathOrUrl, queryParams = {}) {
-    const base = pathOrUrl.startsWith("http") ? pathOrUrl : `${appUrl.replace(/\/$/, "")}/${pathOrUrl.replace(/^\//, "")}`;
+    let cleanPath = String(pathOrUrl || "/app?settingsTab=billing").trim();
+    if (cleanPath.startsWith("http://") || cleanPath.startsWith("https://")) {
+      try {
+        const parsed = new URL(cleanPath);
+        const appParsed = new URL(appUrl);
+        if (parsed.origin !== appParsed.origin) {
+          cleanPath = "/app?settingsTab=billing";
+        } else {
+          cleanPath = parsed.pathname + parsed.search;
+        }
+      } catch {
+        cleanPath = "/app?settingsTab=billing";
+      }
+    }
+    const base = `${appUrl.replace(/\/$/, "")}/${cleanPath.replace(/^\//, "")}`;
     const url = new URL(base);
     for (const [key, val] of Object.entries(queryParams)) {
       if (val !== undefined && val !== null) {

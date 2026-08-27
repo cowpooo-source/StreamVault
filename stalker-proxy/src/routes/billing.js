@@ -2,6 +2,7 @@
 
 const express = require("express");
 const crypto = require("node:crypto");
+const rateLimit = require("express-rate-limit");
 
 function createBillingRouter(deps) {
   const { auth, catalog, store, entitlementService, stripeGateway, now = Date.now } = deps;
@@ -10,6 +11,45 @@ function createBillingRouter(deps) {
   function getNow() {
     return typeof now === "function" ? now() : Date.now();
   }
+
+  // Seed active policy versions into store if not already present
+  if (store && catalog && catalog.enabled) {
+    try {
+      const policies = catalog.currentPolicies();
+      for (const [type, info] of Object.entries(policies)) {
+        const existing = store.getPolicyVersion(type, info.version);
+        const contentSha256 = catalog.getPolicyContentSha256 ? catalog.getPolicyContentSha256(type, info.version) : crypto.createHash("sha256").update(`${type}:${info.version}`).digest("hex");
+        if (!existing) {
+          store.upsertPolicyVersion({
+            policyType: type,
+            version: info.version,
+            publicUrl: info.publicUrl,
+            contentSha256,
+            publishedAt: getNow(),
+            retiredAt: null,
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // Dedicated Rate Limiters for Billing Endpoints
+  const isTest = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+  const billingCheckoutLimiter = rateLimit({
+    windowMs: 60000,
+    max: isTest ? 1000 : 10,
+    message: { error: "Too many checkout requests. Please wait a minute.", code: "billing_rate_limited" },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  const billingMutationLimiter = rateLimit({
+    windowMs: 60000,
+    max: isTest ? 1000 : 20,
+    message: { error: "Too many billing requests. Please wait a minute.", code: "billing_rate_limited" },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
   function requireBillingEnabled(req, res, next) {
     if (!catalog || !catalog.enabled || !stripeGateway) {
@@ -60,16 +100,52 @@ function createBillingRouter(deps) {
     next();
   }
 
+  function sanitizeReturnPath(urlOrPath, appUrl = "https://media.portalheaven.stream/app") {
+    if (!urlOrPath) return "/app?settingsTab=billing";
+    const str = String(urlOrPath).trim();
+    if (str.startsWith("/")) {
+      return str;
+    }
+    try {
+      const parsed = new URL(str);
+      const appParsed = new URL(appUrl);
+      if (parsed.origin === appParsed.origin) {
+        return parsed.pathname + parsed.search + parsed.hash;
+      }
+    } catch {}
+    return "/app?settingsTab=billing";
+  }
+
   function getPolicyHashes(acceptedPolicies) {
-    const policies = catalog.currentPolicies();
-    const termsPayload = `terms:${acceptedPolicies.termsVersion || policies.terms.version}:${policies.terms.publicUrl}`;
-    const privacyPayload = `privacy:${acceptedPolicies.privacyVersion || policies.privacy.version}:${policies.privacy.publicUrl}`;
-    const refundPayload = `refund:${acceptedPolicies.refundVersion || policies.refund.version}:${policies.refund.publicUrl}`;
+    const termsVer = acceptedPolicies.terms || acceptedPolicies.termsVersion || "v1";
+    const privVer = acceptedPolicies.privacy || acceptedPolicies.privacyVersion || "v1";
+    const refVer = acceptedPolicies.refund || acceptedPolicies.refundVersion || "v1";
+
+    let termsSha256;
+    let privacySha256;
+    let refundSha256;
+
+    if (catalog && typeof catalog.getPolicyContentSha256 === "function") {
+      termsSha256 = catalog.getPolicyContentSha256("terms", termsVer);
+      privacySha256 = catalog.getPolicyContentSha256("privacy", privVer);
+      refundSha256 = catalog.getPolicyContentSha256("refund", refVer);
+    } else {
+      const termsRow = store.getPolicyVersion("terms", termsVer);
+      const privRow = store.getPolicyVersion("privacy", privVer);
+      const refRow = store.getPolicyVersion("refund", refVer);
+
+      termsSha256 = termsRow?.content_sha256 || crypto.createHash("sha256").update(`terms:${termsVer}`).digest("hex");
+      privacySha256 = privRow?.content_sha256 || crypto.createHash("sha256").update(`privacy:${privVer}`).digest("hex");
+      refundSha256 = refRow?.content_sha256 || crypto.createHash("sha256").update(`refund:${refVer}`).digest("hex");
+    }
 
     return {
-      termsSha256: crypto.createHash("sha256").update(termsPayload).digest("hex"),
-      privacySha256: crypto.createHash("sha256").update(privacyPayload).digest("hex"),
-      refundSha256: crypto.createHash("sha256").update(refundPayload).digest("hex"),
+      termsVersion: termsVer,
+      privacyVersion: privVer,
+      refundVersion: refVer,
+      termsSha256,
+      privacySha256,
+      refundSha256,
     };
   }
 
@@ -103,46 +179,148 @@ function createBillingRouter(deps) {
   });
 
   // POST /api/billing/checkout — Create Checkout or Setup Session
-  router.post("/checkout", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, async (req, res) => {
-    const { productCode, acceptedPolicies = {}, returnUrl } = req.body;
+  router.post(
+    "/checkout",
+    billingCheckoutLimiter,
+    auth.requireAuth,
+    validateBillingCsrf,
+    requireBillingEnabled,
+    async (req, res) => {
+      const { productCode, returnUrl } = req.body;
+      const acceptedPolicies = req.body.acceptedPolicyVersions || req.body.acceptedPolicies || {};
 
-    if (!productCode) {
-      return res.status(400).json({ error: "productCode is required", code: "invalid_product" });
-    }
+      if (!productCode) {
+        return res.status(400).json({ error: "productCode is required", code: "invalid_product" });
+      }
 
-    try {
-      catalog.validatePurchaseAgreement(acceptedPolicies);
-    } catch (err) {
-      return res.status(err.status || 400).json({ error: err.message, code: err.code || "invalid_agreement" });
-    }
+      try {
+        catalog.validatePurchaseAgreement(acceptedPolicies);
+      } catch (err) {
+        return res.status(err.status || 400).json({ error: err.message, code: err.code || "invalid_agreement" });
+      }
 
-    let product;
-    try {
-      product = catalog.getProduct(productCode);
-    } catch (err) {
-      return res.status(400).json({ error: err.message, code: "invalid_product" });
-    }
+      let product;
+      try {
+        product = catalog.getProduct(productCode);
+      } catch (err) {
+        return res.status(400).json({ error: err.message, code: "invalid_product" });
+      }
 
-    const userId = req.user.id;
-    const customer = store.getCustomerByUserId(userId);
-    const stripeCustomerId = customer ? customer.stripe_customer_id : undefined;
-    const ts = getNow();
+      const userId = req.user.id;
+      const customer = store.getCustomerByUserId(userId);
+      const stripeCustomerId = customer ? customer.stripe_customer_id : undefined;
+      const ts = getNow();
 
-    const { termsSha256, privacySha256, refundSha256 } = getPolicyHashes(acceptedPolicies);
-    const orderId = `ord_${crypto.randomBytes(12).toString("hex")}`;
+      const policyData = getPolicyHashes(acceptedPolicies);
+      const cleanReturnPath = sanitizeReturnPath(returnUrl, catalog.appUrl);
+      const orderId = `ord_${crypto.randomBytes(12).toString("hex")}`;
 
-    try {
-      if (productCode === "standard_pass_30d") {
+      try {
+        if (productCode === "standard_pass_30d") {
+          const orderData = {
+            id: orderId,
+            userId,
+            productCode,
+            checkoutMode: "payment",
+            status: "created",
+            priceId: product.priceId,
+            currency: catalog.currency || "usd",
+            amountTotal: product.amount,
+            refundableUntil: ts + 72 * 3600 * 1000,
+          };
+
+          store.createOrderWithAgreement({
+            order: orderData,
+            agreement: {
+              orderId,
+              userId,
+              termsVersion: policyData.termsVersion,
+              privacyVersion: policyData.privacyVersion,
+              refundVersion: policyData.refundVersion,
+              termsSha256: policyData.termsSha256,
+              privacySha256: policyData.privacySha256,
+              refundSha256: policyData.refundSha256,
+              stripeTermsAccepted: 1,
+            },
+          });
+
+          const checkoutResult = await stripeGateway.createCheckout({
+            order: orderData,
+            customerId: stripeCustomerId,
+            returnPath: cleanReturnPath,
+          });
+
+          store.updateOrderStatus(orderId, "created", {
+            stripeCheckoutSessionId: checkoutResult.sessionId,
+          });
+
+          return res.json({
+            checkoutUrl: checkoutResult.checkoutUrl,
+            orderId,
+            mode: "payment",
+          });
+        }
+
+        // Monthly or Yearly subscription
+        const entitlements = store.listEntitlementsForUser(userId);
+        const activePass = entitlements.find(
+          (e) => e.source_type === "pass" && e.status === "active" && (e.ends_at === null || e.ends_at > ts)
+        );
+
+        if (activePass) {
+          // Pass-to-subscription transition via Setup Session
+          const orderData = {
+            id: orderId,
+            userId,
+            productCode,
+            checkoutMode: "setup",
+            status: "created",
+            priceId: product.priceId,
+            currency: catalog.currency || "usd",
+          };
+
+          store.createOrderWithAgreement({
+            order: orderData,
+            agreement: {
+              orderId,
+              userId,
+              termsVersion: policyData.termsVersion,
+              privacyVersion: policyData.privacyVersion,
+              refundVersion: policyData.refundVersion,
+              termsSha256: policyData.termsSha256,
+              privacySha256: policyData.privacySha256,
+              refundSha256: policyData.refundSha256,
+              stripeTermsAccepted: 1,
+            },
+          });
+
+          const setupResult = await stripeGateway.createSetupCheckout({
+            order: orderData,
+            customerId: stripeCustomerId,
+            returnPath: cleanReturnPath,
+          });
+
+          store.updateOrderStatus(orderId, "created", {
+            stripeCheckoutSessionId: setupResult.sessionId,
+          });
+
+          return res.json({
+            checkoutUrl: setupResult.checkoutUrl,
+            orderId,
+            mode: "setup",
+          });
+        }
+
+        // Standard recurring subscription checkout
         const orderData = {
           id: orderId,
           userId,
           productCode,
-          checkoutMode: "payment",
+          checkoutMode: "subscription",
           status: "created",
           priceId: product.priceId,
           currency: catalog.currency || "usd",
           amountTotal: product.amount,
-          refundableUntil: ts + 72 * 3600 * 1000,
         };
 
         store.createOrderWithAgreement({
@@ -150,12 +328,12 @@ function createBillingRouter(deps) {
           agreement: {
             orderId,
             userId,
-            termsVersion: acceptedPolicies.termsVersion,
-            privacyVersion: acceptedPolicies.privacyVersion,
-            refundVersion: acceptedPolicies.refundVersion,
-            termsSha256,
-            privacySha256,
-            refundSha256,
+            termsVersion: policyData.termsVersion,
+            privacyVersion: policyData.privacyVersion,
+            refundVersion: policyData.refundVersion,
+            termsSha256: policyData.termsSha256,
+            privacySha256: policyData.privacySha256,
+            refundSha256: policyData.refundSha256,
             stripeTermsAccepted: 1,
           },
         });
@@ -163,7 +341,7 @@ function createBillingRouter(deps) {
         const checkoutResult = await stripeGateway.createCheckout({
           order: orderData,
           customerId: stripeCustomerId,
-          returnPath: returnUrl,
+          returnPath: cleanReturnPath,
         });
 
         store.updateOrderStatus(orderId, "created", {
@@ -173,129 +351,48 @@ function createBillingRouter(deps) {
         return res.json({
           checkoutUrl: checkoutResult.checkoutUrl,
           orderId,
-          mode: "payment",
+          mode: "subscription",
         });
+      } catch (err) {
+        console.error("Billing checkout error:", err.message);
+        return res.status(500).json({ error: err.message, code: "checkout_error" });
       }
-
-      // Monthly or Yearly subscription
-      const entitlements = store.listEntitlementsForUser(userId);
-      const activePass = entitlements.find(
-        (e) => e.source_type === "pass" && e.status === "active" && (e.ends_at === null || e.ends_at > ts)
-      );
-
-      if (activePass) {
-        // Pass-to-subscription transition via Setup Session
-        const orderData = {
-          id: orderId,
-          userId,
-          productCode,
-          checkoutMode: "setup",
-          status: "created",
-          priceId: product.priceId,
-          currency: catalog.currency || "usd",
-        };
-
-        store.createOrderWithAgreement({
-          order: orderData,
-          agreement: {
-            orderId,
-            userId,
-            termsVersion: acceptedPolicies.termsVersion,
-            privacyVersion: acceptedPolicies.privacyVersion,
-            refundVersion: acceptedPolicies.refundVersion,
-            termsSha256,
-            privacySha256,
-            refundSha256,
-            stripeTermsAccepted: 1,
-          },
-        });
-
-        const setupResult = await stripeGateway.createSetupCheckout({
-          order: orderData,
-          customerId: stripeCustomerId,
-          returnPath: returnUrl,
-        });
-
-        store.updateOrderStatus(orderId, "created", {
-          stripeCheckoutSessionId: setupResult.sessionId,
-        });
-
-        return res.json({
-          checkoutUrl: setupResult.checkoutUrl,
-          orderId,
-          mode: "setup",
-        });
-      }
-
-      // Standard recurring subscription checkout
-      const orderData = {
-        id: orderId,
-        userId,
-        productCode,
-        checkoutMode: "subscription",
-        status: "created",
-        priceId: product.priceId,
-        currency: catalog.currency || "usd",
-        amountTotal: product.amount,
-      };
-
-      store.createOrderWithAgreement({
-        order: orderData,
-        agreement: {
-          orderId,
-          userId,
-          termsVersion: acceptedPolicies.termsVersion,
-          privacyVersion: acceptedPolicies.privacyVersion,
-          refundVersion: acceptedPolicies.refundVersion,
-          termsSha256,
-          privacySha256,
-          refundSha256,
-          stripeTermsAccepted: 1,
-        },
-      });
-
-      const checkoutResult = await stripeGateway.createCheckout({
-        order: orderData,
-        customerId: stripeCustomerId,
-        returnPath: returnUrl,
-      });
-
-      store.updateOrderStatus(orderId, "created", {
-        stripeCheckoutSessionId: checkoutResult.sessionId,
-      });
-
-      return res.json({
-        checkoutUrl: checkoutResult.checkoutUrl,
-        orderId,
-        mode: "subscription",
-      });
-    } catch (err) {
-      console.error("Billing checkout error:", err.message);
-      return res.status(500).json({ error: err.message, code: "checkout_error" });
     }
-  });
+  );
 
   // POST /api/billing/portal — Customer Portal Session
-  router.post("/portal", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, async (req, res) => {
-    const customer = store.getCustomerByUserId(req.user.id);
-    if (!customer || !customer.stripe_customer_id) {
-      return res.status(400).json({
-        error: "No billing customer found for this account",
-        code: "no_billing_customer",
-      });
-    }
+  router.post(
+    "/portal",
+    billingMutationLimiter,
+    auth.requireAuth,
+    validateBillingCsrf,
+    requireBillingEnabled,
+    async (req, res) => {
+      const customer = store.getCustomerByUserId(req.user.id);
+      if (!customer || !customer.stripe_customer_id) {
+        return res.status(400).json({
+          error: "No billing customer found for this account",
+          code: "no_billing_customer",
+        });
+      }
 
-    try {
-      const portalResult = await stripeGateway.createPortalSession({
-        customerId: customer.stripe_customer_id,
-        returnUrl: req.body.returnUrl || catalog.appUrl,
-      });
-      res.json({ portalUrl: portalResult.url || portalResult.portalUrl });
-    } catch (err) {
-      console.error("Billing portal error:", err.message);
-      res.status(500).json({ error: err.message, code: "portal_error" });
+      const returnUrl = sanitizeReturnPath(req.body.returnUrl, catalog.appUrl);
+      const resolvedReturnUrl = returnUrl.startsWith("http")
+        ? returnUrl
+        : new URL(returnUrl, catalog.appUrl).toString();
+
+      try {
+        const portalResult = await stripeGateway.createPortalSession({
+          customerId: customer.stripe_customer_id,
+          returnUrl: resolvedReturnUrl,
+        });
+        res.json({ portalUrl: portalResult.url || portalResult.portalUrl });
+      } catch (err) {
+        console.error("Billing portal error:", err.message);
+        res.status(500).json({ error: err.message, code: "portal_error" });
+      }
     }
-  });
+  );
 
   // POST /api/billing/subscription/cancel (and /cancel) — Subscription Cancellation
   const handleCancelSubscription = async (req, res) => {
@@ -319,38 +416,59 @@ function createBillingRouter(deps) {
     }
   };
 
-  router.post("/subscription/cancel", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleCancelSubscription);
-  router.post("/cancel", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleCancelSubscription);
+  router.post(
+    "/subscription/cancel",
+    billingMutationLimiter,
+    auth.requireAuth,
+    validateBillingCsrf,
+    requireBillingEnabled,
+    handleCancelSubscription
+  );
+  router.post(
+    "/cancel",
+    billingMutationLimiter,
+    auth.requireAuth,
+    validateBillingCsrf,
+    requireBillingEnabled,
+    handleCancelSubscription
+  );
 
   // POST /api/billing/subscription/scheduled/cancel — Cancel Queued Future Schedule
-  router.post("/subscription/scheduled/cancel", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, async (req, res) => {
-    const sub = store.getSubscriptionByUserId(req.user.id);
-    let scheduleId = sub?.stripe_schedule_id;
+  router.post(
+    "/subscription/scheduled/cancel",
+    billingMutationLimiter,
+    auth.requireAuth,
+    validateBillingCsrf,
+    requireBillingEnabled,
+    async (req, res) => {
+      const sub = store.getSubscriptionByUserId(req.user.id);
+      let scheduleId = sub?.stripe_schedule_id;
 
-    if (!scheduleId) {
-      const orders = store.listOrdersForUser(req.user.id);
-      const setupOrder = orders.find((o) => o.stripe_schedule_id);
-      scheduleId = setupOrder?.stripe_schedule_id;
-    }
-
-    if (!scheduleId) {
-      return res.status(400).json({
-        error: "No scheduled subscription found for this account",
-        code: "no_scheduled_subscription",
-      });
-    }
-
-    try {
-      await stripeGateway.cancelSchedule({ scheduleId });
-      if (sub && sub.stripe_schedule_id === scheduleId) {
-        store.updateSubscriptionStatus(sub.stripe_subscription_id, { stripeScheduleId: null });
+      if (!scheduleId) {
+        const orders = store.listOrdersForUser(req.user.id);
+        const setupOrder = orders.find((o) => o.stripe_schedule_id);
+        scheduleId = setupOrder?.stripe_schedule_id;
       }
-      res.json({ ok: true, canceled: true, scheduleId });
-    } catch (err) {
-      console.error("Scheduled subscription cancellation error:", err.message);
-      res.status(500).json({ error: err.message, code: "cancel_schedule_error" });
+
+      if (!scheduleId) {
+        return res.status(400).json({
+          error: "No scheduled subscription found for this account",
+          code: "no_scheduled_subscription",
+        });
+      }
+
+      try {
+        await stripeGateway.cancelSchedule({ scheduleId });
+        if (sub && sub.stripe_schedule_id === scheduleId) {
+          store.updateSubscriptionStatus(sub.stripe_subscription_id, { stripeScheduleId: null });
+        }
+        res.json({ ok: true, canceled: true, scheduleId });
+      } catch (err) {
+        console.error("Scheduled subscription cancellation error:", err.message);
+        res.status(500).json({ error: err.message, code: "cancel_schedule_error" });
+      }
     }
-  });
+  );
 
   // POST /api/billing/refunds (and /refund) — 72-Hour Automated Refund
   const handleRefund = async (req, res) => {
@@ -397,7 +515,8 @@ function createBillingRouter(deps) {
         orderId: order.id,
       });
 
-      store.updateOrderStatus(order.id, "refund_pending", { refundedAt: ts });
+      // Status becomes refund_pending, refunded_at is NOT written until Stripe confirms via webhook
+      store.updateOrderStatus(order.id, "refund_pending", { refundedAt: null });
 
       res.json({ ok: true, status: "refund_pending", orderId: order.id });
     } catch (err) {
@@ -406,8 +525,22 @@ function createBillingRouter(deps) {
     }
   };
 
-  router.post("/refunds", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleRefund);
-  router.post("/refund", auth.requireAuth, validateBillingCsrf, requireBillingEnabled, handleRefund);
+  router.post(
+    "/refunds",
+    billingMutationLimiter,
+    auth.requireAuth,
+    validateBillingCsrf,
+    requireBillingEnabled,
+    handleRefund
+  );
+  router.post(
+    "/refund",
+    billingMutationLimiter,
+    auth.requireAuth,
+    validateBillingCsrf,
+    requireBillingEnabled,
+    handleRefund
+  );
 
   // GET /api/billing/orders — User Orders
   router.get("/orders", auth.requireAuth, (req, res) => {

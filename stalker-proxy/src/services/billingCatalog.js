@@ -1,5 +1,7 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 const FIXED_PRODUCTS = Object.freeze({
   standard_pass_30d: {
     code: "standard_pass_30d",
@@ -203,16 +205,43 @@ function createBillingCatalog(env = process.env) {
     return resolvePolicies(env, true);
   }
 
+  const POLICY_DOCUMENTS = {
+    terms: {
+      v1: `# Terms of Service (Version 1)\n\nWelcome to StreamVault. By purchasing a subscription or 30-day pass, you agree to these Terms. StreamVault provides access to self-hosted and configured IPTV stream proxying. Single login for Free, two concurrent connections for Regular, three for Pro. Fair use applies.`,
+    },
+    privacy: {
+      v1: `# Privacy Policy (Version 1)\n\nStreamVault respects your privacy. All portal credentials, passwords, and MAC addresses are encrypted client-side using AES-GCM before transmission. Zero raw credential retention. Webhook payloads are hashed with SHA-256 for idempotency.`,
+    },
+    refund: {
+      v1: `# Refund Policy (Version 1)\n\nWe offer a 72-hour full refund guarantee on all 30-Day Pass purchases. Self-service refund is accessible directly from your billing settings within 72 hours of purchase. Recurring subscriptions can be canceled anytime with access continuing until the end of the billing period.`,
+    },
+  };
+
+  function getPolicyContent(type, version = "v1") {
+    const doc = POLICY_DOCUMENTS[type]?.[version];
+    if (doc) return doc;
+    return `# StreamVault ${type} Policy (Version ${version})\n\nOfficial policy document for version ${version}.`;
+  }
+
+  function getPolicyContentSha256(type, version = "v1") {
+    const content = getPolicyContent(type, version);
+    return crypto.createHash("sha256").update(content, "utf8").digest("hex");
+  }
+
   function validatePurchaseAgreement(accepted = {}) {
     const policies = currentPolicies();
-    if (accepted.termsVersion !== policies.terms.version) {
-      throw billingError(`Outdated or missing terms version: "${accepted.termsVersion}"`, "invalid_agreement", 400);
+    const terms = accepted.terms || accepted.termsVersion;
+    const privacy = accepted.privacy || accepted.privacyVersion;
+    const refund = accepted.refund || accepted.refundVersion;
+
+    if (!terms || terms !== policies.terms.version) {
+      throw billingError(`Outdated or missing terms version: "${terms}"`, "invalid_agreement", 400);
     }
-    if (accepted.privacyVersion !== policies.privacy.version) {
-      throw billingError(`Outdated or missing privacy version: "${accepted.privacyVersion}"`, "invalid_agreement", 400);
+    if (!privacy || privacy !== policies.privacy.version) {
+      throw billingError(`Outdated or missing privacy version: "${privacy}"`, "invalid_agreement", 400);
     }
-    if (accepted.refundVersion !== policies.refund.version) {
-      throw billingError(`Outdated or missing refund version: "${accepted.refundVersion}"`, "invalid_agreement", 400);
+    if (!refund || refund !== policies.refund.version) {
+      throw billingError(`Outdated or missing refund version: "${refund}"`, "invalid_agreement", 400);
     }
     return true;
   }
@@ -231,6 +260,8 @@ function createBillingCatalog(env = process.env) {
     listPublicProducts,
     listProducts: listPublicProducts,
     currentPolicies,
+    getPolicyContent,
+    getPolicyContentSha256,
     validatePurchaseAgreement,
   };
 }

@@ -158,16 +158,16 @@ describe("Billing Lifecycle Router", () => {
       expect(res.status).toBe(401);
     });
 
-    it("validates required policy agreement versions", async () => {
+    it("validates required policy agreement versions with acceptedPolicyVersions format", async () => {
       const res = await request(app)
         .post("/api/billing/checkout")
         .set("Authorization", `Bearer ${userToken}`)
         .send({
           productCode: "standard_pass_30d",
-          acceptedPolicies: {
-            termsVersion: "v0_outdated",
-            privacyVersion: "v1",
-            refundVersion: "v1",
+          acceptedPolicyVersions: {
+            terms: "v0_outdated",
+            privacy: "v1",
+            refund: "v1",
           },
         });
 
@@ -175,18 +175,18 @@ describe("Billing Lifecycle Router", () => {
       expect(res.body.code).toBe("invalid_agreement");
     });
 
-    it("creates payment checkout for 30-Day Pass and stores order + agreement with content hashes", async () => {
+    it("creates payment checkout for 30-Day Pass, sanitizes external returnUrl, and stores real policy content hashes", async () => {
       const res = await request(app)
         .post("/api/billing/checkout")
         .set("Authorization", `Bearer ${userToken}`)
         .send({
           productCode: "standard_pass_30d",
-          acceptedPolicies: {
-            termsVersion: "v1",
-            privacyVersion: "v1",
-            refundVersion: "v1",
+          acceptedPolicyVersions: {
+            terms: "v1",
+            privacy: "v1",
+            refund: "v1",
           },
-          returnUrl: "https://media.portalheaven.stream/app/billing",
+          returnUrl: "https://evil-external-domain.com/phishing",
         });
 
       expect(res.status).toBe(200);
@@ -195,9 +195,10 @@ describe("Billing Lifecycle Router", () => {
         mode: "payment",
       });
 
-      // Assert stripeGateway.createCheckout received proper order object
+      // External returnUrl must be sanitized to safe default path
       expect(mockStripeGateway.createCheckout).toHaveBeenCalledWith(
         expect.objectContaining({
+          returnPath: "/app?settingsTab=billing",
           order: expect.objectContaining({
             id: res.body.orderId,
             productCode: "standard_pass_30d",
@@ -213,7 +214,9 @@ describe("Billing Lifecycle Router", () => {
       const agreement = store.getAgreementByOrderId(res.body.orderId);
       expect(agreement).toBeDefined();
       expect(agreement.terms_version).toBe("v1");
-      expect(agreement.terms_sha256).toHaveLength(64);
+
+      const expectedContentHash = catalog.getPolicyContentSha256("terms", "v1");
+      expect(agreement.terms_sha256).toBe(expectedContentHash);
     });
 
     it("enforces CSRF and Origin checks on cookie-authenticated requests", async () => {
@@ -240,7 +243,7 @@ describe("Billing Lifecycle Router", () => {
         .set("Host", "media.portalheaven.stream")
         .send({
           productCode: "standard_pass_30d",
-          acceptedPolicies: { termsVersion: "v1", privacyVersion: "v1", refundVersion: "v1" },
+          acceptedPolicyVersions: { terms: "v1", privacy: "v1", refund: "v1" },
         });
 
       expect(res.status).toBe(403);
@@ -255,13 +258,13 @@ describe("Billing Lifecycle Router", () => {
       const res = await request(app)
         .post("/api/billing/portal")
         .set("Authorization", `Bearer ${userToken}`)
-        .send({ returnUrl: "https://media.portalheaven.stream/app/settings" });
+        .send({ returnUrl: "/app?settingsTab=billing" });
 
       expect(res.status).toBe(200);
       expect(res.body.portalUrl).toBe("https://billing.stripe.com/p/session/portal_123");
       expect(mockStripeGateway.createPortalSession).toHaveBeenCalledWith({
         customerId: "cus_test_123",
-        returnUrl: "https://media.portalheaven.stream/app/settings",
+        returnUrl: "https://media.portalheaven.stream/app?settingsTab=billing",
       });
     });
   });
@@ -314,7 +317,7 @@ describe("Billing Lifecycle Router", () => {
   });
 
   describe("POST /api/billing/refunds", () => {
-    it("marks order refund_pending without immediately revoking entitlement before webhook", async () => {
+    it("marks order refund_pending with refunded_at remaining null before webhook confirmation", async () => {
       const order = store.createOrder({
         id: "ord_refund_test",
         userId: testUser.id,
@@ -349,6 +352,8 @@ describe("Billing Lifecycle Router", () => {
 
       const updatedOrder = store.getOrder("ord_refund_test");
       expect(updatedOrder.status).toBe("refund_pending");
+      // refunded_at must remain NULL while in pending status
+      expect(updatedOrder.refunded_at).toBeNull();
 
       // User retains access until charge.refunded webhook is received
       expect(entitlementService.getEffectiveAccess(testUser.id, fixedNow).role).toBe("regular");
