@@ -11,13 +11,24 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     return typeof now === "function" ? now() : Date.now();
   }
 
+  const hmacSecret =
+    identityHmacKey ||
+    process.env.CONNECTION_IDENTITY_HMAC_KEY ||
+    (process.env.TOKEN_MASTER_KEY
+      ? crypto.createHmac("sha256", process.env.TOKEN_MASTER_KEY).update("streamvault:connection-identity").digest("hex")
+      : process.env.JWT_SECRET
+      ? crypto.createHmac("sha256", process.env.JWT_SECRET).update("streamvault:connection-identity").digest("hex")
+      : null);
+
+  if (!hmacSecret) {
+    throw new Error(
+      "CONNECTION_IDENTITY_HMAC_KEY, TOKEN_MASTER_KEY, or JWT_SECRET is required to derive connection HMAC identity"
+    );
+  }
+
   function hashConnectionId(rawConnectionId) {
-    if (!identityHmacKey) {
-      // Fallback to SHA-256 digest if no identityHmacKey configured
-      return crypto.createHash("sha256").update(String(rawConnectionId)).digest("hex");
-    }
     return crypto
-      .createHmac("sha256", Buffer.from(identityHmacKey))
+      .createHmac("sha256", Buffer.from(hmacSecret))
       .update(String(rawConnectionId))
       .digest("hex");
   }
@@ -720,6 +731,59 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     });
   }
 
+  function swapConnectionSelection(userId, selectRawConnId, deselectRawConnId, swapTime = null) {
+    if (!stmts) init();
+    const ts = swapTime || getNow();
+    const selectKey = hashConnectionId(selectRawConnId);
+    const deselectKey = hashConnectionId(deselectRawConnId);
+
+    const selectRec = stmts.getConnectionAccess.get(userId, selectKey);
+    const deselectRec = stmts.getConnectionAccess.get(userId, deselectKey);
+
+    if (!selectRec) {
+      const err = new Error(`Cannot select unsaved connection "${selectRawConnId}"`);
+      err.code = "connection_not_found";
+      err.status = 404;
+      throw err;
+    }
+    if (selectRec.locked_at === null) {
+      const err = new Error(`Connection "${selectRawConnId}" is already active`);
+      err.code = "connection_already_active";
+      err.status = 400;
+      throw err;
+    }
+    if (!deselectRec) {
+      const err = new Error(`Cannot deselect unsaved connection "${deselectRawConnId}"`);
+      err.code = "connection_not_found";
+      err.status = 404;
+      throw err;
+    }
+    if (deselectRec.locked_at !== null) {
+      const err = new Error(`Connection "${deselectRawConnId}" is not currently active`);
+      err.code = "connection_not_active";
+      err.status = 400;
+      throw err;
+    }
+
+    const swapTx = db.transaction(() => {
+      stmts.updateConnectionLock.run({
+        userId,
+        connectionKey: selectKey,
+        lockedAt: null,
+        selectedAt: ts,
+      });
+      stmts.updateConnectionLock.run({
+        userId,
+        connectionKey: deselectKey,
+        lockedAt: ts,
+        selectedAt: null,
+      });
+    });
+
+    swapTx();
+    return { ok: true };
+  }
+
   // Support Tickets
   function createTicket(ticketData) {
     if (!stmts) init();
@@ -854,6 +918,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     getConnectionAccess,
     listConnectionAccessForUser,
     updateConnectionLock,
+    swapConnectionSelection,
     // Support Tickets
     createTicket,
     getTicket,

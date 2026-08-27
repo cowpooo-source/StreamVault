@@ -361,6 +361,10 @@ describe("Auth — Effective Entitlements Integration", () => {
       plan: "standard",
       planSource: "paid",
       billingStatus: "active",
+      maxConnections: 5,
     });
+
+    const newSession = await auth.authenticate(user.username, "pass1234");
+    expect(newSession.user.maxConnections).toBe(5);
   });
 });

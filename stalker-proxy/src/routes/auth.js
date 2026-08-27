@@ -121,7 +121,7 @@ function createAuthRouter(deps) {
       nextBillingAt: effective.nextBillingAt,
       cancelAtPeriodEnd: effective.cancelAtPeriodEnd,
       emailVerified: !!req.user.email_verified,
-      maxConnections: req.user.max_connections,
+      maxConnections: effective.limits.maxConnections,
       limits: effective.limits,
     });
   });

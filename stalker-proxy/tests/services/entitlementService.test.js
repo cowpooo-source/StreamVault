@@ -203,6 +203,24 @@ describe("entitlementService", () => {
       });
     });
 
+    it("isolates Friend & Family grants across multiple distinct users", () => {
+      const userA = createUser("fnf_user_a", "free");
+      const userB = createUser("fnf_user_b", "free");
+
+      service.grantFriendFamily({ userId: userA.id });
+      service.grantFriendFamily({ userId: userB.id });
+
+      expect(service.getEffectiveAccess(userA.id, fixedNow).planSource).toBe("complimentary");
+      expect(service.getEffectiveAccess(userB.id, fixedNow).planSource).toBe("complimentary");
+
+      // Revoking user A must not revoke user B
+      service.revokeFriendFamily({ userId: userA.id });
+      expect(service.getEffectiveAccess(userA.id, fixedNow).planSource).toBe("base_role");
+      expect(service.getEffectiveAccess(userA.id, fixedNow).role).toBe("free");
+      expect(service.getEffectiveAccess(userB.id, fixedNow).planSource).toBe("complimentary");
+      expect(service.getEffectiveAccess(userB.id, fixedNow).role).toBe("regular");
+    });
+
     it("returns guest access for non-existent/null userId", () => {
       const access = service.getEffectiveAccess(null, fixedNow);
       expect(access).toMatchObject({

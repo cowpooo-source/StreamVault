@@ -50,6 +50,12 @@ describe("stripeGateway", () => {
       STRIPE_PRICE_STANDARD_YEARLY: "price_yearly_123",
       STRIPE_LIVE_MODE: "false",
       STRIPE_TAX_ENABLED: "true",
+      POLICY_TERMS_VERSION: "v1",
+      POLICY_TERMS_URL: "https://media.portalheaven.stream/legal/terms-v1.html",
+      POLICY_PRIVACY_VERSION: "v1",
+      POLICY_PRIVACY_URL: "https://media.portalheaven.stream/legal/privacy-v1.html",
+      POLICY_REFUND_VERSION: "v1",
+      POLICY_REFUND_URL: "https://media.portalheaven.stream/legal/refund-v1.html",
       APP_URL: appUrl,
     });
 

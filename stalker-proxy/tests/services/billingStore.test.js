@@ -280,6 +280,44 @@ describe("billingStore", () => {
       expect(records[0].connection_key).toBe(expectedKey);
       expect(records[0].connection_key).not.toContain("00:1A:79:00:11:22");
     });
+
+    it("fails closed when no HMAC secret is configured or derivable", () => {
+      const oldEnvKey = process.env.CONNECTION_IDENTITY_HMAC_KEY;
+      const oldMasterKey = process.env.TOKEN_MASTER_KEY;
+      const oldJwt = process.env.JWT_SECRET;
+      delete process.env.CONNECTION_IDENTITY_HMAC_KEY;
+      delete process.env.TOKEN_MASTER_KEY;
+      delete process.env.JWT_SECRET;
+
+      try {
+        expect(() =>
+          createBillingStore({
+            db,
+            identityHmacKey: "",
+          })
+        ).toThrow(/required to derive connection HMAC identity/);
+      } finally {
+        if (oldEnvKey) process.env.CONNECTION_IDENTITY_HMAC_KEY = oldEnvKey;
+        if (oldMasterKey) process.env.TOKEN_MASTER_KEY = oldMasterKey;
+        if (oldJwt) process.env.JWT_SECRET = oldJwt;
+      }
+    });
+
+    it("atomically swaps locked and active connections with swapConnectionSelection", () => {
+      store.recordConnectionUse(42, "conn_active", fixedNow);
+      store.updateConnectionLock(42, "conn_locked", { lockedAt: fixedNow });
+
+      const res = store.swapConnectionSelection(42, "conn_locked", "conn_active", fixedNow + 100);
+      expect(res.ok).toBe(true);
+
+      const activeRecord = store.getConnectionAccess(42, "conn_locked");
+      expect(activeRecord.locked_at).toBeNull();
+      expect(activeRecord.selected_at).toBe(fixedNow + 100);
+
+      const lockedRecord = store.getConnectionAccess(42, "conn_active");
+      expect(lockedRecord.locked_at).toBe(fixedNow + 100);
+      expect(lockedRecord.selected_at).toBeNull();
+    });
   });
 
   describe("support tickets and notification outbox", () => {

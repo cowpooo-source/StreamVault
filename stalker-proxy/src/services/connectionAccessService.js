@@ -28,6 +28,18 @@ function createConnectionAccessService({ store, entitlementService, identityHmac
         err.status = 403;
         throw err;
       }
+
+      // If connection is not yet recorded, verify that user has not reached maxActive connections
+      if (!connRecord) {
+        const existingConns = store.listConnectionAccessForUser(numUserId);
+        const activeCount = existingConns.filter((c) => c.locked_at === null).length;
+        if (activeCount >= maxActive) {
+          const err = new Error("Connection limit reached for plan");
+          err.code = "connection_plan_locked";
+          err.status = 403;
+          throw err;
+        }
+      }
     }
   }
 
@@ -113,13 +125,14 @@ function createConnectionAccessService({ store, entitlementService, identityHmac
     const numUserId = Number(userId);
     const ts = getNow();
 
-    if (selectConnectionId) {
-      store.updateConnectionLock(numUserId, selectConnectionId, { lockedAt: null, selectedAt: ts });
+    if (!selectConnectionId || !deselectConnectionId) {
+      const err = new Error("Both selectConnectionId and deselectConnectionId are required for connection swap");
+      err.code = "invalid_selection";
+      err.status = 400;
+      throw err;
     }
-    if (deselectConnectionId) {
-      store.updateConnectionLock(numUserId, deselectConnectionId, { lockedAt: ts, selectedAt: null });
-    }
-    return { ok: true };
+
+    return store.swapConnectionSelection(numUserId, selectConnectionId, deselectConnectionId, ts);
   }
 
   return {

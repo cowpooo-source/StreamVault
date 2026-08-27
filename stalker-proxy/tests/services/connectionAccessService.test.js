@@ -149,5 +149,45 @@ describe("connectionAccessService", () => {
       expect(() => connectionService.assertConnectionAllowed(user.id, connA)).not.toThrow();
       expect(() => connectionService.assertConnectionAllowed(user.id, connC)).toThrow();
     });
+
+    it("blocks new unrecorded 3rd connection when Free user already has 2 active connections", () => {
+      const user = createUser("user_overflow", "free");
+      const conn1 = "conn_1";
+      const conn2 = "conn_2";
+      const conn3 = "conn_3";
+
+      // User has 2 active connections recorded
+      store.recordConnectionUse(user.id, conn1, fixedNow - 1000);
+      store.recordConnectionUse(user.id, conn2, fixedNow - 500);
+
+      // Existing 2 active connections are allowed
+      expect(() => connectionService.assertConnectionAllowed(user.id, conn1)).not.toThrow();
+      expect(() => connectionService.assertConnectionAllowed(user.id, conn2)).not.toThrow();
+
+      // Brand new 3rd connection without upgrade is blocked
+      expect(() => connectionService.assertConnectionAllowed(user.id, conn3)).toThrow(/limit/);
+      try {
+        connectionService.assertConnectionAllowed(user.id, conn3);
+      } catch (err) {
+        expect(err.code).toBe("connection_plan_locked");
+        expect(err.status).toBe(403);
+      }
+    });
+
+    it("rejects selectConnection when selecting an unsaved connection", () => {
+      const user = createUser("user_unsaved", "free");
+      const connA = "conn_a";
+      const connB = "conn_b";
+
+      store.recordConnectionUse(user.id, connA, fixedNow - 1000);
+
+      expect(() =>
+        connectionService.selectConnection({
+          userId: user.id,
+          selectConnectionId: "unsaved_conn",
+          deselectConnectionId: connA,
+        })
+      ).toThrow(/Cannot select unsaved connection/);
+    });
   });
 });

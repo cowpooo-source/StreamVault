@@ -352,7 +352,8 @@ function createEntitlementService({ store, db, now = Date.now, gracePeriodHours 
 
   function grantFriendFamily({ userId }) {
     const ts = getNow();
-    const existing = store.getEntitlementBySource("friend_family", "admin_grant");
+    const sourceId = `admin_grant:${userId}`;
+    const existing = store.getEntitlementBySource("friend_family", sourceId);
     if (existing) {
       store.updateEntitlementStatus(existing.id, "active", { startsAt: ts, endsAt: null });
       return store.getEntitlement(existing.id);
@@ -362,7 +363,7 @@ function createEntitlementService({ store, db, now = Date.now, gracePeriodHours 
       userId,
       tier: "standard",
       sourceType: "friend_family",
-      sourceId: "admin_grant",
+      sourceId,
       status: "active",
       startsAt: ts,
       endsAt: null,
@@ -370,7 +371,8 @@ function createEntitlementService({ store, db, now = Date.now, gracePeriodHours 
   }
 
   function revokeFriendFamily({ userId }) {
-    const existing = store.getEntitlementBySource("friend_family", "admin_grant");
+    const sourceId = `admin_grant:${userId}`;
+    const existing = store.getEntitlementBySource("friend_family", sourceId);
     if (existing) {
       store.updateEntitlementStatus(existing.id, "revoked");
       return store.getEntitlement(existing.id);

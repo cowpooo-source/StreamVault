@@ -56,6 +56,13 @@ const REQUIRED_CONFIG_KEYS = Object.freeze([
   "STRIPE_PRICE_STANDARD_PASS_30D",
   "STRIPE_PRICE_STANDARD_MONTHLY",
   "STRIPE_PRICE_STANDARD_YEARLY",
+  "STRIPE_LIVE_MODE",
+  "POLICY_TERMS_VERSION",
+  "POLICY_TERMS_URL",
+  "POLICY_PRIVACY_VERSION",
+  "POLICY_PRIVACY_URL",
+  "POLICY_REFUND_VERSION",
+  "POLICY_REFUND_URL",
 ]);
 
 function billingError(message, code = "billing_error", status = 400) {
@@ -65,7 +72,19 @@ function billingError(message, code = "billing_error", status = 400) {
   return err;
 }
 
-function resolvePolicies(env = {}) {
+function resolvePolicies(env = {}, strict = false) {
+  if (strict) {
+    const missingPolicies = [];
+    if (!env.POLICY_TERMS_VERSION) missingPolicies.push("POLICY_TERMS_VERSION");
+    if (!env.POLICY_TERMS_URL) missingPolicies.push("POLICY_TERMS_URL");
+    if (!env.POLICY_PRIVACY_VERSION) missingPolicies.push("POLICY_PRIVACY_VERSION");
+    if (!env.POLICY_PRIVACY_URL) missingPolicies.push("POLICY_PRIVACY_URL");
+    if (!env.POLICY_REFUND_VERSION) missingPolicies.push("POLICY_REFUND_VERSION");
+    if (!env.POLICY_REFUND_URL) missingPolicies.push("POLICY_REFUND_URL");
+    if (missingPolicies.length > 0) {
+      throw new Error(`Policy configuration incomplete. Missing variables: ${missingPolicies.join(", ")}`);
+    }
+  }
   return {
     terms: {
       version: env.POLICY_TERMS_VERSION || "v1",
@@ -181,7 +200,7 @@ function createBillingCatalog(env = process.env) {
   }
 
   function currentPolicies() {
-    return resolvePolicies(env);
+    return resolvePolicies(env, true);
   }
 
   return {

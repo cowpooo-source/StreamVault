@@ -278,7 +278,7 @@ async function authenticate(username, password, ip = "unknown", force = false) {
       accessEndsAt: effective.accessEndsAt,
       nextBillingAt: effective.nextBillingAt,
       cancelAtPeriodEnd: effective.cancelAtPeriodEnd,
-      maxConnections: user.max_connections,
+      maxConnections: limits.maxConnections,
       emailVerified: !!user.email_verified,
       subscription_cycle: user.subscription_cycle,
       subscription_expires_at: user.subscription_expires_at,
@@ -355,6 +355,7 @@ function verifyToken(token) {
       accessEndsAt: effective.accessEndsAt,
       nextBillingAt: effective.nextBillingAt,
       cancelAtPeriodEnd: effective.cancelAtPeriodEnd,
+      maxConnections: effective.limits.maxConnections,
       limits: effective.limits,
     };
   } catch {
