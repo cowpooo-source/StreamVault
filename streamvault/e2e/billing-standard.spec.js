@@ -54,6 +54,25 @@ test.describe("Standard Billing & Support Journeys", () => {
       });
     });
 
+    await appPage.route("**/api/billing/orders", async (route) => {
+      await route.fulfill({
+        json: {
+          orders: [
+            {
+              id: "ord_sample_1",
+              product_code: "standard_pass_30d",
+              amount: 399,
+              currency: "usd",
+              status: "paid",
+              is_refund_eligible: 1,
+              refunded_at: null,
+              created_at: Date.now() - 3600 * 1000,
+            },
+          ],
+        },
+      });
+    });
+
     await appPage.route("**/api/billing/history", async (route) => {
       await route.fulfill({
         json: {
@@ -97,7 +116,11 @@ test.describe("Standard Billing & Support Journeys", () => {
     await appPage.getByRole("button", { name: "Login" }).last().click();
 
     // Verify modal is visible
-    await expect(appPage.getByText("Account & Subscription Settings")).toBeVisible();
+    await expect(appPage.getByText("Account & Billing Settings")).toBeVisible();
+
+    // Switch to Billing tab
+    await appPage.getByRole("tab", { name: "Billing" }).click();
+
     await expect(appPage.getByText("Standard 30-Day Pass")).toBeVisible();
     await expect(appPage.getByText("$3.99")).toBeVisible();
 
@@ -105,8 +128,8 @@ test.describe("Standard Billing & Support Journeys", () => {
     await expect(appPage.getByText(/Friend & Family/i)).not.toBeVisible();
 
     // Agreement checkbox required before checkout
-    const agreementCheckbox = appPage.locator("#policy-agreement");
-    await agreementCheckbox.check();
+    const agreementCheckbox = appPage.locator("#billing-policy-agree");
+    await agreementCheckbox.check({ force: true });
 
     // Click Buy 30-Day Pass button
     const buyButton = appPage.getByRole("button", { name: /Buy 30-Day Pass/i });
@@ -161,6 +184,25 @@ test.describe("Standard Billing & Support Journeys", () => {
       });
     });
 
+    await appPage.route("**/api/billing/orders", async (route) => {
+      await route.fulfill({
+        json: {
+          orders: [
+            {
+              id: "ord_refundable_1",
+              product_code: "standard_pass_30d",
+              amount: 399,
+              currency: "usd",
+              status: "paid",
+              is_refund_eligible: 1,
+              refunded_at: null,
+              created_at: Date.now() - 3600 * 1000,
+            },
+          ],
+        },
+      });
+    });
+
     await appPage.route("**/api/billing/history", async (route) => {
       await route.fulfill({
         json: {
@@ -210,15 +252,20 @@ test.describe("Standard Billing & Support Journeys", () => {
     await appPage.getByPlaceholder("Password").fill("test-pass");
     await appPage.getByRole("button", { name: "Login" }).last().click();
 
-    // Click Request Full Refund button
-    const refundBtn = appPage.getByRole("button", { name: /Request Full Refund/i });
+    // Verify modal is visible and switch to Billing tab
+    await expect(appPage.getByText("Account & Billing Settings")).toBeVisible();
+    await appPage.getByRole("tab", { name: "Billing" }).click();
+
+    // Click Request Refund button
+    appPage.on("dialog", (dialog) => dialog.accept());
+    const refundBtn = appPage.getByRole("button", { name: /Request Refund/i });
     await expect(refundBtn).toBeVisible();
     await refundBtn.click();
 
     expect(refundRequested).toBe(true);
 
     // Switch to Support Tab
-    const supportTab = appPage.getByRole("button", { name: "Support" });
+    const supportTab = appPage.getByRole("tab", { name: "Support" });
     await supportTab.click();
 
     await expect(appPage.getByText("Contact Support")).toBeVisible();

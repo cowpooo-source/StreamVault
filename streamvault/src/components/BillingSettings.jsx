@@ -212,9 +212,9 @@ export default function BillingSettings({ billingApi, accessState = {}, onRefres
                 {orders.map((ord) => {
                   const isEligibleRefund =
                     ord.status === "paid" &&
-                    ord.checkout_mode === "payment" &&
-                    ord.refundable_until &&
-                    ord.refundable_until > Date.now();
+                    (ord.is_refund_eligible === 1 ||
+                      ord.is_refund_eligible === true ||
+                      (ord.refundable_until && ord.refundable_until > Date.now()));
 
                   return (
                     <tr key={ord.id} className="hover:bg-gray-800/40">

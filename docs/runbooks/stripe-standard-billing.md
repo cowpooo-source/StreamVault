@@ -142,7 +142,7 @@ If unexpected billing or webhook issues occur:
    ```bash
    sudo systemctl restart stalker-proxy
    ```
-3. Billing endpoints immediately return safe `billing_disabled` status (`503` / `400`), webhooks respond `404`, and existing IPTV streaming, login, and content sessions remain completely unaffected.
+3. New checkout sessions, purchases, and upgrades are immediately disabled (`billing_disabled` status). Webhook processing remains active (when `STRIPE_WEBHOOK_SECRET` is configured) so in-flight subscriptions, scheduled cancellations, and confirmed refunds continue to reconcile cleanly in the local ledger without leaving customer transactions stranded. Existing IPTV streaming, login, and content sessions remain completely unaffected.
 
 ---
 

@@ -207,7 +207,7 @@ function createBillingCatalog(env = process.env) {
 
   const POLICY_DOCUMENTS = {
     terms: {
-      v1: `# Terms of Service (Version 1)\n\nWelcome to StreamVault. By purchasing a subscription or 30-day pass, you agree to these Terms. StreamVault provides access to self-hosted and configured IPTV stream proxying. Single login for Free, two concurrent connections for Regular, three for Pro. Fair use applies.`,
+      v1: `# Terms of Service (Version 1)\n\nWelcome to StreamVault. By purchasing a subscription or 30-day pass, you agree to these Terms. StreamVault provides access to self-hosted and configured IPTV stream proxying. Single login with two concurrent connections for Free, up to five concurrent connections and three active logins for Standard. Fair use applies.`,
     },
     privacy: {
       v1: `# Privacy Policy (Version 1)\n\nStreamVault respects your privacy. All portal credentials, passwords, and MAC addresses are encrypted client-side using AES-GCM before transmission. Zero raw credential retention. Webhook payloads are hashed with SHA-256 for idempotency.`,

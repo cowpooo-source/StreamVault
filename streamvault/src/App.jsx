@@ -4528,6 +4528,22 @@ export default function App() {
           t={t}
         />
       , document.body)}
+      {showAccountModal && (
+        <AccountSettingsModal
+          isOpen={showAccountModal}
+          initialTab={accountModalTab}
+          onClose={() => setShowAccountModal(false)}
+          accessState={{
+            role: authUser?.role || "free",
+            plan: authUser?.plan || (authUser?.role === "pro" ? "pro" : authUser?.role === "regular" ? "standard" : "free"),
+            billingStatus: authUser?.billingStatus || "active",
+            limits: userLimits || { maxConnections: 2, maxLogins: 1 },
+            accessEndsAt: authUser?.accessEndsAt || null,
+          }}
+          billingApi={billingApi}
+          user={authUser || {}}
+        />
+      )}
     </>
   );
 

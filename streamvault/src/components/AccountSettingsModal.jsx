@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import AccountStatusCard from "./AccountStatusCard.jsx";
 import BillingSettings from "./BillingSettings.jsx";
 import SupportSettings from "./SupportSettings.jsx";
@@ -16,8 +17,11 @@ export default function AccountSettingsModal({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      style={{ position: "fixed", inset: 0, zIndex: 99999 }}
+    >
       <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
@@ -83,19 +87,15 @@ export default function AccountSettingsModal({
           </button>
         </div>
 
-        {/* Tab Content */}
-        <div className="p-6 overflow-y-auto flex-1">
+        {/* Modal Body */}
+        <div className="p-6 overflow-y-auto flex-1 bg-gray-900/90">
           {activeTab === "account" && (
-            <div className="space-y-6 text-white">
-              <AccountStatusCard
-                accessState={accessState}
-                onManageBilling={() => setActiveTab("billing")}
-                onOpenUpgrade={() => setActiveTab("billing")}
-              />
+            <div className="space-y-6">
+              <AccountStatusCard access={accessState} onOpenBilling={() => setActiveTab("billing")} />
 
-              <div className="bg-gray-800/60 border border-gray-700/80 rounded-xl p-5 space-y-3">
-                <h4 className="font-bold text-base text-gray-200">User Profile</h4>
-                <div className="text-sm text-gray-300 space-y-1">
+              <div className="bg-gray-800 border border-gray-700 rounded-xl p-5 text-white">
+                <h4 className="font-bold text-base mb-2">User Profile</h4>
+                <div className="space-y-1 text-sm text-gray-300">
                   <p>
                     <span className="text-gray-400">Username:</span> {user.username || "—"}
                   </p>
@@ -130,6 +130,7 @@ export default function AccountSettingsModal({
           {activeTab === "support" && <SupportSettings billingApi={billingApi} />}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
