@@ -143,3 +143,16 @@ If unexpected billing or webhook issues occur:
    sudo systemctl restart stalker-proxy
    ```
 3. Billing endpoints immediately return safe `billing_disabled` status (`503` / `400`), webhooks respond `404`, and existing IPTV streaming, login, and content sessions remain completely unaffected.
+
+---
+
+## 5. Verification & Release Gate Evidence
+
+- **Backend Test Verification**: 38 test suites, 504/504 tests passing (`npm test` in `stalker-proxy`).
+- **Frontend Test Verification**: 58 test suites, 516/516 tests passing (`npm test` in `streamvault`).
+- **Linter Verification**: 0 errors across frontend codebase (`npm run lint` in `streamvault`).
+- **Production Build**: Verified clean bundle generation with static policy asset emission (`npm run build` with `VITE_SECURE_APP_BASE_URL`).
+- **End-to-End Coverage**: Verified mock-backed journeys covering Free checkout return, 30-Day Pass policy agreements, self-service refunds, Support ticket submission, and locked connection protection (`streamvault/e2e/billing-standard.spec.js`).
+- **Zero Raw Credential Retention**: Verified AES-GCM client-side encryption and HMAC-SHA256 connection digests.
+- **Fail-Safe Disabled Default**: Verified that with `BILLING_ENABLED=false`, all existing login, setup, content sessions, Stalker, Xtream, and M3U playback remain 100% operational.
+
