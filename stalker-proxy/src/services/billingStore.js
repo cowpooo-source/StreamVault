@@ -418,6 +418,11 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
         WHERE status IN ('queued', 'pending', 'failed') AND next_attempt_at <= ? AND attempt_count < 5
         ORDER BY next_attempt_at ASC LIMIT ?
       `),
+      claimOutboxRow: db.prepare(`
+        UPDATE notification_outbox
+        SET status = 'processing', next_attempt_at = @lockUntil, updated_at = @ts
+        WHERE id = @id
+      `),
       updateOutboxSuccess: db.prepare(`UPDATE notification_outbox SET status = 'sent', updated_at = ? WHERE id = ?`),
       updateOutboxFailure: db.prepare(`
         UPDATE notification_outbox SET
@@ -427,6 +432,17 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
           last_error_code = @lastErrorCode,
           updated_at = @updatedAt
         WHERE id = @id
+      `),
+      listStaleWebhookEvents: db.prepare(`
+        SELECT * FROM billing_events
+        WHERE (status = 'processing' AND received_at <= ?)
+           OR (status = 'failed' AND (attempt_count >= 5 OR received_at <= ?))
+        LIMIT ?
+      `),
+      markEventDeadLetter: db.prepare(`
+        UPDATE billing_events
+        SET status = 'dead_letter'
+        WHERE stripe_event_id = ?
       `),
     };
   }
@@ -912,6 +928,23 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     return stmts.getDueOutbox.all(ts, limit);
   }
 
+  function claimDueNotifications(nowTs = null, limit = 50, lockDurationMs = 300000) {
+    if (!stmts) init();
+    const ts = nowTs !== null ? nowTs : getNow();
+    const lockUntil = ts + lockDurationMs;
+
+    const claimTx = db.transaction(() => {
+      const rows = stmts.getDueOutbox.all(ts, limit);
+      if (!rows || rows.length === 0) return [];
+      for (const row of rows) {
+        stmts.claimOutboxRow.run({ id: row.id, lockUntil, ts });
+      }
+      return rows;
+    });
+
+    return claimTx();
+  }
+
   function markNotificationSent(id) {
     if (!stmts) init();
     stmts.updateOutboxSuccess.run(getNow(), id);
@@ -1014,6 +1047,14 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       if (!stmts) init();
       return stmts.listStaleOrders.all(maxCreatedAt);
     },
+    listStaleWebhookEvents: (ts, limit = 50) => {
+      if (!stmts) init();
+      return stmts.listStaleWebhookEvents.all(ts, ts, limit);
+    },
+    markEventDeadLetter: (stripeEventId) => {
+      if (!stmts) init();
+      return stmts.markEventDeadLetter.run(stripeEventId);
+    },
     recordAuditLog: ({ action, targetType = null, targetId = null, actorId = null, details = {} } = {}) => {
       if (!stmts) init();
       const ts = getNow();
@@ -1036,6 +1077,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     // Notification Outbox
     enqueueNotification,
     getDueNotifications,
+    claimDueNotifications,
     markNotificationSent,
     markNotificationFailed,
     createTicketWithNotifications,

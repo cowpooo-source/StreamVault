@@ -310,7 +310,12 @@ function createApp(deps) {
   if (reconciliationService) {
     app.post("/api/admin/reconcile", auth.requireAuth, auth.requireRole("admin"), validateAdminCsrf, async (req, res) => {
       try {
-        const summary = await reconciliationService.runFullReconciliation();
+        const { userId, orderId, stripeSubscriptionId, subscriptionId } = req.body || {};
+        const summary = await reconciliationService.runFullReconciliation({
+          userId: userId ? Number(userId) : null,
+          orderId: orderId ? String(orderId) : null,
+          stripeSubscriptionId: (stripeSubscriptionId || subscriptionId) ? String(stripeSubscriptionId || subscriptionId) : null,
+        });
         res.json({ ok: true, summary });
       } catch (err) {
         res.status(500).json({ error: err.message });

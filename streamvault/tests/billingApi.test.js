@@ -112,7 +112,7 @@ describe("billingApi frontend client", () => {
   it("support ticket functions list and create tickets", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ tickets: [{ id: "tkt_1", category: "billing" }] }),
+      json: async () => ({ tickets: [{ id: "tkt_1", category: "billing_refund" }] }),
     });
 
     const list = await api.listTickets();
@@ -124,7 +124,7 @@ describe("billingApi frontend client", () => {
     });
 
     const created = await api.createTicket({
-      category: "playback",
+      category: "technical",
       message: "Streaming buffer issue on channel 12.",
     });
     expect(created.ticketId).toBe("tkt_2");

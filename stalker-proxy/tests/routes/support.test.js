@@ -89,7 +89,7 @@ describe("Support Routes", () => {
 
     const resCreate = await request(app)
       .post("/api/support/tickets")
-      .send({ category: "billing", message: "Help needed on billing." });
+      .send({ category: "billing_refund", message: "Help needed on billing." });
     expect(resCreate.status).toBe(401);
   });
 
@@ -98,7 +98,7 @@ describe("Support Routes", () => {
       .post("/api/support/tickets")
       .set("Authorization", `Bearer ${userToken}`)
       .send({
-        category: "billing",
+        category: "billing_refund",
         message: "I need help with my payment invoice.",
         orderId: "ord_123",
       });
@@ -106,7 +106,7 @@ describe("Support Routes", () => {
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty("ticketId");
     expect(res.body.status).toBe("open");
-    expect(res.body.category).toBe("billing");
+    expect(res.body.category).toBe("billing_refund");
 
     // List tickets
     const listRes = await request(app)
@@ -131,7 +131,7 @@ describe("Support Routes", () => {
     const resShort = await request(app)
       .post("/api/support/tickets")
       .set("Authorization", `Bearer ${userToken}`)
-      .send({ category: "billing", message: "Too short" });
+      .send({ category: "billing_refund", message: "Too short" });
 
     expect(resShort.status).toBe(400);
 

@@ -34,7 +34,7 @@ describe("supportService", () => {
       POLICY_REFUND_VERSION: "v1",
       POLICY_REFUND_URL: "https://media.portalheaven.stream/legal/refund-v1.html",
       SUPPORT_EMAIL: "support@portalheaven.stream",
-      DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/xyz",
+      SUPPORT_DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/xyz",
     });
 
     mockMailService = {

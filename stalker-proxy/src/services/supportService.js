@@ -8,10 +8,6 @@ const ALLOWED_CATEGORIES = Object.freeze([
   "account",
   "technical",
   "other",
-  // Legacy / UI aliases
-  "billing",
-  "playback",
-  "portal",
 ]);
 
 function createSupportService(deps) {
@@ -92,14 +88,14 @@ function createSupportService(deps) {
       nextAttemptAt: ts,
     });
 
-    // 3. Discord webhook alert (if configured)
-    const discordWebhookUrl = catalog?.discordWebhookUrl || process.env.DISCORD_WEBHOOK_URL;
-    if (discordWebhookUrl) {
+    // 3. Isolated Support Discord webhook alert
+    const supportDiscordWebhookUrl = catalog?.supportDiscordWebhookUrl || process.env.SUPPORT_DISCORD_WEBHOOK_URL || null;
+    if (supportDiscordWebhookUrl) {
       notifications.push({
         id: `notif_${crypto.randomBytes(8).toString("hex")}`,
         channel: "discord",
         template: "ticket_discord_alert",
-        recipient: discordWebhookUrl,
+        recipient: supportDiscordWebhookUrl,
         payloadJson: JSON.stringify({
           ticketId,
           userId,
@@ -141,9 +137,12 @@ function createSupportService(deps) {
     return ticket;
   }
 
-  async function processOutbox({ batchSize = 20 } = {}) {
+  async function processOutbox({ batchSize = 20, lockDurationMs = 300000 } = {}) {
     const ts = getNow();
-    const pendingNotifications = store.getDueNotifications(ts, batchSize);
+    // Concurrency-safe atomic claim
+    const pendingNotifications = store.claimDueNotifications
+      ? store.claimDueNotifications(ts, batchSize, lockDurationMs)
+      : store.getDueNotifications(ts, batchSize);
 
     let sentCount = 0;
     let failedCount = 0;
@@ -158,7 +157,7 @@ function createSupportService(deps) {
         const recipient = notif.recipient || notif.recipient_email;
 
         if (notif.channel === "discord" && recipient && fetchFn) {
-          await fetchFn(recipient, {
+          const res = await fetchFn(recipient, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -176,6 +175,10 @@ function createSupportService(deps) {
               ],
             }),
           });
+          if (!res || !res.ok) {
+            const status = res ? res.status : "unknown";
+            throw new Error(`Discord webhook responded with status ${status}`);
+          }
         } else if (notif.channel === "email" && recipient && mailService && typeof mailService.sendMail === "function") {
           const isUserAck = notif.template === "ticket_received";
           const subject = isUserAck

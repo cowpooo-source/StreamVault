@@ -22,7 +22,7 @@ describe("reconciliationService", () => {
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'free',
+        role TEXT NOT NULL DEFAULT 'regular',
         max_connections INTEGER NOT NULL DEFAULT 2
       );
     `);
@@ -67,8 +67,8 @@ describe("reconciliationService", () => {
   });
 
   describe("reconcileExpiredGrants", () => {
-    it("expires passes and friend_family grants past their ends_at timestamp and demotes user", async () => {
-      db.prepare("INSERT INTO users (id, username, role, max_connections) VALUES (1, 'user1', 'free', 2)").run();
+    it("expires passes and friend_family grants past ends_at without modifying users.role", async () => {
+      db.prepare("INSERT INTO users (id, username, role, max_connections) VALUES (1, 'user1', 'regular', 2)").run();
 
       // Pass expired 1 day ago
       store.createEntitlement({
@@ -90,10 +90,9 @@ describe("reconciliationService", () => {
       const ent = store.getEntitlement("ent_expired_pass");
       expect(ent.status).toBe("expired");
 
-      // User role demoted to free
-      const user = db.prepare("SELECT role, max_connections FROM users WHERE id = 1").get();
-      expect(user.role).toBe("free");
-      expect(user.max_connections).toBe(2);
+      // User's permanent role in users table remains untouched ('regular')
+      const user = db.prepare("SELECT role FROM users WHERE id = 1").get();
+      expect(user.role).toBe("regular");
     });
 
     it("reconciles connection locks on demoted users", async () => {
@@ -170,13 +169,42 @@ describe("reconciliationService", () => {
   });
 
   describe("runFullReconciliation", () => {
-    it("runs full sweep and records audit log", async () => {
-      const summary = await reconciliationService.runFullReconciliation();
+    it("runs target-scoped sweep for specific user and records audit log", async () => {
+      db.prepare("INSERT INTO users (id, username, role, max_connections) VALUES (4, 'user4', 'regular', 2)").run();
+
+      const summary = await reconciliationService.runFullReconciliation({ userId: 4 });
+      expect(summary.target).toBe("user:4");
       expect(summary).toHaveProperty("expiredGrants");
-      expect(summary).toHaveProperty("resolvedDrifts");
 
       const auditRows = store.listAuditLogs ? store.listAuditLogs() : [];
       expect(auditRows.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("prevents overlapping concurrent reconciliation executions", async () => {
+      let resolveFirst;
+      const firstPromise = new Promise((r) => { resolveFirst = r; });
+      mockStripeGateway.retrieveSubscription.mockImplementation(async () => {
+        await firstPromise;
+        return null;
+      });
+
+      store.upsertSubscription({
+        userId: 5,
+        productCode: "standard_monthly",
+        stripeSubscriptionId: "sub_async_1",
+        status: "active",
+        currentPeriodStart: fixedNow,
+        currentPeriodEnd: fixedNow + DAY_MS,
+      });
+
+      const p1 = reconciliationService.runFullReconciliation();
+      const p2 = await reconciliationService.runFullReconciliation();
+
+      expect(p2.skipped).toBe(true);
+      expect(p2.reason).toBe("reconciliation_already_running");
+
+      resolveFirst();
+      await p1;
     });
   });
 });
