@@ -93,6 +93,7 @@ update-app.js
 !streamvault/faq.html
 !streamvault/privacy.html
 !streamvault/terms.html
+!streamvault/public/legal/*.html
 !stalker-proxy/src/analytics.html
 *.json
 !package.json

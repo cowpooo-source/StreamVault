@@ -213,7 +213,7 @@ function createBillingCatalog(env = process.env) {
       v1: `# Privacy Policy (Version 1)\n\nStreamVault respects your privacy. All portal credentials, passwords, and MAC addresses are encrypted client-side using AES-GCM before transmission. Zero raw credential retention. Webhook payloads are hashed with SHA-256 for idempotency.`,
     },
     refund: {
-      v1: `# Refund Policy (Version 1)\n\nWe offer a 72-hour full refund guarantee on all 30-Day Pass purchases. Self-service refund is accessible directly from your billing settings within 72 hours of purchase. Recurring subscriptions can be canceled anytime with access continuing until the end of the billing period.`,
+      v1: `# Refund Policy (Version 1)\n\nWe offer a 7-calendar-day full refund guarantee on all 30-Day Pass and subscription purchases. Self-service refund is accessible directly from your billing settings within 7 calendar days of purchase. Recurring subscriptions can be canceled anytime with access continuing until the end of the billing period.`,
     },
   };
 

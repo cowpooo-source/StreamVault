@@ -30,11 +30,18 @@ The build emits modern and legacy browser bundles. Deploy the complete dist/ dir
 | VITE_SECURE_APP_BASE_URL | HTTPS application URL used for auth, logout, and content return navigation |
 | VITE_TURNSTILE_SITE_KEY | Cloudflare Turnstile frontend site key |
 | VITE_GA_MEASUREMENT_ID | Optional GA4 measurement ID |
-| VITE_VAST_URL | Optional VAST ad source |
+| VITE_VAST_URL | Optional HilltopAds VAST XML source; do not load this URL as a JavaScript tag |
 | VITE_ENABLE_VAST | Enable VAST playback for eligible accounts |
 | VITE_ENABLE_ADSTERRA | Enable the Adsterra integration |
 | VITE_ENABLE_HILLTOP | Enable the Hilltop integration |
+| VITE_ENABLE_HILLTOP_POPUNDER | Enable the Hilltop popunder loader |
+| VITE_HILLTOP_INPAGE_PUSH_URL | HilltopAds in-page push script URL |
+| VITE_HILLTOP_POPUNDER_URL | HilltopAds popunder script URL |
 | VITE_STALKER_LAZY_CATALOG_ENABLED | Enable bounded, on-demand Stalker catalog loading |
+
+VAST playback is limited to eligible guest/free accounts and runs after successful content starts on plays 1, 5, 10, 15, and so on. Failed starts and reconnects do not consume a frequency slot.
+
+The HilltopAds popunder loader is opt-in and runs only on eligible app pages. The application prevents duplicate loader insertion during rerenders, but it does not control ad impressions after the provider script is loaded. Configure frequency capping and the delay between impressions in HilltopAds campaign settings, or ask HilltopAds support/account management to change the publisher trigger frequency. The supplied popunder snippet does not expose a documented client-side delay option.
 
 Production configuration belongs in the deployment environment. Never commit .env, provider credentials, CAPTCHA secrets, or analytics API secrets.
 

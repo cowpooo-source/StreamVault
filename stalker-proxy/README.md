@@ -26,6 +26,10 @@ The default port is 3001. The backend creates SQLite account and cache tables on
 | Route | Purpose |
 | --- | --- |
 | /api/auth/* | Login, registration, logout, password, account status, and SSO support |
+| /api/billing/* | Public config, Checkout, Customer Portal, Cancellation, Refunds, Orders |
+| /api/support/* | Authenticated ticket creation, retrieval, and status |
+| /api/account/connections/* | HMAC-backed connection reconciliation and plan-limit swaps |
+| /api/admin/entitlements/* | Admin-only Friend & Family grant/revoke and target reconciliation |
 | /api/content-session | Create, validate, refresh, and revoke token-gated content sessions |
 | /api/sync/* | Account and guest connection, favorite, and history synchronization |
 | /stalker/handshake | Portal device handshake |
