@@ -44,8 +44,12 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
       switch (eventType) {
         case "checkout.session.completed": {
           const session = event.data?.object || {};
-          const orderId = session.metadata?.order_id;
-          const userId = session.metadata?.user_id ? Number(session.metadata.user_id) : null;
+          const orderId = session.metadata?.order_id || session.metadata?.orderId || session.client_reference_id;
+          const userId = session.metadata?.user_id
+            ? Number(session.metadata.user_id)
+            : session.metadata?.userId
+            ? Number(session.metadata.userId)
+            : null;
           const customerId = session.customer;
 
           if (userId && customerId) {
@@ -254,7 +258,7 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
           if (paymentIntentId) {
             const order = store.getOrderByPaymentIntentId(paymentIntentId);
             if (order) {
-              store.updateOrderStatus(order.id, "refunded");
+              store.updateOrderStatus(order.id, "refunded", { refundedAt: getNow() });
               entitlementService.revokeRefundedEntitlement({
                 userId: order.user_id,
                 orderId: order.id,

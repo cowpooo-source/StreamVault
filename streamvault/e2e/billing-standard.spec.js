@@ -127,12 +127,16 @@ test.describe("Standard Billing & Support Journeys", () => {
     // Verify Pro and Friend & Family are NOT exposed as public choices
     await expect(appPage.getByText(/Friend & Family/i)).not.toBeVisible();
 
+    const buyButton = appPage.getByRole("button", { name: /Buy 30-Day Pass/i });
+    // Verify checkout button is disabled before checking policy agreement
+    await expect(buyButton).toBeDisabled();
+
     // Agreement checkbox required before checkout
     const agreementCheckbox = appPage.locator("#billing-policy-agree");
     await agreementCheckbox.check({ force: true });
 
-    // Click Buy 30-Day Pass button
-    const buyButton = appPage.getByRole("button", { name: /Buy 30-Day Pass/i });
+    // Verify checkout button is enabled after policy agreement
+    await expect(buyButton).toBeEnabled();
     await buyButton.click();
 
     // Verify checkout payload

@@ -1,6 +1,6 @@
-"use strict";
-
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const FIXED_PRODUCTS = Object.freeze({
   standard_pass_30d: {
@@ -218,9 +218,24 @@ function createBillingCatalog(env = process.env) {
   };
 
   function getPolicyContent(type, version = "v1") {
+    const potentialPaths = [
+      path.resolve(__dirname, "../../../streamvault/public/legal", `${type}-${version}.html`),
+      path.resolve(__dirname, "../../public/legal", `${type}-${version}.html`),
+      path.resolve(process.cwd(), "streamvault/public/legal", `${type}-${version}.html`),
+      path.resolve(process.cwd(), "public/legal", `${type}-${version}.html`),
+    ];
+
+    for (const p of potentialPaths) {
+      try {
+        if (fs.existsSync(p)) {
+          return fs.readFileSync(p, "utf8");
+        }
+      } catch {}
+    }
+
     const doc = POLICY_DOCUMENTS[type]?.[version];
     if (doc) return doc;
-    return `# StreamVault ${type} Policy (Version ${version})\n\nOfficial policy document for version ${version}.`;
+    return `<!DOCTYPE html><html><body><h1>StreamVault ${type} Policy (Version ${version})</h1></body></html>`;
   }
 
   function getPolicyContentSha256(type, version = "v1") {
