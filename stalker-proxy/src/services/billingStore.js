@@ -415,7 +415,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       `),
       getDueOutbox: db.prepare(`
         SELECT * FROM notification_outbox
-        WHERE status IN ('queued', 'pending', 'failed') AND next_attempt_at <= ? AND attempt_count < 5
+        WHERE status IN ('queued', 'pending', 'failed', 'processing') AND next_attempt_at <= ? AND attempt_count < 5
         ORDER BY next_attempt_at ASC LIMIT ?
       `),
       claimOutboxRow: db.prepare(`

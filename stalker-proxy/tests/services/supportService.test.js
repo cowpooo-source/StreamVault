@@ -212,5 +212,26 @@ describe("supportService", () => {
       const laterDue = store.getDueNotifications(fixedNow + 10 * 60 * 1000);
       expect(laterDue.length).toBeGreaterThanOrEqual(1);
     });
+
+    it("reclaims processing notifications if a worker crashed and lock expired", async () => {
+      await supportService.createTicket({
+        userId: 100,
+        userEmail: "crash_user@example.com",
+        category: "technical",
+        message: "Video playback issue on screen.",
+      });
+
+      // Claim notifications (sets status = 'processing', next_attempt_at = fixedNow + 300000)
+      const claimed = store.claimDueNotifications(fixedNow, 10, 300000);
+      expect(claimed.length).toBe(3);
+
+      // Immediately after claiming, no more due notifications
+      expect(store.getDueNotifications(fixedNow).length).toBe(0);
+
+      // After lock expires at fixedNow + 300001, processing rows become due again
+      const expiredDue = store.getDueNotifications(fixedNow + 300001);
+      expect(expiredDue.length).toBe(3);
+      expect(expiredDue[0].status).toBe("processing");
+    });
   });
 });

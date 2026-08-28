@@ -166,7 +166,7 @@ function createReconciliationService(deps) {
       const staleEvents = store.listStaleWebhookEvents(ts, 50);
       for (const ev of staleEvents) {
         if (typeof store.markEventDeadLetter === "function") {
-          store.markEventDeadLetter(ev.id);
+          store.markEventDeadLetter(ev.stripe_event_id || ev.id);
         }
         staleWebhooksFlagged++;
       }

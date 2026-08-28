@@ -206,5 +206,21 @@ describe("reconciliationService", () => {
       resolveFirst();
       await p1;
     });
+
+    it("identifies and marks stale webhook events as dead-letter", async () => {
+      db.prepare(`
+        INSERT INTO billing_events (
+          stripe_event_id, event_type, livemode, stripe_created_at, status, payload_sha256, attempt_count, received_at
+        ) VALUES (
+          'evt_stale_1', 'customer.subscription.updated', 0, @ts, 'failed', 'abc123sha', 5, @ts
+        )
+      `).run({ ts: fixedNow - 2 * DAY_MS });
+
+      const result = await reconciliationService.reconcileStaleOrdersAndWebhooks();
+      expect(result.staleWebhooksFlagged).toBe(1);
+
+      const event = db.prepare("SELECT status FROM billing_events WHERE stripe_event_id = 'evt_stale_1'").get();
+      expect(event.status).toBe("dead_letter");
+    });
   });
 });

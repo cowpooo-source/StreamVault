@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 
 export default function SupportSettings({ billingApi }) {
   const [tickets, setTickets] = useState([]);
-  const [category, setCategory] = useState("billing");
+  const [category, setCategory] = useState("billing_refund");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
