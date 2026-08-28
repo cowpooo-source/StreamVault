@@ -34,7 +34,7 @@ describe("SupportSettings Component", () => {
     });
 
     const categorySelect = screen.getByLabelText(/Category/i);
-    fireEvent.change(categorySelect, { target: { value: "billing" } });
+    fireEvent.change(categorySelect, { target: { value: "billing_refund" } });
 
     const messageInput = screen.getByLabelText(/Message/i);
     fireEvent.change(messageInput, { target: { value: "I need help with my annual subscription charge." } });
@@ -45,7 +45,7 @@ describe("SupportSettings Component", () => {
     await waitFor(() => {
       expect(mockBillingApi.createTicket).toHaveBeenCalledWith(
         expect.objectContaining({
-          category: "billing",
+          category: "billing_refund",
           message: "I need help with my annual subscription charge.",
         })
       );

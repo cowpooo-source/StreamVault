@@ -20,16 +20,24 @@ function createSupportRouter(deps) {
 
     if (origin) {
       try {
-        if (new URL(origin).host !== host) {
+        const parsed = new URL(origin);
+        if (parsed.host !== host) {
           return res.status(403).json({ error: "Cross-origin support request rejected", code: "csrf_rejected" });
+        }
+        if (parsed.protocol !== "https:" && process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
+          return res.status(403).json({ error: "HTTPS control plane required for support operations", code: "https_required" });
         }
       } catch {
         return res.status(403).json({ error: "Invalid origin", code: "csrf_rejected" });
       }
     } else if (referer) {
       try {
-        if (new URL(referer).host !== host) {
+        const parsed = new URL(referer);
+        if (parsed.host !== host) {
           return res.status(403).json({ error: "Cross-origin support request rejected", code: "csrf_rejected" });
+        }
+        if (parsed.protocol !== "https:" && process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
+          return res.status(403).json({ error: "HTTPS control plane required for support operations", code: "https_required" });
         }
       } catch {
         return res.status(403).json({ error: "Invalid referer", code: "csrf_rejected" });

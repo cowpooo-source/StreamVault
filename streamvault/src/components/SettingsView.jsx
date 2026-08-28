@@ -9,7 +9,7 @@ import {
   subscribeAnalyticsConsent,
 } from '../analytics.js';
 
-export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings, themeName, themeOptions = [], onThemeChange, language, languageOptions = {}, onLanguageChange, onFeedback, onLogout, maxConnections }) {
+export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings, onOpenAccountSettings, themeName, themeOptions = [], onThemeChange, language, languageOptions = {}, onLanguageChange, onFeedback, onLogout, maxConnections }) {
   const [tab, setTab] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("settingsTab");
     return ["general", "account", "data"].includes(requested) ? requested : "general";
@@ -121,6 +121,21 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
 
       {tab === "account" && (
         <div style={{display:"flex",flexDirection:"column",gap:"1.2rem"}}>
+          <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1.2rem",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:".8rem"}}>
+            <div>
+              <div style={{fontSize:".95rem",fontWeight:700,color:"var(--t1)"}}>Account Plan & Subscriptions</div>
+              <div style={{fontSize:".78rem",color:"var(--t3)",marginTop:".2rem"}}>Manage your active subscription, 30-day pass, connection slots, and billing history.</div>
+            </div>
+            <button
+              type="button"
+              className="btn-go"
+              style={{padding:".5rem 1.2rem",fontSize:".82rem",fontWeight:600}}
+              onClick={() => onOpenAccountSettings?.("billing")}
+            >
+              Billing & Plans
+            </button>
+          </div>
+
           <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1.2rem"}}>
             <div style={{fontSize:".7rem",textTransform:"uppercase",letterSpacing:".08em",color:"var(--t3)",marginBottom:".8rem",fontWeight:600}}>Profile</div>
             {authUser ? (

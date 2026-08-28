@@ -217,7 +217,11 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
 
       // All Entitlements & Subscriptions
       listAllActiveEntitlements: db.prepare(`SELECT * FROM billing_entitlements WHERE status = 'active'`),
+      listDueScheduledEntitlements: db.prepare(`SELECT * FROM billing_entitlements WHERE status = 'scheduled' AND starts_at <= ?`),
       listAllSubscriptions: db.prepare(`SELECT * FROM billing_subscriptions`),
+      listSubscriptionsByStatus: db.prepare(`SELECT * FROM billing_subscriptions WHERE status IN ('active', 'past_due') LIMIT ?`),
+      listExpiredGraceSubscriptions: db.prepare(`SELECT * FROM billing_subscriptions WHERE status = 'past_due' AND grace_until IS NOT NULL AND grace_until <= ?`),
+      listStaleOrders: db.prepare(`SELECT * FROM billing_orders WHERE status IN ('created', 'pending') AND created_at <= ?`),
       // Customers
       upsertCustomer: db.prepare(`
         INSERT INTO billing_customers (user_id, stripe_customer_id, created_at, updated_at)
@@ -990,9 +994,25 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       if (!stmts) init();
       return stmts.listAllActiveEntitlements.all();
     },
+    listDueScheduledEntitlements: (ts) => {
+      if (!stmts) init();
+      return stmts.listDueScheduledEntitlements.all(ts);
+    },
     listAllSubscriptions: () => {
       if (!stmts) init();
       return stmts.listAllSubscriptions.all();
+    },
+    listSubscriptionsByStatus: (limit = 50) => {
+      if (!stmts) init();
+      return stmts.listSubscriptionsByStatus.all(limit);
+    },
+    listExpiredGraceSubscriptions: (ts) => {
+      if (!stmts) init();
+      return stmts.listExpiredGraceSubscriptions.all(ts);
+    },
+    listStaleOrders: (maxCreatedAt) => {
+      if (!stmts) init();
+      return stmts.listStaleOrders.all(maxCreatedAt);
     },
     recordAuditLog: ({ action, targetType = null, targetId = null, actorId = null, details = {} } = {}) => {
       if (!stmts) init();

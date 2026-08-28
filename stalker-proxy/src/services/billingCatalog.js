@@ -255,6 +255,7 @@ function createBillingCatalog(env = process.env) {
     gracePeriodHours,
     appUrl,
     supportEmail,
+    discordWebhookUrl: env.DISCORD_WEBHOOK_URL || null,
     products: Object.values(productsMap),
     getProduct,
     listPublicProducts,

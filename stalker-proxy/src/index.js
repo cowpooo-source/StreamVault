@@ -99,6 +99,25 @@ if (require.main === module) {
   setInterval(system.trackDailyBandwidth, 60000); // every minute
   setInterval(() => auth.cleanupSessions(), 60 * 60 * 1000); // every hour
 
+  if (app.locals.supportService) {
+    setInterval(() => {
+      app.locals.supportService.processOutbox().catch((err) => console.error("Outbox process error:", err.message));
+    }, 60 * 1000); // every minute
+  }
+
+  if (app.locals.reconciliationService) {
+    // Run startup sweep
+    app.locals.reconciliationService.runFullReconciliation()
+      .then((summary) => console.log("Startup reconciliation completed:", summary))
+      .catch((err) => console.error("Startup reconciliation error:", err.message));
+
+    // Schedule 10-minute reconciliation sweep
+    setInterval(() => {
+      app.locals.reconciliationService.runFullReconciliation()
+        .catch((err) => console.error("Periodic reconciliation error:", err.message));
+    }, 10 * 60 * 1000);
+  }
+
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 }

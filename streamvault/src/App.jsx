@@ -1750,6 +1750,17 @@ export default function App() {
   const [isGuest, setIsGuest] = useState(false);
   const [resetToken, setResetToken] = useState(null);
 
+  // ── Account & Billing settings modal
+  const [showAccountModal, setShowAccountModal] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("settingsTab") === "billing" || params.get("openBilling") === "true";
+  });
+  const [accountModalTab, setAccountModalTab] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("settingsTab") === "billing" ? "billing" : "account";
+  });
+  const billingApi = useMemo(() => createBillingApi({ baseUrl: API, getAuthToken: () => authUser?.token }), [authUser?.token]);
+
   const liveGridRef = useRef(null);
   const stalkerCatalogApiRef = useRef(null);
   const stalkerCatalogCacheRef = useRef(null);
@@ -4805,6 +4816,7 @@ export default function App() {
             onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
             contentMode={httpContentMode}
             onOpenSecureSettings={() => window.location.assign(`${getAppHomeUrl()}?section=settings&settingsTab=data`)}
+            onOpenAccountSettings={(tab) => { setAccountModalTab(tab || "billing"); setShowAccountModal(true); }}
             themeName={themeName} themeOptions={THEME_NAMES} onThemeChange={setThemeName}
             language={lang} languageOptions={LANG_META} onLanguageChange={setLang}
             onFeedback={() => setFbOpen(true)} onLogout={handleLogout} maxConnections={userLimits?.maxConnections ?? 5} />
@@ -5275,6 +5287,23 @@ export default function App() {
           </div>
         );
       })()}
+
+      {showAccountModal && (
+        <AccountSettingsModal
+          isOpen={showAccountModal}
+          initialTab={accountModalTab}
+          onClose={() => setShowAccountModal(false)}
+          accessState={{
+            role: authUser?.role || "free",
+            plan: authUser?.plan || (authUser?.role === "pro" ? "pro" : authUser?.role === "regular" ? "standard" : "free"),
+            billingStatus: authUser?.billingStatus || "active",
+            limits: userLimits || { maxConnections: 2, maxLogins: 1 },
+            accessEndsAt: authUser?.accessEndsAt || null,
+          }}
+          billingApi={billingApi}
+          user={authUser || {}}
+        />
+      )}
     </div>
   );
 }

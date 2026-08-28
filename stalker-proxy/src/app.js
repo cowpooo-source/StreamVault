@@ -210,7 +210,12 @@ function createApp(deps) {
     entitlementService,
     stripeGateway,
     connectionAccessService,
+    supportService,
   }) : null);
+
+  app.locals.supportService = supportService;
+  app.locals.reconciliationService = reconciliationService;
+  app.locals.billingStore = billingStore;
 
   const routerDeps = { cache, auth, fetch, system, email, pool, contentSessionStore: deps.contentSessionStore, connectionAccessService, isUrlAllowed: deps.isUrlAllowed || isUrlAllowed, fetchWithRedirectCheck, transferTimeout, summarizeUpstreamHeaders, buildStalkerStreamHeaders, safeError, getSession, portalFetchRetry, portalFetchChannelCatalog, portalFetchChannelCatalogPage, agentFor };
 
@@ -236,8 +241,47 @@ function createApp(deps) {
   if (supportService) {
     app.use("/api/support", createSupportRouter({ auth, supportService }));
   }
+  function validateAdminCsrf(req, res, next) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      return next();
+    }
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+    const host = req.headers.host;
+
+    if (origin) {
+      try {
+        const parsed = new URL(origin);
+        if (parsed.host !== host) {
+          return res.status(403).json({ error: "Cross-origin admin request rejected", code: "csrf_rejected" });
+        }
+        if (parsed.protocol !== "https:" && process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
+          return res.status(403).json({ error: "HTTPS control plane required for admin operations", code: "https_required" });
+        }
+      } catch {
+        return res.status(403).json({ error: "Invalid origin", code: "csrf_rejected" });
+      }
+    } else if (referer) {
+      try {
+        const parsed = new URL(referer);
+        if (parsed.host !== host) {
+          return res.status(403).json({ error: "Cross-origin admin request rejected", code: "csrf_rejected" });
+        }
+        if (parsed.protocol !== "https:" && process.env.NODE_ENV !== "test" && process.env.VITEST !== "true") {
+          return res.status(403).json({ error: "HTTPS control plane required for admin operations", code: "https_required" });
+        }
+      } catch {
+        return res.status(403).json({ error: "Invalid referer", code: "csrf_rejected" });
+      }
+    } else {
+      return res.status(403).json({ error: "Missing origin headers", code: "csrf_rejected" });
+    }
+    next();
+  }
+
   if (entitlementService) {
-    app.post("/api/admin/entitlements/grant", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
+    app.post("/api/admin/entitlements/grant", auth.requireAuth, auth.requireRole("admin"), validateAdminCsrf, (req, res) => {
       const { userId, role = "regular", durationDays = null, reason = "Admin grant" } = req.body;
       if (!userId) return res.status(400).json({ error: "userId is required", code: "invalid_request" });
       const ent = entitlementService.grantFriendFamily({
@@ -251,7 +295,7 @@ function createApp(deps) {
       res.json({ ok: true, entitlement: ent, effectiveAccess });
     });
 
-    app.post("/api/admin/entitlements/revoke", auth.requireAuth, auth.requireRole("admin"), (req, res) => {
+    app.post("/api/admin/entitlements/revoke", auth.requireAuth, auth.requireRole("admin"), validateAdminCsrf, (req, res) => {
       const { userId, reason = "Admin revoke" } = req.body;
       if (!userId) return res.status(400).json({ error: "userId is required", code: "invalid_request" });
       const ent = entitlementService.revokeFriendFamily({
@@ -264,7 +308,7 @@ function createApp(deps) {
     });
   }
   if (reconciliationService) {
-    app.post("/api/admin/reconcile", auth.requireAuth, auth.requireRole("admin"), async (req, res) => {
+    app.post("/api/admin/reconcile", auth.requireAuth, auth.requireRole("admin"), validateAdminCsrf, async (req, res) => {
       try {
         const summary = await reconciliationService.runFullReconciliation();
         res.json({ ok: true, summary });

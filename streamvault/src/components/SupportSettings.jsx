@@ -78,10 +78,10 @@ export default function SupportSettings({ billingApi }) {
             onChange={(e) => setCategory(e.target.value)}
             className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
           >
-            <option value="billing">Billing & Subscriptions</option>
-            <option value="playback">Playback & Streaming</option>
-            <option value="portal">Portal & Connection</option>
+            <option value="billing_refund">Billing & Refund</option>
+            <option value="payment_failed">Payment Issue</option>
             <option value="account">Account & Security</option>
+            <option value="technical">Technical & Playback</option>
             <option value="other">Other Inquiry</option>
           </select>
         </div>
