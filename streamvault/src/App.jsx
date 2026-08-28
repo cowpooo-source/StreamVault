@@ -4528,7 +4528,7 @@ export default function App() {
           t={t}
         />
       , document.body)}
-      {showAccountModal && (
+      {showAccountModal && !httpContentMode && (
         <AccountSettingsModal
           isOpen={showAccountModal}
           initialTab={accountModalTab}
@@ -4832,7 +4832,7 @@ export default function App() {
             onAuth={handleAuth} onImportFull={processFullImport} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
             contentMode={httpContentMode}
             onOpenSecureSettings={() => window.location.assign(`${getAppHomeUrl()}?section=settings&settingsTab=data`)}
-            onOpenAccountSettings={(tab) => { setAccountModalTab(tab || "billing"); setShowAccountModal(true); }}
+            onOpenAccountSettings={!httpContentMode ? ((tab) => { setAccountModalTab(tab || "billing"); setShowAccountModal(true); }) : undefined}
             themeName={themeName} themeOptions={THEME_NAMES} onThemeChange={setThemeName}
             language={lang} languageOptions={LANG_META} onLanguageChange={setLang}
             onFeedback={() => setFbOpen(true)} onLogout={handleLogout} maxConnections={userLimits?.maxConnections ?? 5} />
@@ -5304,7 +5304,7 @@ export default function App() {
         );
       })()}
 
-      {showAccountModal && (
+      {showAccountModal && !httpContentMode && (
         <AccountSettingsModal
           isOpen={showAccountModal}
           initialTab={accountModalTab}

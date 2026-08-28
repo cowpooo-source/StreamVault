@@ -205,17 +205,142 @@ function createBillingCatalog(env = process.env) {
     return resolvePolicies(env, true);
   }
 
-  const POLICY_DOCUMENTS = {
+  const POLICY_DOCUMENTS = Object.freeze({
     terms: {
-      v1: `# Terms of Service (Version 1)\n\nWelcome to StreamVault. By purchasing a subscription or 30-day pass, you agree to these Terms. StreamVault provides access to self-hosted and configured IPTV stream proxying. Single login with two concurrent connections for Free, up to five concurrent connections and three active logins for Standard. Fair use applies.`,
+      v1: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terms of Service - StreamVault (v1)</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; background: #f9fafb; }
+    .card { background: #ffffff; border-radius: 12px; padding: 2.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); }
+    h1 { font-size: 2rem; color: #111827; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.75rem; margin-top: 0; }
+    h2 { font-size: 1.25rem; color: #374151; margin-top: 1.75rem; }
+    p, li { font-size: 0.975rem; color: #4b5563; }
+    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; }
+    .footer { margin-top: 2rem; font-size: 0.85rem; color: #9ca3af; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">Version 1.0 — Effective August 2026</span>
+    <h1>StreamVault Terms of Service</h1>
+
+    <h2>1. Overview & Service Description</h2>
+    <p>StreamVault provides an IPTV proxy client architecture and stream management software optimized for self-hosting. By accessing the StreamVault platform, registering an account, or purchasing subscription access, you agree to be bound by these Terms.</p>
+
+    <h2>2. Subscription Plans & Entitlements</h2>
+    <p>StreamVault offers multiple access tiers:</p>
+    <ul>
+      <li><strong>Free Plan:</strong> Access with up to two concurrent connections and a single active login session.</li>
+      <li><strong>Standard 30-Day Pass ($3.99 USD):</strong> 30 calendar days of uninterrupted access with up to five concurrent connections and three active logins. Does not auto-renew.</li>
+      <li><strong>Standard Monthly Subscription ($2.99 USD/month):</strong> Recurring monthly access with up to five concurrent connections and three active logins. Automatically renews unless canceled.</li>
+      <li><strong>Standard Yearly Subscription ($29.99 USD/year):</strong> Recurring annual access with up to five concurrent connections and three active logins. Automatically renews unless canceled.</li>
+    </ul>
+
+    <h2>3. Fair Use & Account Integrity</h2>
+    <p>Access is restricted to authorized personal use. Users must not share credentials or bypass concurrency limits. StreamVault reserves the right to rate limit or suspend accounts violating technical limits.</p>
+
+    <h2>4. Cancellation & Billing</h2>
+    <p>Subscriptions can be canceled at any time via the Customer Billing Portal. Upon cancellation, your access remains active until the end of your current paid billing period with no further renewal charges.</p>
+
+    <h2>5. Contact & Support</h2>
+    <p>For questions or support, contact our team at <a href="mailto:support@portalheaven.stream">support@portalheaven.stream</a>.</p>
+  </div>
+  <div class="footer">&copy; 2026 StreamVault / Portal Heaven. All rights reserved.</div>
+</body>
+</html>
+`,
     },
     privacy: {
-      v1: `# Privacy Policy (Version 1)\n\nStreamVault respects your privacy. All portal credentials, passwords, and MAC addresses are encrypted client-side using AES-GCM before transmission. Zero raw credential retention. Webhook payloads are hashed with SHA-256 for idempotency.`,
+      v1: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - StreamVault (v1)</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; background: #f9fafb; }
+    .card { background: #ffffff; border-radius: 12px; padding: 2.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); }
+    h1 { font-size: 2rem; color: #111827; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.75rem; margin-top: 0; }
+    h2 { font-size: 1.25rem; color: #374151; margin-top: 1.75rem; }
+    p, li { font-size: 0.975rem; color: #4b5563; }
+    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; }
+    .footer { margin-top: 2rem; font-size: 0.85rem; color: #9ca3af; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">Version 1.0 — Effective August 2026</span>
+    <h1>StreamVault Privacy Policy</h1>
+
+    <h2>1. Data Privacy & Zero Raw Credential Retention</h2>
+    <p>StreamVault is designed from the ground up to protect user privacy. All portal credentials, passwords, and MAC addresses are encrypted client-side in the browser using AES-GCM prior to syncing to the backend server. The server never stores or logs your raw plaintext portal credentials.</p>
+
+    <h2>2. Payment & Billing Data</h2>
+    <p>Payment transactions are processed directly by Stripe. StreamVault never receives, stores, or handles credit card numbers, CVVs, or sensitive payment details. We store only anonymized Stripe Customer IDs, Subscription IDs, and Order reference numbers in our local ledger.</p>
+
+    <h2>3. Connection Identity Privacy</h2>
+    <p>Saved portal connections are identified on the server solely through irreversible HMAC-SHA256 digests. Raw connection URLs and keys are never logged or stored in plain text.</p>
+
+    <h2>4. Webhook and Audit Security</h2>
+    <p>Stripe event webhooks are verified with HMAC signatures and logged using cryptographic SHA-256 hashes to guarantee data integrity and idempotency.</p>
+
+    <h2>5. Inquiries</h2>
+    <p>For any privacy inquiries or data requests, contact <a href="mailto:support@portalheaven.stream">support@portalheaven.stream</a>.</p>
+  </div>
+  <div class="footer">&copy; 2026 StreamVault / Portal Heaven. All rights reserved.</div>
+</body>
+</html>
+`,
     },
     refund: {
-      v1: `# Refund Policy (Version 1)\n\nWe offer a 7-calendar-day full refund guarantee on all 30-Day Pass and subscription purchases. Self-service refund is accessible directly from your billing settings within 7 calendar days of purchase. Recurring subscriptions can be canceled anytime with access continuing until the end of the billing period.`,
+      v1: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Refund Policy - StreamVault (v1)</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; background: #f9fafb; }
+    .card { background: #ffffff; border-radius: 12px; padding: 2.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); }
+    h1 { font-size: 2rem; color: #111827; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.75rem; margin-top: 0; }
+    h2 { font-size: 1.25rem; color: #374151; margin-top: 1.75rem; }
+    p, li { font-size: 0.975rem; color: #4b5563; }
+    .badge { display: inline-block; background: #e0e7ff; color: #3730a3; padding: 0.25rem 0.6rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; }
+    .footer { margin-top: 2rem; font-size: 0.85rem; color: #9ca3af; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">Version 1.0 — Effective August 2026</span>
+    <h1>StreamVault Refund Policy</h1>
+
+    <h2>1. 7-Calendar-Day Self-Service Refund Guarantee</h2>
+    <p>StreamVault offers a full 7-calendar-day self-service refund guarantee on all Standard 30-Day Pass purchases and initial recurring subscription payments.</p>
+
+    <h2>2. Eligibility Criteria</h2>
+    <p>To qualify for a self-service refund:</p>
+    <ul>
+      <li>The refund request must be submitted within 7 calendar days (168 hours) of the original transaction timestamp.</li>
+      <li>The payment must not have been previously disputed or partially refunded.</li>
+      <li>The request is initiated through the authenticated Billing Settings interface on the HTTPS portal.</li>
+    </ul>
+
+    <h2>3. Refund Processing & Entitlement Adjustment</h2>
+    <p>Upon submitting an eligible refund request, the payment status transitions to <code>refund_pending</code>. Once Stripe confirms the full refund via webhook, the order is marked refunded, the original payment method is credited by Stripe (typically within 5-10 business days), and your account access reverts to the Free tier with a 2-connection limit.</p>
+
+    <h2>4. Manual Assistance</h2>
+    <p>If you encounter any issues requesting an automated refund, submit a support ticket under the <strong>Billing & Refund</strong> category or email <a href="mailto:support@portalheaven.stream">support@portalheaven.stream</a> with your Order ID.</p>
+  </div>
+  <div class="footer">&copy; 2026 StreamVault / Portal Heaven. All rights reserved.</div>
+</body>
+</html>
+`,
     },
-  };
+  });
 
   function getPolicyContent(type, version = "v1") {
     const potentialPaths = [
@@ -228,14 +353,20 @@ function createBillingCatalog(env = process.env) {
     for (const p of potentialPaths) {
       try {
         if (fs.existsSync(p)) {
-          return fs.readFileSync(p, "utf8");
+          const content = fs.readFileSync(p, "utf8");
+          return content.replace(/\r\n/g, "\n");
         }
       } catch {}
     }
 
     const doc = POLICY_DOCUMENTS[type]?.[version];
-    if (doc) return doc;
-    return `<!DOCTYPE html><html><body><h1>StreamVault ${type} Policy (Version ${version})</h1></body></html>`;
+    if (doc) return doc.replace(/\r\n/g, "\n");
+
+    throw billingError(
+      `Missing legal policy document for type="${type}" and version="${version}". Published HTML document is required.`,
+      "policy_document_missing",
+      500
+    );
   }
 
   function getPolicyContentSha256(type, version = "v1") {

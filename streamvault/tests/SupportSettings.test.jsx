@@ -51,4 +51,22 @@ describe("SupportSettings Component", () => {
       );
     });
   });
+
+  it("enforces 2000 character max limit and shows sensitive data notice", async () => {
+    render(<SupportSettings billingApi={mockBillingApi} />);
+
+    // Sensitive data warning is present
+    expect(
+      screen.getByText(/Never include credit card numbers, passwords, streaming URLs with credentials, or tokens/i)
+    ).toBeDefined();
+
+    const messageInput = screen.getByLabelText(/Message/i);
+    expect(messageInput.maxLength).toBe(2000);
+
+    // Character counter displays / 2000
+    expect(screen.getByText(/0 \/ 2000 characters/i)).toBeDefined();
+
+    fireEvent.change(messageInput, { target: { value: "a".repeat(50) } });
+    expect(screen.getByText(/50 \/ 2000 characters/i)).toBeDefined();
+  });
 });

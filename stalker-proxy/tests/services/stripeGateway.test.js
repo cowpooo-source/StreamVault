@@ -39,6 +39,9 @@ describe("stripeGateway", () => {
       paymentIntents: {
         retrieve: vi.fn().mockResolvedValue({ id: "pi_123", status: "succeeded" }),
       },
+      setupIntents: {
+        retrieve: vi.fn().mockResolvedValue({ id: "seti_123", payment_method: "pm_resolved_456" }),
+      },
     };
 
     catalog = createBillingCatalog({
@@ -206,29 +209,122 @@ describe("stripeGateway", () => {
   });
 
   describe("Subscription Schedule after Pass", () => {
-    it("creates Subscription Schedule starting at pass end timestamp", async () => {
+    it("creates Subscription Schedule with end_behavior: release and monthly duration for monthly product", async () => {
       const passEndSeconds = Math.floor((Date.now() + 30 * 86400000) / 1000);
       await gateway.createScheduleAfterPass({
         customerId: "cus_123",
         priceId: "price_monthly_123",
         startDate: passEndSeconds,
         orderId: "ord_sched_1",
+        userId: 42,
+        productCode: "standard_monthly",
       });
 
       expect(mockStripe.subscriptionSchedules.create).toHaveBeenCalledWith(
         expect.objectContaining({
           customer: "cus_123",
           start_date: passEndSeconds,
+          end_behavior: "release",
+          metadata: {
+            order_id: "ord_sched_1",
+            user_id: "42",
+            product_code: "standard_monthly",
+          },
           phases: [
-            {
+            expect.objectContaining({
               items: [{ price: "price_monthly_123", quantity: 1 }],
-            },
+              duration: {
+                interval: "month",
+                interval_count: 1,
+              },
+              metadata: {
+                order_id: "ord_sched_1",
+                user_id: "42",
+                product_code: "standard_monthly",
+              },
+            }),
           ],
         }),
         expect.objectContaining({
           idempotencyKey: "schedule:ord_sched_1",
         })
       );
+    });
+
+    it("creates Subscription Schedule with end_behavior: release and yearly duration for yearly product", async () => {
+      const passEndSeconds = Math.floor((Date.now() + 30 * 86400000) / 1000);
+      await gateway.createScheduleAfterPass({
+        customerId: "cus_456",
+        priceId: "price_yearly_456",
+        startDate: passEndSeconds,
+        orderId: "ord_sched_yearly",
+        userId: 99,
+        productCode: "standard_yearly",
+      });
+
+      expect(mockStripe.subscriptionSchedules.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customer: "cus_456",
+          start_date: passEndSeconds,
+          end_behavior: "release",
+          metadata: {
+            order_id: "ord_sched_yearly",
+            user_id: "99",
+            product_code: "standard_yearly",
+          },
+          phases: [
+            expect.objectContaining({
+              items: [{ price: "price_yearly_456", quantity: 1 }],
+              duration: {
+                interval: "year",
+                interval_count: 1,
+              },
+              metadata: {
+                order_id: "ord_sched_yearly",
+                user_id: "99",
+                product_code: "standard_yearly",
+              },
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          idempotencyKey: "schedule:ord_sched_yearly",
+        })
+      );
+    });
+
+    it("resolves setup_intent to payment_method before schedule creation", async () => {
+      const passEndSeconds = Math.floor((Date.now() + 30 * 86400000) / 1000);
+      await gateway.createScheduleAfterPass({
+        customerId: "cus_123",
+        priceId: "price_monthly_123",
+        startDate: passEndSeconds,
+        orderId: "ord_sched_seti",
+        setupIntentId: "seti_123",
+      });
+
+      expect(mockStripe.setupIntents.retrieve).toHaveBeenCalledWith("seti_123");
+      expect(mockStripe.subscriptionSchedules.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customer: "cus_123",
+          end_behavior: "release",
+          default_settings: {
+            default_payment_method: "pm_resolved_456",
+          },
+        }),
+        expect.objectContaining({
+          idempotencyKey: "schedule:ord_sched_seti",
+        })
+      );
+    });
+
+    it("resolves payment method from various setup intent formats", async () => {
+      expect(await gateway.resolvePaymentMethodFromSetupIntent("pm_already_pm")).toBe("pm_already_pm");
+      expect(await gateway.resolvePaymentMethodFromSetupIntent({ payment_method: "pm_obj_1" })).toBe("pm_obj_1");
+      expect(await gateway.resolvePaymentMethodFromSetupIntent({ payment_method: { id: "pm_obj_2" } })).toBe("pm_obj_2");
+
+      const resolved = await gateway.resolvePaymentMethodFromSetupIntent("seti_123");
+      expect(resolved).toBe("pm_resolved_456");
     });
   });
 });

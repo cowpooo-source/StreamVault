@@ -135,12 +135,46 @@ describe("Support Routes", () => {
 
     expect(resShort.status).toBe(400);
 
+    const resTooLong = await request(app)
+      .post("/api/support/tickets")
+      .set("Authorization", `Bearer ${userToken}`)
+      .send({ category: "billing_refund", message: "a".repeat(2001) });
+
+    expect(resTooLong.status).toBe(400);
+    expect(resTooLong.body.code).toBe("invalid_message_length");
+
     const resBadCategory = await request(app)
       .post("/api/support/tickets")
       .set("Authorization", `Bearer ${userToken}`)
       .send({ category: "unknown_cat", message: "Valid message length here." });
 
     expect(resBadCategory.status).toBe(400);
+  });
+
+  it("rejects sensitive content (card numbers, passwords, credentials, URLs with passwords) with 400", async () => {
+    const resCard = await request(app)
+      .post("/api/support/tickets")
+      .set("Authorization", `Bearer ${userToken}`)
+      .send({ category: "billing_refund", message: "My credit card is 4111 1111 1111 1111" });
+
+    expect(resCard.status).toBe(400);
+    expect(resCard.body.code).toBe("support_sensitive_content");
+
+    const resPassword = await request(app)
+      .post("/api/support/tickets")
+      .set("Authorization", `Bearer ${userToken}`)
+      .send({ category: "account", message: "My password: MySuperSecretPassword123" });
+
+    expect(resPassword.status).toBe(400);
+    expect(resPassword.body.code).toBe("support_sensitive_content");
+
+    const resCredUrl = await request(app)
+      .post("/api/support/tickets")
+      .set("Authorization", `Bearer ${userToken}`)
+      .send({ category: "technical", message: "Stream fails on http://admin:pass123@stream.provider.tv:8080/live" });
+
+    expect(resCredUrl.status).toBe(400);
+    expect(resCredUrl.body.code).toBe("support_sensitive_content");
   });
 
   it("returns 404 when requesting nonexistent ticket or another user's ticket", async () => {

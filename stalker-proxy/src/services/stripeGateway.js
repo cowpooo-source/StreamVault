@@ -163,27 +163,112 @@ function createStripeGateway({ stripe, catalog, appUrl = "https://media.portalhe
     );
   }
 
-  async function createScheduleAfterPass({ customerId, priceId, startDate, orderId, paymentMethodId = null }) {
+  async function resolvePaymentMethodFromSetupIntent(setupIntentIdOrObj) {
+    if (!setupIntentIdOrObj) return null;
+    if (typeof setupIntentIdOrObj === "object") {
+      if (setupIntentIdOrObj.payment_method) {
+        const pm = typeof setupIntentIdOrObj.payment_method === "string"
+          ? setupIntentIdOrObj.payment_method
+          : setupIntentIdOrObj.payment_method.id || null;
+        if (pm && String(pm).startsWith("pm_")) return String(pm);
+      }
+      if (setupIntentIdOrObj.id) {
+        setupIntentIdOrObj = setupIntentIdOrObj.id;
+      }
+    }
+    const idStr = String(setupIntentIdOrObj || "").trim();
+    if (idStr.startsWith("pm_")) {
+      return idStr;
+    }
+    if (idStr.startsWith("seti_")) {
+      if (stripe.setupIntents && typeof stripe.setupIntents.retrieve === "function") {
+        try {
+          const setupIntent = await stripe.setupIntents.retrieve(idStr);
+          const pm = typeof setupIntent?.payment_method === "string"
+            ? setupIntent.payment_method
+            : setupIntent?.payment_method?.id || null;
+          if (pm && String(pm).startsWith("pm_")) {
+            return String(pm);
+          }
+        } catch {}
+      }
+    }
+    return null;
+  }
+
+  async function createScheduleAfterPass({
+    customerId,
+    priceId,
+    startDate,
+    orderId = null,
+    userId = null,
+    productCode = null,
+    interval = null,
+    intervalCount = 1,
+    paymentMethodId = null,
+    setupIntentId = null,
+  }) {
     const startSeconds = typeof startDate === "number" && startDate > 1e11 ? Math.floor(startDate / 1000) : startDate;
+
+    let resolvedPaymentMethodId = paymentMethodId;
+    if (!resolvedPaymentMethodId && setupIntentId) {
+      resolvedPaymentMethodId = setupIntentId;
+    }
+    if (resolvedPaymentMethodId && (typeof resolvedPaymentMethodId === "object" || String(resolvedPaymentMethodId).startsWith("seti_"))) {
+      resolvedPaymentMethodId = await resolvePaymentMethodFromSetupIntent(resolvedPaymentMethodId);
+    }
+
+    let resolvedInterval = interval;
+    if (!resolvedInterval && productCode && catalog?.getProduct) {
+      try {
+        resolvedInterval = catalog.getProduct(productCode)?.interval;
+      } catch {}
+    }
+    if (!resolvedInterval && priceId && catalog?.listProducts) {
+      try {
+        const found = catalog.listProducts().find((p) => p.priceId === priceId || p.code === productCode);
+        if (found?.interval) resolvedInterval = found.interval;
+      } catch {}
+    }
+    if (!resolvedInterval || (resolvedInterval !== "year" && resolvedInterval !== "month")) {
+      resolvedInterval = "month";
+    }
+
+    const metadata = {};
+    if (orderId) metadata.order_id = String(orderId);
+    if (userId) metadata.user_id = String(userId);
+    if (productCode) metadata.product_code = String(productCode);
+
+    const phase = {
+      items: [{ price: priceId, quantity: 1 }],
+      duration: {
+        interval: resolvedInterval,
+        interval_count: intervalCount || 1,
+      },
+    };
+    if (Object.keys(metadata).length > 0) {
+      phase.metadata = metadata;
+    }
 
     const params = {
       customer: customerId,
       start_date: startSeconds,
-      phases: [
-        {
-          items: [{ price: priceId, quantity: 1 }],
-        },
-      ],
+      end_behavior: "release",
+      phases: [phase],
     };
 
-    if (paymentMethodId) {
+    if (Object.keys(metadata).length > 0) {
+      params.metadata = metadata;
+    }
+
+    if (resolvedPaymentMethodId && String(resolvedPaymentMethodId).startsWith("pm_")) {
       params.default_settings = {
-        default_payment_method: paymentMethodId,
+        default_payment_method: String(resolvedPaymentMethodId),
       };
     }
 
     return await stripe.subscriptionSchedules.create(params, {
-      idempotencyKey: `schedule:${orderId}`,
+      idempotencyKey: `schedule:${orderId || customerId + "_" + startSeconds}`,
     });
   }
 
@@ -242,6 +327,7 @@ function createStripeGateway({ stripe, catalog, appUrl = "https://media.portalhe
     cancelAtPeriodEnd,
     cancelSchedule,
     createScheduleAfterPass,
+    resolvePaymentMethodFromSetupIntent,
     createFullRefund,
     retrieveForReconciliation,
   };

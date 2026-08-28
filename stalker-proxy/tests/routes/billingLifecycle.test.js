@@ -324,5 +324,96 @@ describe("Billing Lifecycle & Real Integration Suite", () => {
     // Run outbox worker sweep
     const outboxResult = await supportService.processOutbox();
     expect(outboxResult.sentCount).toBeGreaterThanOrEqual(3);
+
+    // 6. Setup-mode checkout for post-pass recurring schedule & webhook start activation
+    mockStripeSdk.subscriptionSchedules = {
+      create: vi.fn().mockImplementation(async (params) => ({
+        id: "sub_sched_lifecycle_1",
+        customer: params.customer,
+        metadata: params.metadata,
+      })),
+      cancel: vi.fn().mockResolvedValue({ id: "sub_sched_lifecycle_1", status: "canceled" }),
+    };
+
+    const setupOrder = store.createOrder({
+      id: "ord_setup_lifecycle_1",
+      userId: Number(testUser.id),
+      productCode: "standard_monthly",
+      checkoutMode: "setup",
+      status: "created",
+      stripeCustomerId: "cus_mock_123",
+    });
+
+    const setupCompletedEvent = {
+      id: "evt_setup_completed_1",
+      type: "checkout.session.completed",
+      livemode: false,
+      created: Math.floor(fixedNow / 1000),
+      data: {
+        object: {
+          id: "cs_setup_mock_1",
+          mode: "setup",
+          customer: "cus_mock_123",
+          setup_intent: "pm_lifecycle_setup_pm",
+          client_reference_id: setupOrder.id,
+          metadata: {
+            orderId: setupOrder.id,
+            userId: String(testUser.id),
+            productCode: "standard_monthly",
+          },
+        },
+      },
+    };
+
+    const webhookRes3 = await request(app)
+      .post("/api/billing/webhook")
+      .set("stripe-signature", "valid_sig")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify(setupCompletedEvent));
+
+    expect(webhookRes3.status).toBe(200);
+
+    const scheduledSub = store.getSubscriptionByScheduleId("sub_sched_lifecycle_1");
+    expect(scheduledSub).toBeDefined();
+    expect(scheduledSub.status).toBe("scheduled");
+
+    // Deliver customer.subscription.created at schedule start
+    const subCreatedEvent = {
+      id: "evt_sub_created_at_schedule_start",
+      type: "customer.subscription.created",
+      livemode: false,
+      created: Math.floor(fixedNow / 1000),
+      data: {
+        object: {
+          id: "sub_live_recurring_1",
+          schedule: "sub_sched_lifecycle_1",
+          status: "active",
+          current_period_start: Math.floor(fixedNow / 1000),
+          current_period_end: Math.floor((fixedNow + 30 * 86400000) / 1000),
+          metadata: {
+            order_id: setupOrder.id,
+            user_id: String(testUser.id),
+          },
+        },
+      },
+    };
+
+    const webhookRes4 = await request(app)
+      .post("/api/billing/webhook")
+      .set("stripe-signature", "valid_sig")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify(subCreatedEvent));
+
+    expect(webhookRes4.status).toBe(200);
+
+    // Verify scheduled subscription transitioned to active with real subscription ID
+    const activeSub = store.getSubscriptionByStripeId("sub_live_recurring_1");
+    expect(activeSub).toBeDefined();
+    expect(activeSub.status).toBe("active");
+
+    const accessAfterSubCreated = entitlementService.getEffectiveAccess(Number(testUser.id));
+    expect(accessAfterSubCreated.role).toBe("regular");
+    expect(accessAfterSubCreated.plan).toBe("standard");
+    expect(accessAfterSubCreated.limits.maxConnections).toBe(5);
   });
 });

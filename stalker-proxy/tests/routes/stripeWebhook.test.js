@@ -107,13 +107,19 @@ describe("Stripe Webhook Router", () => {
   });
 
   it("processes event and returns 200 on valid signature", async () => {
+    store.upsertSubscription({
+      stripeSubscriptionId: "sub_success_1",
+      userId: 1,
+      status: "active",
+    });
+
     const event = {
       id: "evt_success_1",
       type: "invoice.payment_failed",
       created: 100,
       data: {
         object: {
-          subscription: "sub_none",
+          subscription: "sub_success_1",
         },
       },
     };
@@ -128,6 +134,32 @@ describe("Stripe Webhook Router", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true });
+  });
+
+  it("fails retryably with 500 when financial subscription event cannot be resolved", async () => {
+    const event = {
+      id: "evt_unresolved_sub",
+      type: "invoice.payment_failed",
+      created: 100,
+      data: {
+        object: {
+          subscription: "sub_nonexistent_xyz",
+        },
+      },
+    };
+
+    mockStripe.webhooks.constructEvent.mockReturnValue(event);
+
+    const res = await request(app)
+      .post("/api/billing/webhook")
+      .set("stripe-signature", "valid_sig")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify(event));
+
+    expect(res.status).toBe(500);
+    const eventRecord = store.getEvent("evt_unresolved_sub");
+    expect(eventRecord.status).toBe("failed");
+    expect(eventRecord.last_error_code).toMatch(/Subscription not found/);
   });
 
   it("fails closed with 500 when stripe client or webhookSecret is missing", async () => {

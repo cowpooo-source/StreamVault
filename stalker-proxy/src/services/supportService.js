@@ -10,6 +10,90 @@ const ALLOWED_CATEGORIES = Object.freeze([
   "other",
 ]);
 
+const CATEGORY_MAP = Object.freeze({
+  "billing_refund": "billing_refund",
+  "billing/refund": "billing_refund",
+  "billing & refund": "billing_refund",
+  "payment_failed": "payment_failed",
+  "payment failed": "payment_failed",
+  "payment issue": "payment_failed",
+  "account": "account",
+  "account & security": "account",
+  "technical": "technical",
+  "technical & playback": "technical",
+  "other": "other",
+  "other inquiry": "other",
+});
+
+function normalizeCategory(cat) {
+  if (!cat) return null;
+  const key = String(cat).trim().toLowerCase();
+  return CATEGORY_MAP[key] || null;
+}
+
+function luhnCheck(numStr) {
+  let sum = 0;
+  let alternate = false;
+  for (let i = numStr.length - 1; i >= 0; i--) {
+    let n = parseInt(numStr.charAt(i), 10);
+    if (isNaN(n)) return false;
+    if (alternate) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alternate = !alternate;
+  }
+  return sum % 10 === 0;
+}
+
+function containsSensitiveSupportData(text) {
+  if (!text || typeof text !== "string") return false;
+
+  // 1. Credit card numbers (13-19 digits, with spaces/hyphens)
+  const potentialCards = text.match(/(?:\b\d(?:[ -]?\d){11,18}\b)/g);
+  if (potentialCards) {
+    for (const raw of potentialCards) {
+      const digits = raw.replace(/\D/g, "");
+      if (digits.length >= 13 && digits.length <= 19) {
+        if (
+          /^(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|6(?:011|5[0-9]{2})[0-9]{12}|(?:2131|1800|35\d{3})\d{11}|(?:[0-9]{4}[ -]?){3,4}[0-9]{1,4})$/.test(
+            raw
+          ) ||
+          luhnCheck(digits)
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 2. URLs with embedded credentials (e.g. http://user:pass@host)
+  const credUrlRegex = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/;
+  if (credUrlRegex.test(text)) {
+    return true;
+  }
+
+  // 3. Password and credential phrases (e.g. password: xyz, pass=xyz, api_key: xyz)
+  const credPhraseRegex = /\b(?:password|passwd|pass|secret|api_?key|credentials?|token|auth_token)\s*[:=]\s*[^\s]+/i;
+  if (credPhraseRegex.test(text)) {
+    return true;
+  }
+
+  // 4. Content-token / JWT-like strings (e.g. eyJ..., ctok_..., sess_...)
+  const jwtRegex = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/;
+  if (jwtRegex.test(text)) {
+    return true;
+  }
+
+  const tokenSigRegex = /\b(?:ctok|sess|bearer|jwt|token)_[a-zA-Z0-9_-]{16,}\b/i;
+  if (tokenSigRegex.test(text)) {
+    return true;
+  }
+
+  return false;
+}
+
 function createSupportService(deps) {
   const { store, catalog, mailService, fetchFn = globalThis.fetch, now = Date.now } = deps;
 
@@ -18,7 +102,8 @@ function createSupportService(deps) {
   }
 
   async function createTicket({ userId, userEmail = null, category, message, orderId = null, stripeCustomerId = null }) {
-    if (!category || !ALLOWED_CATEGORIES.includes(category)) {
+    const normalizedCategory = normalizeCategory(category);
+    if (!normalizedCategory) {
       const err = new Error(`Invalid ticket category. Must be one of: ${ALLOWED_CATEGORIES.join(", ")}`);
       err.code = "invalid_category";
       err.status = 400;
@@ -26,9 +111,25 @@ function createSupportService(deps) {
     }
 
     const trimmedMessage = String(message || "").trim();
-    if (trimmedMessage.length < 10 || trimmedMessage.length > 4000) {
-      const err = new Error("Message length must be between 10 and 4000 characters");
+    if (trimmedMessage.length < 10) {
+      const err = new Error("Message length must be at least 10 characters");
       err.code = "invalid_message_length";
+      err.status = 400;
+      throw err;
+    }
+    if (trimmedMessage.length > 2000) {
+      const err = new Error("Message length exceeds maximum 2000 characters");
+      err.code = "invalid_message_length";
+      err.status = 400;
+      throw err;
+    }
+
+    // Sensitive content rejection (card numbers, passwords, URLs with credentials, tokens)
+    if (containsSensitiveSupportData(trimmedMessage)) {
+      const err = new Error(
+        "Message contains sensitive information such as card numbers, credentials, URLs with passwords, or access tokens."
+      );
+      err.code = "support_sensitive_content";
       err.status = 400;
       throw err;
     }
@@ -59,7 +160,7 @@ function createSupportService(deps) {
         payloadJson: JSON.stringify({
           ticketId,
           userId,
-          category,
+          category: normalizedCategory,
           messagePreview: trimmedMessage.slice(0, 150),
           createdAt: ts,
         }),
@@ -79,7 +180,7 @@ function createSupportService(deps) {
         ticketId,
         userId,
         userEmail: userEmail || "none",
-        category,
+        category: normalizedCategory,
         orderId,
         messagePreview: trimmedMessage.slice(0, 300),
         createdAt: ts,
@@ -99,7 +200,7 @@ function createSupportService(deps) {
         payloadJson: JSON.stringify({
           ticketId,
           userId,
-          category,
+          category: normalizedCategory,
           messagePreview: trimmedMessage.slice(0, 200),
           createdAt: ts,
         }),
@@ -112,7 +213,7 @@ function createSupportService(deps) {
       ticket: {
         id: ticketId,
         userId,
-        category,
+        category: normalizedCategory,
         message: trimmedMessage,
         status: "open",
         stripeCustomerId,
@@ -201,8 +302,9 @@ function createSupportService(deps) {
       } catch (err) {
         failedCount++;
         const attemptCount = (notif.attempt_count || 0) + 1;
-        // Exponential backoff: attempt * 5 minutes
-        const backoffMs = attemptCount * 5 * 60 * 1000;
+        // Bounded exponential backoff: 1, 5, 30, 120 minutes (max 5 attempts)
+        const backoffMinutes = [1, 5, 30, 120, 360][Math.min(attemptCount - 1, 4)];
+        const backoffMs = backoffMinutes * 60 * 1000;
         store.markNotificationFailed(notif.id, {
           nextAttemptAt: ts + backoffMs,
           lastErrorCode: err.message || "send_failed",
@@ -218,6 +320,8 @@ function createSupportService(deps) {
     listTickets,
     getTicket,
     processOutbox,
+    containsSensitiveSupportData,
+    normalizeCategory,
   };
 }
 

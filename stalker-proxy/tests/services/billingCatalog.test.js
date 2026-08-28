@@ -167,4 +167,42 @@ describe("billingCatalog", () => {
       });
     });
   });
+
+  describe("legal documents and cryptographic hashing", () => {
+    it("returns exact HTML document content and not divergent markdown", () => {
+      const catalog = createBillingCatalog(validEnabledEnv);
+      const termsContent = catalog.getPolicyContent("terms", "v1");
+      const privacyContent = catalog.getPolicyContent("privacy", "v1");
+      const refundContent = catalog.getPolicyContent("refund", "v1");
+
+      expect(termsContent).toContain("<!DOCTYPE html>");
+      expect(termsContent).toContain("StreamVault Terms of Service");
+      expect(termsContent.startsWith("# Terms of Service")).toBe(false);
+
+      expect(privacyContent).toContain("<!DOCTYPE html>");
+      expect(privacyContent).toContain("StreamVault Privacy Policy");
+      expect(privacyContent.startsWith("# Privacy Policy")).toBe(false);
+
+      expect(refundContent).toContain("<!DOCTYPE html>");
+      expect(refundContent).toContain("StreamVault Refund Policy");
+      expect(refundContent.startsWith("# Refund Policy")).toBe(false);
+    });
+
+    it("generates 64-character SHA-256 hashes matching the HTML content", () => {
+      const catalog = createBillingCatalog(validEnabledEnv);
+      const termsHash = catalog.getPolicyContentSha256("terms", "v1");
+      const privacyHash = catalog.getPolicyContentSha256("privacy", "v1");
+      const refundHash = catalog.getPolicyContentSha256("refund", "v1");
+
+      expect(termsHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(privacyHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(refundHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("fails closed with a clear error when a policy document is missing", () => {
+      const catalog = createBillingCatalog(validEnabledEnv);
+      expect(() => catalog.getPolicyContent("terms", "v999")).toThrow(/policy_document_missing/);
+      expect(() => catalog.getPolicyContentSha256("unknown_type", "v1")).toThrow(/policy_document_missing/);
+    });
+  });
 });

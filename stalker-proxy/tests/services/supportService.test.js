@@ -99,7 +99,7 @@ describe("supportService", () => {
       ).rejects.toThrow(/category/i);
     });
 
-    it("rejects messages shorter than 10 characters or longer than 4000", async () => {
+    it("rejects messages shorter than 10 characters or longer than 2000", async () => {
       await expect(
         supportService.createTicket({
           userId: 42,
@@ -108,14 +108,88 @@ describe("supportService", () => {
         })
       ).rejects.toThrow(/message length/i);
 
-      const longMessage = "a".repeat(4001);
+      // Exactly 2000 characters is allowed
+      const exact2000 = "a".repeat(2000);
+      const ticket2000 = await supportService.createTicket({
+        userId: 42,
+        category: "technical",
+        message: exact2000,
+      });
+      expect(ticket2000).toBeDefined();
+
+      // 2001 characters is rejected
+      const longMessage = "a".repeat(2001);
       await expect(
         supportService.createTicket({
           userId: 42,
           category: "technical",
           message: longMessage,
         })
-      ).rejects.toThrow(/message length/i);
+      ).rejects.toMatchObject({ code: "invalid_message_length" });
+    });
+
+    it("rejects credit card numbers before persistence or outbox queuing", async () => {
+      const initialTickets = store.listTicketsForUser(42).length;
+      const initialOutbox = store.getDueNotifications(fixedNow + 10000).length;
+
+      await expect(
+        supportService.createTicket({
+          userId: 42,
+          category: "Billing/Refund",
+          message: "Please help, my card 4111 1111 1111 1111 was charged twice.",
+        })
+      ).rejects.toMatchObject({ code: "support_sensitive_content" });
+
+      // Ensure no ticket or notification was persisted
+      expect(store.listTicketsForUser(42).length).toBe(initialTickets);
+      expect(store.getDueNotifications(fixedNow + 10000).length).toBe(initialOutbox);
+    });
+
+    it("rejects URLs with embedded credentials", async () => {
+      await expect(
+        supportService.createTicket({
+          userId: 42,
+          category: "technical",
+          message: "Cannot connect to stream at http://user:superpass123@stream.provider.tv:8080/live",
+        })
+      ).rejects.toMatchObject({ code: "support_sensitive_content" });
+    });
+
+    it("rejects password and credential phrases", async () => {
+      await expect(
+        supportService.createTicket({
+          userId: 42,
+          category: "account",
+          message: "I forgot my password: MySecretPass1234 please reset it",
+        })
+      ).rejects.toMatchObject({ code: "support_sensitive_content" });
+
+      await expect(
+        supportService.createTicket({
+          userId: 42,
+          category: "account",
+          message: "Here is my api_key: sk_test_secret_api_key_12345",
+        })
+      ).rejects.toMatchObject({ code: "support_sensitive_content" });
+    });
+
+    it("rejects content-token / JWT-like strings", async () => {
+      const jwtSample = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+      await expect(
+        supportService.createTicket({
+          userId: 42,
+          category: "technical",
+          message: `Here is the token error: ${jwtSample}`,
+        })
+      ).rejects.toMatchObject({ code: "support_sensitive_content" });
+
+      await expect(
+        supportService.createTicket({
+          userId: 42,
+          category: "technical",
+          message: "My content token was ctok_0123456789abcdef0123456789abcdef",
+        })
+      ).rejects.toMatchObject({ code: "support_sensitive_content" });
     });
 
     it("enforces rate limit of 5 tickets per user per 24 hours", async () => {

@@ -90,22 +90,25 @@ export default function SupportSettings({ billingApi }) {
           <label htmlFor="support-message" className="block text-xs font-semibold text-gray-300 uppercase mb-1">
             Message
           </label>
+          <div className="text-xs text-amber-300/90 bg-amber-950/30 border border-amber-800/40 rounded-lg p-2.5 mb-2 leading-relaxed">
+            Never include credit card numbers, passwords, streaming URLs with credentials, or tokens in support requests.
+          </div>
           <textarea
             id="support-message"
             aria-label="Message"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             rows={4}
-            maxLength={4000}
-            placeholder="Describe your issue or question in detail (minimum 10 characters)..."
+            maxLength={2000}
+            placeholder="Describe your issue or question in detail (minimum 10 characters, maximum 2000 characters)..."
             className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500 resize-y"
           />
-          <div className="text-right text-xs text-gray-400 mt-1">{message.length} / 4000 characters</div>
+          <div className="text-right text-xs text-gray-400 mt-1">{message.length} / 2000 characters</div>
         </div>
 
         <button
           type="submit"
-          disabled={submitting || message.trim().length < 10}
+          disabled={submitting || message.trim().length < 10 || message.length > 2000}
           className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed font-medium text-sm rounded-lg transition"
         >
           {submitting ? "Submitting..." : "Submit Support Ticket"}

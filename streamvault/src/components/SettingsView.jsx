@@ -98,28 +98,39 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
 
   return (
     <div className="c-body" style={{padding:"1.5rem",maxWidth:640}}>
-        <div className="tabs-v">
+      {contentMode && (
+        <h2 style={{fontSize:"1.25rem",fontWeight:700,color:"var(--t1)",marginBottom:"1rem"}}>Player Settings</h2>
+      )}
+      <div className="tabs-v" role="tablist">
+        <button
+          role="tab"
+          aria-selected={tab === "general"}
+          className={`tab ${tab === "general" ? "on" : ""}`}
+          onClick={() => setTab("general")}
+        >
+          General
+        </button>
+        {!contentMode && (
           <button
-            className={`tab ${tab === "general" ? "on" : ""}`}
-             onClick={() => setTab("general")}
-          >
-            General
-          </button>
-          <button
+            role="tab"
+            aria-selected={tab === "account"}
             className={`tab ${tab === "account" ? "on" : ""}`}
             onClick={() => setTab("account")}
           >
             Account
           </button>
-          <button
-            className={`tab ${tab === "data" ? "on" : ""}`}
-            onClick={() => setTab("data")}
-          >
-            Data
-          </button>
-        </div>
+        )}
+        <button
+          role="tab"
+          aria-selected={tab === "data"}
+          className={`tab ${tab === "data" ? "on" : ""}`}
+          onClick={() => setTab("data")}
+        >
+          Data
+        </button>
+      </div>
 
-      {tab === "account" && (
+      {tab === "account" && !contentMode && (
         <div style={{display:"flex",flexDirection:"column",gap:"1.2rem"}}>
           <div style={{background:"var(--s2)",border:"1px solid var(--b2)",borderRadius:10,padding:"1.2rem",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:".8rem"}}>
             <div>
@@ -248,6 +259,22 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
               {connections.find(c=>c.id===activeConnId)?.label || "None"}
             </div>
           </div>
+          {contentMode && (
+            <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:".8rem"}}>
+              <div>
+                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:600}}>Account, Billing & Support</div>
+                <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem"}}>Manage your subscriptions, connection slots, and support tickets securely on HTTPS.</div>
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{padding:".5rem 1.2rem",fontSize:".82rem",fontWeight:600}}
+                onClick={() => onOpenSecureSettings ? onOpenSecureSettings("billing") : window.location.assign("https://media.portalheaven.stream/app?settingsTab=billing")}
+              >
+                Account, Billing & Support
+              </button>
+            </div>
+          )}
         </div>
       )}
 

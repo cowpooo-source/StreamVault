@@ -311,7 +311,23 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       `),
       getSubscription: db.prepare(`SELECT * FROM billing_subscriptions WHERE id = ?`),
       getSubscriptionByStripeId: db.prepare(`SELECT * FROM billing_subscriptions WHERE stripe_subscription_id = ?`),
+      getSubscriptionByScheduleId: db.prepare(`SELECT * FROM billing_subscriptions WHERE stripe_schedule_id = ? LIMIT 1`),
       getSubscriptionByUserId: db.prepare(`SELECT * FROM billing_subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`),
+      updateSubscriptionById: db.prepare(`
+        UPDATE billing_subscriptions SET
+          product_code = @productCode,
+          stripe_subscription_id = @stripeSubscriptionId,
+          stripe_schedule_id = @stripeScheduleId,
+          status = @status,
+          current_period_start = @currentPeriodStart,
+          current_period_end = @currentPeriodEnd,
+          scheduled_start_at = @scheduledStartAt,
+          cancel_at_period_end = @cancelAtPeriodEnd,
+          grace_until = @graceUntil,
+          last_stripe_event_created = @lastStripeEventCreated,
+          updated_at = @updatedAt
+        WHERE id = @id
+      `),
 
       // Entitlements
       insertEntitlement: db.prepare(`
@@ -338,7 +354,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
         INSERT INTO billing_events (
           stripe_event_id, event_type, livemode, stripe_created_at, status, payload_sha256, attempt_count, received_at
         ) VALUES (
-          @stripeEventId, @eventType, @livemode, @stripeCreatedAt, 'received', @payloadSha256, 1, @receivedAt
+          @stripeEventId, @eventType, @livemode, @stripeCreatedAt, 'processing', @payloadSha256, 1, @receivedAt
         )
         ON CONFLICT(stripe_event_id) DO NOTHING
       `),
@@ -354,7 +370,6 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       updateEventStatus: db.prepare(`
         UPDATE billing_events SET
           status = @status,
-          attempt_count = attempt_count + 1,
           last_error_code = @lastErrorCode,
           processed_at = @processedAt
         WHERE stripe_event_id = @stripeEventId
@@ -635,6 +650,12 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     return stmts.getSubscriptionByStripeId.get(stripeSubscriptionId);
   }
 
+  function getSubscriptionByScheduleId(scheduleId) {
+    if (!stmts) init();
+    if (!scheduleId) return null;
+    return stmts.getSubscriptionByScheduleId.get(scheduleId);
+  }
+
   function getSubscriptionByUserId(userId) {
     if (!stmts) init();
     return stmts.getSubscriptionByUserId.get(userId);
@@ -642,14 +663,18 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
 
   function updateSubscriptionStatus(stripeSubscriptionId, fields) {
     if (!stmts) init();
-    const existing = getSubscriptionByStripeId(stripeSubscriptionId);
+    let existing = getSubscriptionByStripeId(stripeSubscriptionId);
+    if (!existing && fields?.stripeScheduleId) {
+      existing = getSubscriptionByScheduleId(fields.stripeScheduleId);
+    }
     if (!existing) return null;
     const ts = getNow();
-    stmts.upsertSubscription.run({
+    const nextStripeSubscriptionId = fields.stripeSubscriptionId || stripeSubscriptionId;
+    const params = {
       id: existing.id,
       userId: existing.user_id,
       productCode: existing.product_code,
-      stripeSubscriptionId,
+      stripeSubscriptionId: nextStripeSubscriptionId,
       stripeScheduleId: fields.stripeScheduleId !== undefined ? fields.stripeScheduleId : existing.stripe_schedule_id,
       status: fields.status !== undefined ? fields.status : existing.status,
       currentPeriodStart: fields.currentPeriodStart !== undefined ? fields.currentPeriodStart : existing.current_period_start,
@@ -660,8 +685,21 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       lastStripeEventCreated: fields.lastStripeEventCreated !== undefined ? fields.lastStripeEventCreated : existing.last_stripe_event_created,
       createdAt: existing.created_at,
       updatedAt: ts,
-    });
-    return getSubscriptionByStripeId(stripeSubscriptionId);
+    };
+    if (nextStripeSubscriptionId !== existing.stripe_subscription_id) {
+      stmts.updateSubscriptionById.run(params);
+      try {
+        db.prepare("UPDATE billing_entitlements SET source_id = ? WHERE source_type = 'subscription' AND source_id = ?").run(nextStripeSubscriptionId, existing.stripe_subscription_id);
+      } catch {}
+      if (existing.stripe_schedule_id) {
+        try {
+          db.prepare("UPDATE billing_orders SET stripe_subscription_id = ? WHERE stripe_schedule_id = ? AND (stripe_subscription_id IS NULL OR stripe_subscription_id = ?)").run(nextStripeSubscriptionId, existing.stripe_schedule_id, existing.stripe_subscription_id);
+        } catch {}
+      }
+    } else {
+      stmts.upsertSubscription.run(params);
+    }
+    return getSubscriptionByStripeId(nextStripeSubscriptionId);
   }
 
   // Entitlements
@@ -996,6 +1034,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     upsertSubscription,
     getSubscription,
     getSubscriptionByStripeId,
+    getSubscriptionByScheduleId,
     getSubscriptionByUserId,
     updateSubscriptionStatus,
     // Entitlements
