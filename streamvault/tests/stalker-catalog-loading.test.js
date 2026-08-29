@@ -1,16 +1,16 @@
 import { describeStalkerCatalogLoading, loadInitialStalkerCatalog, shouldUseGlobalCatalogLoader } from "../src/stalker-catalog-loading.js";
 
 describe("loadInitialStalkerCatalog", () => {
-  it("loads channels, VOD, and series in order", async () => {
+  it("does not load VOD or Series item pages during connection activation", async () => {
     const calls = [];
 
     await loadInitialStalkerCatalog({
-      loadChannels: async () => calls.push("channels"),
-      loadVod: async () => calls.push("vod"),
-      loadSeries: async () => calls.push("series"),
+      loadLive: async () => calls.push("live-items"),
+      loadVodCategories: async () => calls.push("vod-categories"),
+      loadSeriesCategories: async () => calls.push("series-categories"),
     });
 
-    expect(calls).toEqual(["channels", "vod", "series"]);
+    expect(calls).toEqual(["live-items", "vod-categories", "series-categories"]);
   });
 
   it("stops before the next catalog when the connection is cancelled", async () => {
@@ -18,16 +18,16 @@ describe("loadInitialStalkerCatalog", () => {
     let cancelled = false;
 
     await loadInitialStalkerCatalog({
-      loadChannels: async () => {
-        calls.push("channels");
+      loadLive: async () => {
+        calls.push("live-items");
         cancelled = true;
       },
-      loadVod: async () => calls.push("vod"),
-      loadSeries: async () => calls.push("series"),
+      loadVodCategories: async () => calls.push("vod-categories"),
+      loadSeriesCategories: async () => calls.push("series-categories"),
       isCancelled: () => cancelled,
     });
 
-    expect(calls).toEqual(["channels"]);
+    expect(calls).toEqual(["live-items"]);
   });
 });
 

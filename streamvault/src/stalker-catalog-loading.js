@@ -1,16 +1,16 @@
 export async function loadInitialStalkerCatalog({
-  loadChannels,
-  loadVod,
-  loadSeries,
+  loadLive,
+  loadVodCategories,
+  loadSeriesCategories,
   isCancelled = () => false,
 }) {
-  await loadChannels();
+  await loadLive();
   if (isCancelled()) return;
 
-  await loadVod();
+  await loadVodCategories();
   if (isCancelled()) return;
 
-  await loadSeries();
+  await loadSeriesCategories();
 }
 
 export function describeStalkerCatalogLoading({ kind, capabilities } = {}) {

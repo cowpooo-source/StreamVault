@@ -2643,11 +2643,11 @@ export default function App() {
     } else if (conn.type === "stalker") {
       (async () => {
         await loadInitialStalkerCatalog({
-          loadChannels: () => fetchStalkerChannels(),
-          // Keep the pre-existing background behavior when lazy catalogs are
-          // disabled; only the lazy path loads the first VOD/series page here.
-          loadVod: () => loadStalkerCats("vod", false, !STALKER_LAZY_ENABLED),
-          loadSeries: () => loadStalkerCats("series", false, !STALKER_LAZY_ENABLED),
+          loadLive: () => fetchStalkerChannels(),
+          // Fetch only category metadata during activation. The legacy path
+          // retains its previous background behavior when selectInitial=false.
+          loadVodCategories: () => loadStalkerCats("vod", { selectInitial: false }),
+          loadSeriesCategories: () => loadStalkerCats("series", { selectInitial: false }),
           isCancelled: () => cancelled,
         });
         // Keep EPG loading separate from the lazy catalog sequence so the
@@ -2891,8 +2891,9 @@ export default function App() {
   }
 
   // ── Load category lists with a bounded IndexedDB TTL
-  // background=true: don't touch setCat/setLoading (used for pre-fetching on connect)
-  async function loadStalkerCats(sec, force = false, background = false) {
+  // selectInitial=false: load metadata only; item pages wait for section entry.
+  async function loadStalkerCats(sec, { force = false, selectInitial = true } = {}) {
+    const background = !selectInitial;
     if (STALKER_LAZY_ENABLED) {
       const kind = sec === "vod" ? "vod" : "series";
       try {
@@ -2912,7 +2913,7 @@ export default function App() {
         }
         const cats = categoryResponse.categories || [];
         kind === "vod" ? setStalkerVodCats(cats) : setStalkerSeriesCats(cats);
-        if (!background && cats.length) {
+        if (selectInitial && cats.length) {
           setCat(cats[0].title);
           await loadStalkerCatItems(sec, cats[0].id, cats[0].title, false, force);
         }
@@ -2947,7 +2948,7 @@ export default function App() {
     }
     sec === "vod" ? setStalkerVodCats(cats) : setStalkerSeriesCats(cats);
     if (cats.length) {
-      if (!background) {
+      if (selectInitial) {
         setCat(cats[0].title);
         await loadStalkerCatItems(sec, cats[0].id, cats[0].title, false, force);
       }
@@ -3921,10 +3922,10 @@ export default function App() {
       fetchStalkerChannels(true);
 
       // Reload Movies
-      loadStalkerCats("vod", true);
+      loadStalkerCats("vod", { force: true });
 
       // Reload Series
-      loadStalkerCats("series", true);
+      loadStalkerCats("series", { force: true });
     } else if (updatedConn.type === "xtream" && updatedConn.config?.server && updatedConn.config?.user) {
       // For Xtream, just clear data without reloading since the API will handle it
       setVod([]);
@@ -4746,7 +4747,7 @@ export default function App() {
                       if (section === "vod") setStalkerVodCats([]); else setStalkerSeriesCats([]);
                       fetchingCatRef.current.clear();
                       setCat(null);
-                      loadStalkerCats(section, true);
+                      loadStalkerCats(section, { force: true });
                     }
                   }}>↺ {t("refresh")}</button>
                   {prefetchProgress && (
