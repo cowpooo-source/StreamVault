@@ -2034,6 +2034,27 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.categories.map(category => category.title)).toEqual(['All', 'Sports']);
   });
+  it.each(['live', 'vod', 'series'])('normalizes aggregate categories for %s', async kind => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn().mockResolvedValue({ js: [
+        { id: '*', title: 'All' },
+        { id: 'all', title: 'Everything' },
+        { id: '1577', title: 'Sports', count: null },
+      ] }),
+    });
+
+    const res = await request(makeApp(deps)).get(`/stalker/catalog/v1/categories?kind=${kind}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.categories.filter(category => category.aggregate)).toEqual([
+      { id: 'all', title: 'All', count: null, aggregate: true },
+    ]);
+    expect(res.body.categories.filter(category => category.id === '1577')).toEqual([
+      { id: '1577', title: 'Sports', count: null, aggregate: false },
+    ]);
+  });
+
 
   it('probes one additional page and marks pagination supported', async () => {
     const deps = makeDeps({

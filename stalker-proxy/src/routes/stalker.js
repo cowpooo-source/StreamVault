@@ -123,6 +123,37 @@ const channelPageCount = (payload, itemCount) => {
   }
   return 1;
 };
+function normalizeCatalogCategories(rawCategories, { includeSyntheticAll = false } = {}) {
+  const categories = [];
+  let hasAggregate = false;
+
+  for (const raw of Array.isArray(rawCategories) ? rawCategories : []) {
+    const rawId = String(raw?.id ?? raw?.category_id ?? '').trim();
+    const title = String(raw?.title ?? raw?.name ?? 'Other').trim();
+    const aggregate = rawId === '*' || rawId.toLowerCase() === 'all' || title.toLowerCase() === 'all';
+    const rawCount = raw?.count;
+    const numericCount = rawCount === null || rawCount === undefined || rawCount === ''
+      ? null
+      : Number(rawCount);
+    const category = {
+      id: aggregate ? 'all' : rawId,
+      title: aggregate ? 'All' : title,
+      count: Number.isFinite(numericCount) ? numericCount : null,
+      aggregate,
+    };
+
+    if (aggregate) {
+      if (hasAggregate) continue;
+      hasAggregate = true;
+    }
+    categories.push(category);
+  }
+
+  if (includeSyntheticAll && !hasAggregate) {
+    categories.unshift({ id: 'all', title: 'All', count: null, aggregate: true });
+  }
+  return categories;
+}
 
 function createStalkerRouter(deps) {
   const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry: rawPortalFetchRetry, portalFetchChannelCatalog: rawPortalFetchChannelCatalog, portalFetchChannelCatalogPage: rawPortalFetchChannelCatalogPage, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
@@ -966,18 +997,10 @@ function createStalkerRouter(deps) {
           const action = kind === 'live' ? 'get_genres' : 'get_categories';
           const payload = await portalFetchRetry(session, { type: kind === 'live' ? 'itv' : kind, action }, undefined, signal);
           const raw = Array.isArray(payload?.js) ? payload.js : Array.isArray(payload?.data) ? payload.data : [];
-          const categories = raw.map(item => ({
-            id: String(item?.id ?? item?.category_id ?? 'all'),
-            title: String(item?.title || item?.name || 'Other'),
-            count: Number.isFinite(Number(item?.count)) ? Number(item.count) : null,
-          })).map(item => item.id === '*' || item.title.trim().toLowerCase() === 'all'
-            ? { ...item, id: 'all', title: 'All' }
-            : item);
+          const categories = normalizeCatalogCategories(raw, { includeSyntheticAll: kind === 'live' });
           const result = {
             kind,
-            categories: kind === 'live'
-              ? [{ id: 'all', title: 'All', count: null }, ...categories.filter(item => item.id.toLowerCase() !== 'all' && item.title.trim().toLowerCase() !== 'all')]
-              : categories,
+            categories,
             capabilities: catalogCapabilities.get(providerKey, kind),
             refreshedAt: Date.now(),
           };
