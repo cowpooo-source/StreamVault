@@ -2293,6 +2293,7 @@ export default function App() {
   const [stalkerSelectedCategory, setStalkerSelectedCategory] = useState(EMPTY_STALKER_CATEGORY_SELECTION);
   const stalkerSelectedCategoryRef = useRef(EMPTY_STALKER_CATEGORY_SELECTION);
   const stalkerCatalogRequestRef = useRef(null);
+  const stalkerLiveCategoryRequestGenerationRef = useRef(0);
   const stalkerDiscoveryRequestRef = useRef(null);
 
   function resetStalkerCategorySelection() {
@@ -2862,6 +2863,8 @@ export default function App() {
     const refKey = `live-${category}`;
     if (fetchingCatRef.current.has(refKey)) return;
     fetchingCatRef.current.add(refKey);
+    const requestGeneration = ++stalkerLiveCategoryRequestGenerationRef.current;
+    const isCurrentRequest = () => requestGeneration === stalkerLiveCategoryRequestGenerationRef.current;
     rememberStalkerCategory("live", { id: category, title });
     setPage(1);
     setCatLoading(true);
@@ -2871,7 +2874,7 @@ export default function App() {
       const request = { kind: "live", category, page: 1, pageSize: 100, contentToken: contentSessionToken(), refresh: force };
       if (force) await tools.cache.invalidateScope({ kind: "live", category });
       const cached = !force ? await tools.cache.getPage(request) : null;
-      if (cached?.stale) {
+      if (cached?.stale && isCurrentRequest()) {
         const staleItems = cached.items.map(item => transformStalkerItem(
           annotateStalkerCatalogItem({ ...item, url: item.playRef }, request, title),
           conn.server,
@@ -2882,6 +2885,7 @@ export default function App() {
         ? cached
         : await tools.api.fetchCatalogPage({ ...request, signal: controller.signal });
       if (!cached || cached.stale) await tools.cache.putPage(data);
+      if (!isCurrentRequest()) return;
       if (!silent) updateContentLoad(72, describeStalkerCatalogLoading({ kind: "live", capabilities: data.capabilities }));
       const items = data.items.map(item => ({
         ...transformStalkerItem(
@@ -2903,12 +2907,12 @@ export default function App() {
       });
       setLastSynced(prev => ({ ...prev, live: Date.now() }));
     } catch (e) {
-      if (e?.name !== "AbortError" && e?.code !== "ABORT_ERR") {
+      if (isCurrentRequest() && e?.name !== "AbortError" && e?.code !== "ABORT_ERR") {
         console.error("Stalker lazy live category error:", e);
         setConnError(formatStalkerCatalogError(e));
       }
     } finally {
-      setCatLoading(false);
+      if (isCurrentRequest()) setCatLoading(false);
       fetchingCatRef.current.delete(refKey);
     }
   }
