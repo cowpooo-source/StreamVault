@@ -2864,6 +2864,7 @@ export default function App() {
     fetchingCatRef.current.add(refKey);
     rememberStalkerCategory("live", { id: category, title });
     setPage(1);
+    setCatLoading(true);
     if (!silent) beginContentLoad(`Loading ${title}`);
     try {
       const tools = await getStalkerLazyTools();
@@ -2908,6 +2909,7 @@ export default function App() {
         setConnError(formatStalkerCatalogError(e));
       }
     } finally {
+      setCatLoading(false);
       if (!silent) endContentLoad();
       fetchingCatRef.current.delete(refKey);
     }

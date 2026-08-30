@@ -48,6 +48,6 @@ describe("shouldUseGlobalCatalogLoader", () => {
 
   it("preserves the global loader for non-lazy catalog flows", () => {
     expect(shouldUseGlobalCatalogLoader({ lazyCatalogEnabled: false, kind: "vod" })).toBe(true);
-    expect(shouldUseGlobalCatalogLoader({ lazyCatalogEnabled: true, kind: "live" })).toBe(true);
+    expect(shouldUseGlobalCatalogLoader({ lazyCatalogEnabled: true, kind: "live" })).toBe(false);
   });
 });

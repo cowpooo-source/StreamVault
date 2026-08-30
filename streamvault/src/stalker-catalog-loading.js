@@ -22,5 +22,5 @@ export function describeStalkerCatalogLoading({ kind, capabilities } = {}) {
 }
 
 export function shouldUseGlobalCatalogLoader({ lazyCatalogEnabled = false, kind } = {}) {
-  return !(lazyCatalogEnabled && (kind === 'vod' || kind === 'series'));
+  return !(lazyCatalogEnabled && ['live', 'vod', 'series'].includes(kind));
 }
