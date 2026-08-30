@@ -166,6 +166,102 @@ describe("reconciliationService", () => {
       const ent = store.getEntitlement("ent_drift_1");
       expect(ent.status).toBe("expired");
     });
+
+    it("synchronizes active subscription period boundaries from Stripe", async () => {
+      db.prepare("INSERT INTO users (id, username, role, max_connections) VALUES (6, 'user6', 'free', 2)").run();
+      store.upsertSubscription({
+        userId: 6,
+        productCode: "standard_monthly",
+        stripeSubscriptionId: "sub_period_drift",
+        status: "active",
+        currentPeriodStart: fixedNow - DAY_MS,
+        currentPeriodEnd: fixedNow + DAY_MS,
+      });
+      store.createEntitlement({
+        id: "ent_period_drift",
+        userId: 6,
+        tier: "standard",
+        sourceType: "subscription",
+        sourceId: "sub_period_drift",
+        status: "active",
+        startsAt: fixedNow - DAY_MS,
+        endsAt: fixedNow + DAY_MS,
+      });
+      mockStripeGateway.retrieveSubscription.mockResolvedValue({
+        id: "sub_period_drift",
+        status: "active",
+        current_period_start: Math.floor(fixedNow / 1000),
+        current_period_end: Math.floor((fixedNow + 30 * DAY_MS) / 1000),
+      });
+
+      await reconciliationService.reconcileStripeSubscriptions({ stripeSubscriptionId: "sub_period_drift" });
+
+      const subscription = store.getSubscriptionByStripeId("sub_period_drift");
+      const entitlement = store.getEntitlement("ent_period_drift");
+      expect(subscription.current_period_start).toBe(fixedNow);
+      expect(subscription.current_period_end).toBe(fixedNow + 30 * DAY_MS);
+      expect(entitlement.ends_at).toBe(fixedNow + 30 * DAY_MS);
+    });
+
+    it("rotates through active subscriptions across bounded reconciliation batches", async () => {
+      const subscriptionIds = Array.from({ length: 55 }, (_, index) => `sub_batch_${index}`);
+      for (const [index, subscriptionId] of subscriptionIds.entries()) {
+        store.upsertSubscription({
+          userId: 100 + index,
+          productCode: "standard_monthly",
+          stripeSubscriptionId: subscriptionId,
+          status: "active",
+          currentPeriodEnd: fixedNow + DAY_MS,
+        });
+        db.prepare("UPDATE billing_subscriptions SET updated_at = ? WHERE stripe_subscription_id = ?")
+          .run(fixedNow - (subscriptionIds.length - index) * 1000, subscriptionId);
+      }
+      const retrievedIds = [];
+      mockStripeGateway.retrieveSubscription.mockImplementation(async (subscriptionId) => {
+        retrievedIds.push(subscriptionId);
+        return {
+          id: subscriptionId,
+          status: "active",
+          current_period_end: Math.floor((fixedNow + 30 * DAY_MS) / 1000),
+        };
+      });
+
+      await reconciliationService.reconcileStripeSubscriptions({ batchSize: 50 });
+      await reconciliationService.reconcileStripeSubscriptions({ batchSize: 50 });
+
+      expect(new Set(retrievedIds)).toEqual(new Set(subscriptionIds));
+    });
+
+    it("does not let failed subscriptions starve later reconciliation batches", async () => {
+      const subscriptionIds = Array.from({ length: 55 }, (_, index) => `sub_failure_batch_${index}`);
+      for (const [index, subscriptionId] of subscriptionIds.entries()) {
+        store.upsertSubscription({
+          userId: 200 + index,
+          productCode: "standard_monthly",
+          stripeSubscriptionId: subscriptionId,
+          status: "active",
+          currentPeriodEnd: fixedNow + DAY_MS,
+        });
+        db.prepare("UPDATE billing_subscriptions SET updated_at = ? WHERE stripe_subscription_id = ?")
+          .run(fixedNow - (subscriptionIds.length - index) * 1000, subscriptionId);
+      }
+
+      const retrievedIds = [];
+      mockStripeGateway.retrieveSubscription.mockImplementation(async (subscriptionId) => {
+        retrievedIds.push(subscriptionId);
+        if (retrievedIds.length <= 50) throw new Error("Stripe unavailable");
+        return {
+          id: subscriptionId,
+          status: "active",
+          current_period_end: Math.floor((fixedNow + 30 * DAY_MS) / 1000),
+        };
+      });
+
+      await reconciliationService.reconcileStripeSubscriptions({ batchSize: 50 });
+      await reconciliationService.reconcileStripeSubscriptions({ batchSize: 5 });
+
+      expect(retrievedIds.slice(50)).toEqual(subscriptionIds.slice(50));
+    });
   });
 
   describe("runFullReconciliation", () => {

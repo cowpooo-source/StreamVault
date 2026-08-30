@@ -24,13 +24,50 @@ const HANDLED_EVENT_TYPES = new Set([
   "refund.updated",
 ]);
 
-function createStripeEventProcessor({ store, entitlementService, catalog, stripeGateway, now = Date.now }) {
+function createStripeEventProcessor({ store, entitlementService, catalog, stripeGateway, getUserById, now = Date.now }) {
   if (!store) {
     throw new Error("store is required for stripeEventProcessor");
   }
 
   function getNow() {
     return typeof now === "function" ? now() : Date.now();
+  }
+
+  function queueLifecycleNotifications({ notificationKey, template, userId, payload = {} }) {
+    if (typeof store.enqueueNotification !== "function") return;
+
+    const user = typeof getUserById === "function" ? getUserById(userId) : null;
+    const discordWebhook = catalog?.billingDiscordWebhookUrl ||
+      catalog?.discordWebhookUrl ||
+      catalog?.supportDiscordWebhookUrl ||
+      process.env.BILLING_DISCORD_WEBHOOK_URL ||
+      process.env.SUPPORT_DISCORD_WEBHOOK_URL ||
+      null;
+    const notificationPayload = JSON.stringify({
+      ...payload,
+      eventType: template,
+      userId,
+      createdAt: getNow(),
+    });
+    const recipients = [];
+    if (user?.email) recipients.push({ channel: "email", recipient: user.email });
+    if (discordWebhook) recipients.push({ channel: "discord", recipient: discordWebhook });
+
+    for (const { channel, recipient } of recipients) {
+      const id = `notif_${crypto.createHash("sha256")
+        .update(`${notificationKey}:${template}:${channel}`)
+        .digest("hex")
+        .slice(0, 32)}`;
+      store.enqueueNotification({
+        id,
+        channel,
+        template,
+        recipient,
+        payloadJson: notificationPayload,
+        status: "queued",
+        nextAttemptAt: getNow(),
+      });
+    }
   }
 
   async function processEvent(event) {
@@ -101,15 +138,18 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
             store.upsertCustomer({ userId: effectiveUserId, stripeCustomerId: customerId });
           }
 
-          if (session.mode === "payment") {
-            if (order) {
-              store.updateOrderStatus(order.id, "paid", {
-                stripeCustomerId: customerId,
-                stripePaymentIntentId: session.payment_intent,
-                stripeCheckoutSessionId: session.id,
-              });
-            }
+          // Checkout completion is not proof that a delayed payment succeeded.
+          // Leave the order pending until Stripe sends a confirmed payment event.
+          if (
+            eventType === "checkout.session.completed" &&
+            (session.mode === "payment" || session.mode === "subscription") &&
+            !["paid", "no_payment_required"].includes(session.payment_status)
+          ) {
+            store.updateEventStatus(eventId, "processed");
+            return { received: true, duplicate: false, pending: true };
+          }
 
+          if (session.mode === "payment") {
             const productCode = order?.product_code || session.metadata?.product_code || "standard_pass_30d";
             const startsAt = getNow();
             const endsAt = startsAt + 30 * 86400000;
@@ -119,29 +159,73 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
               startsAt,
               endsAt,
             });
+            if (order) {
+              store.updateOrderStatus(order.id, "paid", {
+                stripeCustomerId: customerId,
+                stripePaymentIntentId: session.payment_intent,
+                stripeCheckoutSessionId: session.id,
+              });
+            }
           } else if (session.mode === "subscription") {
+            if (!session.subscription) {
+              const err = new Error("Stripe subscription is missing from checkout session");
+              err.code = "subscription_missing";
+              err.status = 422;
+              throw err;
+            }
+
+            if (typeof stripeGateway?.retrieveSubscription !== "function") {
+              const err = new Error("Stripe subscription retrieval is unavailable");
+              err.code = "subscription_period_unavailable";
+              err.status = 503;
+              throw err;
+            }
+
+            let stripeSubscription;
+            try {
+              stripeSubscription = await stripeGateway.retrieveSubscription(session.subscription);
+            } catch (cause) {
+              const err = new Error("Stripe subscription period retrieval failed");
+              err.code = "subscription_period_unavailable";
+              err.status = 503;
+              err.cause = cause;
+              throw err;
+            }
+            const currentPeriodStart = stripeSubscription?.current_period_start
+              ? stripeSubscription.current_period_start * 1000
+              : getNow();
+            const currentPeriodEnd = stripeSubscription?.current_period_end
+              ? stripeSubscription.current_period_end * 1000
+              : null;
+            if (!currentPeriodEnd) {
+              const err = new Error("Stripe subscription period end is unavailable");
+              err.code = "subscription_period_unavailable";
+              err.status = 502;
+              throw err;
+            }
+
+            store.upsertSubscription({
+              stripeSubscriptionId: session.subscription,
+              userId: effectiveUserId,
+              status: stripeSubscription.status || "active",
+              stripeCustomerId: customerId,
+              productCode: order?.product_code || session.metadata?.product_code || "standard_monthly",
+              currentPeriodStart,
+              currentPeriodEnd,
+              lastStripeEventCreated: eventCreated,
+            });
+            entitlementService.activateSubscription({
+              userId: effectiveUserId,
+              stripeSubscriptionId: session.subscription,
+              startsAt: currentPeriodStart,
+              endsAt: currentPeriodEnd,
+              productCode: order?.product_code || session.metadata?.product_code || "standard_monthly",
+            });
             if (order) {
               store.updateOrderStatus(order.id, "paid", {
                 stripeCustomerId: customerId,
                 stripeSubscriptionId: session.subscription,
                 stripeCheckoutSessionId: session.id,
-              });
-            }
-
-            if (session.subscription) {
-              store.upsertSubscription({
-                stripeSubscriptionId: session.subscription,
-                userId: effectiveUserId,
-                status: "active",
-                stripeCustomerId: customerId,
-                productCode: order?.product_code || session.metadata?.product_code || "standard_monthly",
-                lastStripeEventCreated: eventCreated,
-              });
-              entitlementService.activateSubscription({
-                userId: effectiveUserId,
-                stripeSubscriptionId: session.subscription,
-                startsAt: getNow(),
-                productCode: order?.product_code || session.metadata?.product_code || "standard_monthly",
               });
             }
           } else if (session.mode === "setup") {
@@ -410,6 +494,30 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
               store.updateEntitlementStatus(ent.id, "expired");
             }
           }
+          if (subObj.cancel_at_period_end) {
+            queueLifecycleNotifications({
+              notificationKey: `subscription-canceled:${subscriptionId}`,
+              template: "billing_subscription_canceled",
+              userId: existingSub.user_id,
+              payload: {
+                subscriptionId,
+                productCode: existingSub.product_code || subObj.metadata?.product_code || "standard_monthly",
+                accessEndsAt: currentPeriodEnd,
+                cancellationType: "period_end",
+              },
+            });
+          } else if (eventType === "customer.subscription.created") {
+            queueLifecycleNotifications({
+              notificationKey: `subscription-created:${subscriptionId}`,
+              template: "billing_subscription_created",
+              userId: existingSub.user_id,
+              payload: {
+                subscriptionId,
+                productCode: existingSub.product_code || subObj.metadata?.product_code || "standard_monthly",
+                accessEndsAt: currentPeriodEnd,
+              },
+            });
+          }
           break;
         }
 
@@ -448,6 +556,17 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
           if (ent) {
             store.updateEntitlementStatus(ent.id, "expired");
           }
+          queueLifecycleNotifications({
+            notificationKey: `subscription-canceled:${subscriptionId}`,
+            template: "billing_subscription_canceled",
+            userId: existingSub.user_id,
+            payload: {
+              subscriptionId,
+              productCode: existingSub.product_code || "standard_monthly",
+              accessEndsAt: null,
+              cancellationType: "immediate",
+            },
+          });
           break;
         }
 
@@ -537,6 +656,17 @@ function createStripeEventProcessor({ store, entitlementService, catalog, stripe
                   userId: order.user_id,
                   orderId: order.id,
                   subscriptionId: order.stripe_subscription_id,
+                });
+                queueLifecycleNotifications({
+                  notificationKey: `refund:${order.id}`,
+                  template: "billing_refund_completed",
+                  userId: order.user_id,
+                  payload: {
+                    orderId: order.id,
+                    productCode: order.product_code,
+                    amountTotal: order.amount_total,
+                    subscriptionId: order.stripe_subscription_id || null,
+                  },
                 });
               } else {
                 // Partial refund: retain active entitlement access

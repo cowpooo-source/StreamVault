@@ -93,7 +93,8 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
         grace_until INTEGER,
         last_stripe_event_created INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        last_reconciliation_attempt_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_billing_subs_user ON billing_subscriptions(user_id);
       CREATE INDEX IF NOT EXISTS idx_billing_subs_stripe ON billing_subscriptions(stripe_subscription_id);
@@ -206,6 +207,17 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
     `);
 
+    const subscriptionColumns = new Set(
+      db.prepare("PRAGMA table_info(billing_subscriptions)").all().map((column) => column.name)
+    );
+    if (!subscriptionColumns.has("last_reconciliation_attempt_at")) {
+      db.exec("ALTER TABLE billing_subscriptions ADD COLUMN last_reconciliation_attempt_at INTEGER");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_billing_subs_reconciliation
+      ON billing_subscriptions(last_reconciliation_attempt_at, updated_at, id)
+    `);
+
     // Prepare statements
     stmts = {
       // Audit Log
@@ -219,7 +231,18 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       listAllActiveEntitlements: db.prepare(`SELECT * FROM billing_entitlements WHERE status = 'active'`),
       listDueScheduledEntitlements: db.prepare(`SELECT * FROM billing_entitlements WHERE status = 'scheduled' AND starts_at <= ?`),
       listAllSubscriptions: db.prepare(`SELECT * FROM billing_subscriptions`),
-      listSubscriptionsByStatus: db.prepare(`SELECT * FROM billing_subscriptions WHERE status IN ('active', 'past_due') LIMIT ?`),
+      listSubscriptionsByStatus: db.prepare(`
+        SELECT *
+        FROM billing_subscriptions
+        WHERE status IN ('active', 'past_due', 'trialing')
+        ORDER BY COALESCE(last_reconciliation_attempt_at, 0) ASC, updated_at ASC, id ASC
+        LIMIT ?
+      `),
+      recordSubscriptionReconciliationAttempt: db.prepare(`
+        UPDATE billing_subscriptions
+        SET last_reconciliation_attempt_at = ?
+        WHERE stripe_subscription_id = ?
+      `),
       listExpiredGraceSubscriptions: db.prepare(`SELECT * FROM billing_subscriptions WHERE status = 'past_due' AND grace_until IS NOT NULL AND grace_until <= ?`),
       listStaleOrders: db.prepare(`SELECT * FROM billing_orders WHERE status IN ('created', 'pending') AND created_at <= ?`),
       // Customers
@@ -422,7 +445,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
 
       // Notification Outbox
       insertOutbox: db.prepare(`
-        INSERT INTO notification_outbox (
+        INSERT OR IGNORE INTO notification_outbox (
           id, channel, template, recipient, payload_json, status, attempt_count, next_attempt_at, created_at, updated_at
         ) VALUES (
           @id, @channel, @template, @recipient, @payloadJson, @status, @attemptCount, @nextAttemptAt, @createdAt, @updatedAt
@@ -700,6 +723,11 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
       stmts.upsertSubscription.run(params);
     }
     return getSubscriptionByStripeId(nextStripeSubscriptionId);
+  }
+
+  function recordSubscriptionReconciliationAttempt(stripeSubscriptionId, attemptedAt = getNow()) {
+    if (!stmts) init();
+    stmts.recordSubscriptionReconciliationAttempt.run(attemptedAt, stripeSubscriptionId);
   }
 
   // Entitlements
@@ -1037,6 +1065,7 @@ function createBillingStore({ db, now = Date.now, identityHmacKey = "" }) {
     getSubscriptionByScheduleId,
     getSubscriptionByUserId,
     updateSubscriptionStatus,
+    recordSubscriptionReconciliationAttempt,
     // Entitlements
     createEntitlement,
     getEntitlement,

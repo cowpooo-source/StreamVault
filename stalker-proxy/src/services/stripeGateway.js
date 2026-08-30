@@ -286,6 +286,10 @@ function createStripeGateway({ stripe, catalog, appUrl = "https://media.portalhe
     );
   }
 
+  async function retrieveSubscription(subscriptionId) {
+    return await stripe.subscriptions.retrieve(subscriptionId);
+  }
+
   async function retrieveForReconciliation({ customerId = null, subscriptionId = null, paymentIntentId = null, scheduleId = null }) {
     const results = {};
     if (customerId) {
@@ -329,6 +333,7 @@ function createStripeGateway({ stripe, catalog, appUrl = "https://media.portalhe
     createScheduleAfterPass,
     resolvePaymentMethodFromSetupIntent,
     createFullRefund,
+    retrieveSubscription,
     retrieveForReconciliation,
   };
 }

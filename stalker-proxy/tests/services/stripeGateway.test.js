@@ -187,6 +187,13 @@ describe("stripeGateway", () => {
         { idempotencyKey: "cancel_schedule:sub_sched_123" }
       );
     });
+
+    it("retrieves a subscription for reconciliation", async () => {
+      const result = await gateway.retrieveSubscription("sub_123");
+
+      expect(result).toEqual({ id: "sub_123", status: "active" });
+      expect(mockStripe.subscriptions.retrieve).toHaveBeenCalledWith("sub_123");
+    });
   });
 
   describe("Automatic Refunds", () => {

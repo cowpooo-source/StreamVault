@@ -114,16 +114,28 @@ function createReconciliationService(deps) {
       }
 
       try {
+        if (typeof store.recordSubscriptionReconciliationAttempt === "function") {
+          store.recordSubscriptionReconciliationAttempt(sub.stripe_subscription_id, ts);
+        }
         const stripeSub = await stripeGateway.retrieveSubscription(sub.stripe_subscription_id);
         if (!stripeSub) continue;
         syncedCount++;
 
-        if (stripeSub.status === "canceled" && sub.status !== "canceled") {
-          store.updateSubscriptionStatus(sub.stripe_subscription_id, {
-            status: "canceled",
-            cancelAtPeriodEnd: 1,
-          });
+        const currentPeriodStart = stripeSub.current_period_start
+          ? stripeSub.current_period_start * 1000
+          : null;
+        const currentPeriodEnd = stripeSub.current_period_end
+          ? stripeSub.current_period_end * 1000
+          : null;
+        const subscriptionUpdate = {
+          status: stripeSub.status || sub.status,
+          cancelAtPeriodEnd: stripeSub.cancel_at_period_end ? 1 : 0,
+        };
+        if (currentPeriodStart) subscriptionUpdate.currentPeriodStart = currentPeriodStart;
+        if (currentPeriodEnd) subscriptionUpdate.currentPeriodEnd = currentPeriodEnd;
+        store.updateSubscriptionStatus(sub.stripe_subscription_id, subscriptionUpdate);
 
+        if (stripeSub.status === "canceled" && sub.status !== "canceled") {
           // Expire active subscription entitlement if period ended
           const ent = store.getEntitlementBySource("subscription", sub.stripe_subscription_id);
           if (ent && ent.status === "active") {
@@ -132,6 +144,16 @@ function createReconciliationService(deps) {
 
           syncUserEntitlementsAndLocks(sub.user_id, ts);
           resolvedDriftCount++;
+        } else if ((stripeSub.status === "active" || stripeSub.status === "trialing") && currentPeriodEnd) {
+          entitlementService.activateSubscription({
+            userId: sub.user_id,
+            stripeSubscriptionId: sub.stripe_subscription_id,
+            currentPeriodStart: currentPeriodStart || sub.current_period_start,
+            currentPeriodEnd,
+            endsAt: currentPeriodEnd,
+            cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+            productCode: sub.product_code || "standard_monthly",
+          });
         }
       } catch (err) {
         console.warn(`Failed to reconcile subscription ${sub.stripe_subscription_id}:`, err.message);

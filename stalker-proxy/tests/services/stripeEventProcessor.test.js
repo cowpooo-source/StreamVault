@@ -62,11 +62,18 @@ describe("stripeEventProcessor", () => {
       POLICY_REFUND_URL: "https://media.portalheaven.stream/legal/refund-v1.html",
       APP_URL: "https://media.portalheaven.stream/app",
       SUPPORT_EMAIL: "support@portalheaven.stream",
+      SUPPORT_DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/test/stripe-lifecycle",
     });
 
     mockStripeGateway = {
       createScheduleAfterPass: vi.fn().mockResolvedValue({ id: "sub_sched_123" }),
       resolvePaymentMethodFromSetupIntent: vi.fn().mockResolvedValue("pm_setup_123"),
+      retrieveSubscription: vi.fn().mockResolvedValue({
+        id: "sub_123",
+        status: "active",
+        current_period_start: Math.floor((fixedNow - DAY_MS) / 1000),
+        current_period_end: Math.floor((fixedNow + 30 * DAY_MS) / 1000),
+      }),
     };
 
     processor = createStripeEventProcessor({
@@ -74,6 +81,7 @@ describe("stripeEventProcessor", () => {
       entitlementService,
       catalog,
       stripeGateway: mockStripeGateway,
+      getUserById: (userId) => db.prepare("SELECT id, username, email FROM users WHERE id = ?").get(userId),
       now: () => fixedNow,
     });
   });
@@ -82,9 +90,15 @@ describe("stripeEventProcessor", () => {
     db?.close();
   });
 
-  function createUser(username, role = "free") {
-    const info = db.prepare("INSERT INTO users (username, role) VALUES (?, ?)").run(username, role);
-    return { id: Number(info.lastInsertRowid), username, role };
+  function createUser(username, role = "free", email = null) {
+    const info = db.prepare("INSERT INTO users (username, role, email) VALUES (?, ?, ?)").run(username, role, email);
+    return { id: Number(info.lastInsertRowid), username, role, email };
+  }
+
+  function lifecycleNotifications() {
+    return store.getDueNotifications(fixedNow + 1000).filter((notification) =>
+      notification.template.startsWith("billing_")
+    );
   }
 
   describe("idempotent event claiming", () => {
@@ -108,6 +122,7 @@ describe("stripeEventProcessor", () => {
           object: {
             id: "cs_claim_1",
             mode: "payment",
+            payment_status: "paid",
             customer: "cus_123",
             payment_intent: "pi_123",
             metadata: { order_id: "ord_claim_1", user_id: String(user.id) },
@@ -129,6 +144,38 @@ describe("stripeEventProcessor", () => {
   });
 
   describe("checkout.session.completed", () => {
+    it("does not grant access when checkout completed before payment is confirmed", async () => {
+      const user = createUser("user_unpaid_checkout", "free");
+      store.createOrder({
+        id: "ord_unpaid_checkout",
+        userId: user.id,
+        productCode: "standard_pass_30d",
+        amountTotal: 299,
+        currency: "usd",
+        status: "pending",
+        stripeCheckoutSessionId: "cs_unpaid_checkout",
+      });
+
+      await processor.processEvent({
+        id: "evt_unpaid_checkout",
+        type: "checkout.session.completed",
+        created: 100,
+        data: {
+          object: {
+            id: "cs_unpaid_checkout",
+            mode: "payment",
+            payment_status: "unpaid",
+            customer: "cus_unpaid_checkout",
+            payment_intent: "pi_unpaid_checkout",
+            metadata: { order_id: "ord_unpaid_checkout", user_id: String(user.id) },
+          },
+        },
+      });
+
+      expect(store.getOrder("ord_unpaid_checkout").status).toBe("pending");
+      expect(entitlementService.getEffectiveAccess(user.id, fixedNow).role).toBe("free");
+    });
+
     it("handles 30-Day Pass payment mode and activates entitlement", async () => {
       const user = createUser("user_pass_checkout", "free");
       store.createOrder({
@@ -149,6 +196,7 @@ describe("stripeEventProcessor", () => {
           object: {
             id: "cs_pass_test",
             mode: "payment",
+            payment_status: "paid",
             customer: "cus_pass_123",
             payment_intent: "pi_pass_123",
             metadata: { order_id: "ord_pass_test", user_id: String(user.id) },
@@ -190,6 +238,7 @@ describe("stripeEventProcessor", () => {
           object: {
             id: "cs_sub_test",
             mode: "subscription",
+            payment_status: "paid",
             customer: "cus_sub_123",
             subscription: "sub_stripe_123",
             metadata: { order_id: "ord_sub_test", user_id: String(user.id) },
@@ -210,6 +259,80 @@ describe("stripeEventProcessor", () => {
       expect(access.role).toBe("regular");
       expect(access.plan).toBe("standard");
       expect(access.planSource).toBe("paid");
+    });
+
+    it("persists the Stripe subscription period when checkout completes", async () => {
+      const user = createUser("user_sub_period", "free");
+      store.createOrder({
+        id: "ord_sub_period",
+        userId: user.id,
+        productCode: "standard_monthly",
+        amount: 299,
+        currency: "usd",
+        status: "pending",
+        stripeCheckoutSessionId: "cs_sub_period",
+      });
+      mockStripeGateway.retrieveSubscription = vi.fn().mockResolvedValue({
+        id: "sub_period_123",
+        status: "active",
+        current_period_start: Math.floor((fixedNow - DAY_MS) / 1000),
+        current_period_end: Math.floor((fixedNow + 30 * DAY_MS) / 1000),
+      });
+
+      await processor.processEvent({
+        id: "evt_sub_period",
+        type: "checkout.session.completed",
+        created: 100,
+        data: {
+          object: {
+            id: "cs_sub_period",
+            mode: "subscription",
+            payment_status: "paid",
+            customer: "cus_sub_period",
+            subscription: "sub_period_123",
+            metadata: { order_id: "ord_sub_period", user_id: String(user.id) },
+          },
+        },
+      });
+
+      const subscription = store.getSubscriptionByStripeId("sub_period_123");
+      const entitlement = store.getEntitlementBySource("subscription", "sub_period_123");
+      expect(mockStripeGateway.retrieveSubscription).toHaveBeenCalledWith("sub_period_123");
+      expect(subscription.current_period_end).toBe(fixedNow + 30 * DAY_MS);
+      expect(entitlement.ends_at).toBe(fixedNow + 30 * DAY_MS);
+    });
+
+    it("does not mark a subscription order paid when period retrieval fails", async () => {
+      const user = createUser("user_sub_period_failure", "free");
+      store.createOrder({
+        id: "ord_sub_period_failure",
+        userId: user.id,
+        productCode: "standard_monthly",
+        amount: 299,
+        currency: "usd",
+        status: "pending",
+        stripeCheckoutSessionId: "cs_sub_period_failure",
+      });
+      mockStripeGateway.retrieveSubscription = vi.fn().mockRejectedValue(new Error("Stripe unavailable"));
+
+      await expect(processor.processEvent({
+        id: "evt_sub_period_failure",
+        type: "checkout.session.completed",
+        created: 100,
+        data: {
+          object: {
+            id: "cs_sub_period_failure",
+            mode: "subscription",
+            payment_status: "paid",
+            customer: "cus_sub_period_failure",
+            subscription: "sub_period_failure",
+            metadata: { order_id: "ord_sub_period_failure", user_id: String(user.id) },
+          },
+        },
+      })).rejects.toMatchObject({ code: "subscription_period_unavailable" });
+
+      expect(store.getOrder("ord_sub_period_failure").status).toBe("pending");
+      expect(store.getSubscriptionByStripeId("sub_period_failure")).toBeUndefined();
     });
   });
 
@@ -462,6 +585,46 @@ describe("stripeEventProcessor", () => {
   });
 
   describe("refund lifecycle and partial vs full refunds", () => {
+    it("queues user email and Discord alert for a completed full refund", async () => {
+      const user = createUser("user_refund_notification", "free", "refund@example.com");
+      store.createOrder({
+        id: "ord_refund_notification",
+        userId: user.id,
+        productCode: "standard_pass_30d",
+        amountTotal: 399,
+        currency: "usd",
+        status: "paid",
+        stripePaymentIntentId: "pi_refund_notification",
+      });
+
+      const event = {
+        id: "evt_refund_notification",
+        type: "charge.refunded",
+        created: 300,
+        data: {
+          object: {
+            payment_intent: "pi_refund_notification",
+            amount: 399,
+            amount_refunded: 399,
+            refunded: true,
+          },
+        },
+      };
+
+      await processor.processEvent(event);
+
+      const notifications = lifecycleNotifications();
+      expect(notifications).toHaveLength(2);
+      expect(notifications.find((notification) => notification.channel === "email")).toMatchObject({
+        template: "billing_refund_completed",
+        recipient: "refund@example.com",
+      });
+      expect(notifications.find((notification) => notification.channel === "discord")).toMatchObject({
+        template: "billing_refund_completed",
+        recipient: "https://discord.com/api/webhooks/test/stripe-lifecycle",
+      });
+    });
+
     it("handles full charge.refunded by revoking entitlement and downgrading user to free", async () => {
       const user = createUser("user_full_refund", "free");
       store.createOrder({
@@ -586,6 +749,109 @@ describe("stripeEventProcessor", () => {
     });
   });
 
+  describe("subscription lifecycle notifications", () => {
+    it("queues user email and Discord alert when a subscription is created", async () => {
+      const user = createUser("user_subscription_created_notification", "free", "created@example.com");
+      store.upsertSubscription({
+        stripeSubscriptionId: "sub_created_notification",
+        userId: user.id,
+        productCode: "standard_monthly",
+        status: "scheduled",
+      });
+
+      await processor.processEvent({
+        id: "evt_subscription_created_notification",
+        type: "customer.subscription.created",
+        created: 300,
+        data: {
+          object: {
+            id: "sub_created_notification",
+            customer: "cus_created_notification",
+            status: "active",
+            current_period_end: Math.floor((fixedNow + 30 * DAY_MS) / 1000),
+          },
+        },
+      });
+
+      const notifications = lifecycleNotifications();
+      expect(notifications).toHaveLength(2);
+      expect(notifications.find((notification) => notification.channel === "email")).toMatchObject({
+        template: "billing_subscription_created",
+        recipient: "created@example.com",
+      });
+      expect(notifications.find((notification) => notification.channel === "discord")).toMatchObject({
+        template: "billing_subscription_created",
+        recipient: "https://discord.com/api/webhooks/test/stripe-lifecycle",
+      });
+    });
+
+    it("queues user email and Discord alert when a subscription is canceled", async () => {
+      const user = createUser("user_subscription_canceled_notification", "free", "canceled@example.com");
+      store.upsertSubscription({
+        stripeSubscriptionId: "sub_canceled_notification",
+        userId: user.id,
+        productCode: "standard_monthly",
+        status: "active",
+      });
+
+      await processor.processEvent({
+        id: "evt_subscription_canceled_notification",
+        type: "customer.subscription.deleted",
+        created: 300,
+        data: {
+          object: {
+            id: "sub_canceled_notification",
+            customer: "cus_canceled_notification",
+            status: "canceled",
+          },
+        },
+      });
+
+      const notifications = lifecycleNotifications();
+      expect(notifications).toHaveLength(2);
+      expect(notifications.find((notification) => notification.channel === "email")).toMatchObject({
+        template: "billing_subscription_canceled",
+        recipient: "canceled@example.com",
+      });
+      expect(notifications.find((notification) => notification.channel === "discord")).toMatchObject({
+        template: "billing_subscription_canceled",
+        recipient: "https://discord.com/api/webhooks/test/stripe-lifecycle",
+      });
+    });
+
+    it("does not duplicate cancellation notifications across update and deleted events", async () => {
+      const user = createUser("user_subscription_cancel_dedupe", "free", "dedupe@example.com");
+      store.upsertSubscription({
+        stripeSubscriptionId: "sub_cancel_dedupe",
+        userId: user.id,
+        productCode: "standard_monthly",
+        status: "active",
+      });
+
+      await processor.processEvent({
+        id: "evt_subscription_cancel_update_dedupe",
+        type: "customer.subscription.updated",
+        created: 300,
+        data: {
+          object: {
+            id: "sub_cancel_dedupe",
+            status: "active",
+            cancel_at_period_end: true,
+            current_period_end: Math.floor((fixedNow + 30 * DAY_MS) / 1000),
+          },
+        },
+      });
+      await processor.processEvent({
+        id: "evt_subscription_cancel_deleted_dedupe",
+        type: "customer.subscription.deleted",
+        created: 301,
+        data: { object: { id: "sub_cancel_dedupe", status: "canceled" } },
+      });
+
+      expect(lifecycleNotifications()).toHaveLength(2);
+    });
+  });
+
   describe("setup-mode and out-of-order protections and retries", () => {
     it("records setup-mode checkout as setup_completed and triggers future schedule", async () => {
       const user = createUser("user_setup_test", "free");
@@ -631,6 +897,7 @@ describe("stripeEventProcessor", () => {
           object: {
             id: "cs_retry_test",
             mode: "payment",
+            payment_status: "paid",
             customer: "cus_retry_123",
             payment_intent: "pi_retry_123",
             metadata: { order_id: "ord_nonexistent", user_id: String(user.id) },
@@ -840,6 +1107,7 @@ describe("stripeEventProcessor", () => {
           object: {
             id: "cs_orphan_123",
             mode: "payment",
+            payment_status: "paid",
             metadata: {}, // No order_id, no user_id
           },
         },
