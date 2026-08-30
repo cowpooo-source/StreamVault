@@ -2226,6 +2226,7 @@ describe('versioned lazy Stalker catalog routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.categories.map(category => category.title)).toEqual(['All', 'Sports']);
+    expect(res.body).not.toHaveProperty('hasNonAggregateCategory');
   });
 
   it.each(['live', 'vod', 'series'])('normalizes aggregate categories for %s', async kind => {

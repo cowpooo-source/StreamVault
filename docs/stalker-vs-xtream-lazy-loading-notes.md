@@ -120,7 +120,7 @@ Capabilities are cached by normalized portal origin, MAC hash, serial, deviceId,
 - Never place raw MACs, passwords, content tokens, commands, or search text in cache keys, metrics, or logs. Use SHA-256 hashes.
 - Scope browser cache to user/guest ID and a SHA-256 connection fingerprint.
 - Clear the active owner's Stalker cache on logout, guest reset, account change, or connection deletion.
-- Lazy catalog TTL: live pages/snapshots, VOD pages, series pages, categories, and capability records are retained for 48 hours on the VPS and in the owner-scoped browser cache. EPG remains short-lived. Legacy non-lazy route TTLs are unchanged.
+- Lazy catalog TTL: live pages/snapshots and live capability records are retained for 30 days; VOD/series pages, categories, and VOD/series capability records are retained for 48 hours on the VPS and in the owner-scoped browser cache. EPG remains short-lived. Legacy non-lazy route TTLs are unchanged.
 - Browser cache limit: 75 MiB and 1,000 page records with LRU eviction. Quota failure disables persistence for that session without breaking browsing.
 - Use `STALKER_LAZY_CATALOG_ENABLED` and `VITE_STALKER_LAZY_CATALOG_ENABLED`, both defaulting to `false` until staging passes.
 - Keep old endpoints for one release; remove aggregate loaders and old cache entries only in a separately reviewed cleanup.
@@ -401,6 +401,16 @@ Capabilities are cached by normalized portal origin, MAC hash, serial, deviceId,
 - [ ] Enable production only after acceptance; retain legacy endpoints for one release and file a separate cleanup issue.
 - [ ] Update README/deployment docs with contracts, flags, cache privacy, metrics, rollback, and partial-search limitations.
 - [ ] Commit with `git commit -m "docs: document lazy Stalker catalog rollout"`.
+
+## Live Provider Compatibility Fallback
+
+- Empty `get_ichannels_via_api` page one is not treated as a valid empty catalog when live genres exist.
+- The backend switches only live catalogs to `bounded_live_snapshot` and streams one shared `get_all_channels` scan.
+- VOD and series do not receive a full-catalog fallback.
+- Snapshot mode and live capability state are cached for 30 days; completed zero-result fallbacks are negative-cached for five minutes.
+- Manual live refresh clears pages, capability state, active snapshot work, and negative cache for the selected connection identity.
+- Compatibility fallback is suppressed for authorization failures, rate limits, cooldowns, aborts, metadata-size failures, coordinator saturation, and generic provider failures.
+- Monitor `stalker_live_snapshot_compatibility_*`, provider cooldowns, rate limits, CPU, RSS, and event-loop latency.
 
 ## Required Provider Matrix
 

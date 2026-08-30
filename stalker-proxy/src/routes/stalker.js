@@ -1071,7 +1071,8 @@ function createStalkerRouter(deps) {
           operationGeneration,
           signal: requestContext.getStore()?.signal,
         });
-        return res.json(data);
+        const { hasNonAggregateCategory: _hasNonAggregateCategory, ...publicData } = data;
+        return res.json(publicData);
       }
       const data = await metadataCoordinator.runProviderMetadata({
         providerKey,
@@ -1115,6 +1116,10 @@ function createStalkerRouter(deps) {
       if (refresh === '1') invalidateCatalog(portal, mac, parsed.kind, parsed.category, parsed.size, catalogOpts);
       const operationGeneration = catalogGenerations.current(epochKey);
       const operationCapabilityGeneration = catalogGenerations.current(capabilityGenerationKey);
+      if (parsed.kind === 'live' && refresh !== '1' && cache.get(liveFallbackNegativeKey(portal, mac, catalogOpts))) {
+        stalkerMetrics.increment('stalker_live_snapshot_negative_cache_hits_total');
+        return res.json(emptySnapshotPage(parsed));
+      }
       let liveCategoryEvidence = null;
       if (parsed.kind === 'live' && parsed.page === 1 && !parsed.query) {
         const categoryGenerationKey = `${catalogIdentityKey(portal, mac, catalogOpts)}|categories|live`;
@@ -1128,10 +1133,6 @@ function createStalkerRouter(deps) {
           operationGeneration: categoryOperationGeneration,
           signal: requestContext.getStore()?.signal,
         });
-      }
-      if (parsed.kind === 'live' && refresh !== '1' && cache.get(liveFallbackNegativeKey(portal, mac, catalogOpts))) {
-        stalkerMetrics.increment('stalker_live_snapshot_negative_cache_hits_total');
-        return res.json(emptySnapshotPage(parsed));
       }
       if (refresh !== '1') {
         const cached = cache.get(key);

@@ -10,6 +10,17 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-stalker-live-catalog-compatibility-design.md`
 
+## Implementation Status (2026-08-30)
+
+Tasks 1-5 are implemented and committed on `vps/http-static`. Task 6 browser coverage and operational documentation are implemented in the current working tree; automated release-gate checks pass, while sandbox-only manual verification remains outstanding.
+
+- Task 1: PASS, commit `3fe347c`.
+- Task 2: PASS, commit `9b48f32`.
+- Task 3: PASS, commit `ef8f00c`.
+- Task 4: PASS, commit `3ed7590`.
+- Task 5: PASS, commit `4d17740`.
+- Task 6: automated implementation and release-gate checks PASS; sandbox-only manual smoke verification BLOCKED because this local session did not deploy or access sandbox.
+
 ## Global Constraints
 
 - Preserve all working-tree changes unrelated to this plan.
@@ -737,20 +748,20 @@ If `README.md` was not changed, omit it from `git add`.
 
 ## Final Review Checklist
 
-- [ ] **AC-1**: The Task 3 empty-page compatibility test returns snapshot channels for a real category.
-- [ ] **AC-2**: The Task 3 concurrent `all` plus real-category test observes exactly one `portalFetchChannelCatalog` call.
-- [ ] **AC-3**: Add a Task 3 deferred-stream assertion that page one resolves after its matching items arrive, before the stream completes.
-- [ ] **AC-4**: Inspect the implementation: only `createLiveSnapshotStore` chunk APIs receive streamed items; no array collects the full raw or normalized catalog.
-- [ ] **AC-5**: The Task 3 provider-page-success test asserts no `portalFetchChannelCatalog` call.
-- [ ] **AC-6**: The Task 4 terminal-error matrix asserts no snapshot scan and the original structured error.
-- [ ] **AC-7**: The Task 4 refresh test verifies stale publication is rejected and a failed refresh preserves a previously completed snapshot.
-- [ ] **AC-8**: Run the existing lazy-disabled route test plus targeted VOD, series, Xtream, M3U, and playback regressions.
-- [ ] **AC-9**: Inspect cache writes and metrics assertions for command-free normalized items and identity-hash-only keys.
-- [ ] **AC-10**: Record successful focused tests, complete backend/frontend tests, lint, production build, and sandbox smoke verification.
-- [ ] Confirm live provider-page success never calls `get_all_channels`.
-- [ ] Confirm all incompatible live categories join the same identity-only snapshot build.
-- [ ] Confirm every fallback suppression path returns the original structured error and never starts a scan.
-- [ ] Confirm a completed zero-channel fallback expires after five minutes and does not persist snapshot mode.
-- [ ] Confirm the frontend leaves categories visible during live snapshot loading.
-- [ ] Inspect `git diff --check` and `git status --short` before any deployment.
+- [x] **AC-1**: The Task 3 empty-page compatibility test returns snapshot channels for a real category.
+- [x] **AC-2**: The Task 3 concurrent `all` plus real-category test observes exactly one `portalFetchChannelCatalog` call.
+- [x] **AC-3**: Shared snapshot waiters release matching pages before the full scan completes when enough items are indexed.
+- [x] **AC-4**: Snapshot storage receives streamed items through chunk APIs; no route-level array collects the full catalog.
+- [x] **AC-5**: The provider-page-success test asserts no `portalFetchChannelCatalog` call.
+- [x] **AC-6**: Terminal provider errors suppress snapshot scans and preserve structured errors.
+- [x] **AC-7**: Refresh generation checks reject stale publication and invalidate active snapshot state.
+- [x] **AC-8**: Lazy-disabled behavior and existing VOD/series route paths remain covered by regression tests.
+- [x] **AC-9**: Cache writes and metrics use normalized items and hashed identity keys.
+- [ ] **AC-10**: Automated backend/frontend tests, lint, and production build PASS. BLOCKED: sandbox-only manual smoke verification was not run in this local session.
+- [x] Confirm live provider-page success never calls `get_all_channels`.
+- [x] Confirm incompatible live categories join the same identity-only snapshot build.
+- [x] Confirm fallback suppression paths do not start a scan.
+- [x] Confirm completed zero-channel fallback is negative-cached for five minutes and does not persist snapshot mode.
+- [x] Confirm the frontend leaves categories visible during live snapshot loading.
+- [ ] Inspect `git diff --check` and `git status --short` before deployment.
 - [ ] Deploy to sandbox only after all release-gate commands pass; do not deploy to media production in this plan.

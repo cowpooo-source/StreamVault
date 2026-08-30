@@ -1,7 +1,7 @@
 import { test, expect } from "./fixtures/app.fixture.js";
 import { mockAuthenticatedUser, mockTurnstile, mockAppBackend } from "./fixtures/auth.fixture.js";
 
-async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVodTitles = false, rateLimitedVod = false } = {}) {
+async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVodTitles = false, rateLimitedVod = false, delayLiveItems = false } = {}) {
   await mockAuthenticatedUser(appPage);
   await mockTurnstile(appPage);
   await mockAppBackend(appPage);
@@ -69,6 +69,9 @@ async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVod
     }
 
     if (url.pathname.endsWith("/items")) {
+      if (delayLiveItems && kind === "live" && page === 1) {
+        await new Promise(resolve => setTimeout(resolve, 350));
+      }
       if (rateLimitedVod && kind === "vod" && category === "10") {
         return route.fulfill({
           status: 429,
@@ -171,6 +174,17 @@ test.describe("Stalker lazy catalog", () => {
     await expect(appPage.getByText("Lazy Live 1-1", { exact: true })).toBeVisible({ timeout: 15000 });
     expect(requests.find(request => request.kind === "live" && request.page === 1)).toMatchObject({ kind: "live", page: 1 });
     expect(requests.filter(request => request.path.endsWith("/items") && request.kind === "live" && request.page > 1)).toHaveLength(0);
+  });
+
+  test("keeps live categories visible while the selected page is loading", async ({ appPage }) => {
+    const requests = await setupLazyStalker(appPage, { delayLiveItems: true });
+    await connectStalker(appPage);
+
+    await appPage.locator(".sidebar .nav", { hasText: "Live TV" }).click();
+    await expect(appPage.getByText("Live Group 1", { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(appPage.locator(".cats")).toBeVisible();
+    await expect(appPage.getByText("Lazy Live 1-1", { exact: true })).toBeVisible({ timeout: 15000 });
+    expect(requests.filter(request => request.path.endsWith("/items") && request.kind === "live" && request.category === "live-10")).toHaveLength(1);
   });
 
   test("refreshes the active VOD category without requesting the aggregate catalog", async ({ appPage }) => {
