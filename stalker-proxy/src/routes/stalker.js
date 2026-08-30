@@ -287,6 +287,9 @@ function createStalkerRouter(deps) {
     `${catalogIdentityKey(portal, mac, opts)}|${kind}|capabilities`;
   const catalogCacheKey = (portal, mac, kind, category, page, size, query = '', opts = {}) =>
     `stalker-catalog-v3|${catalogIdentityKey(portal, mac, opts)}|${kind}|${hashPart(category || 'all')}|${page}|${size}|${hashPart(query)}`;
+  const liveFallbackNegativeKey = (portal, mac, opts = {}) =>
+    `stalker-live-fallback-negative-v1|${catalogIdentityKey(portal, mac, opts)}`;
+  const LIVE_FALLBACK_NEGATIVE_TTL_MS = 5 * 60 * 1_000;
   const catalogCategoryCacheKey = (portal, mac, kind, opts = {}) =>
     `stalker-catalog-categories-v2|${catalogIdentityKey(portal, mac, opts)}|${kind}`;
   const catalogSnapshotKey = (portal, mac, kind, category, size, opts = {}) =>
@@ -311,6 +314,7 @@ function createStalkerRouter(deps) {
     if (kind === 'live') {
       catalogGenerations.bump(liveSnapshotGenerationKey(identityKey));
       liveSnapshotStore.invalidate?.(identityKey);
+      cache.del?.(liveFallbackNegativeKey(portal, mac, opts));
       for (const [runKey, run] of liveSnapshotRuns) {
         if (runKey.startsWith(`${identityKey}|`)) run.controller.abort();
       }
@@ -437,7 +441,9 @@ function createStalkerRouter(deps) {
     const generation = catalogGenerations.current(generationKey);
     const existing = liveSnapshotStore.getManifest(identityHash);
     if (existing && String(existing.generation) === String(generation)) {
-      return liveSnapshotStore.readPage({ identityHash, category: request.category, page: request.page, pageSize: request.size });
+      const page = await liveSnapshotStore.readPage({ identityHash, category: request.category, page: request.page, pageSize: request.size });
+      if (Number(existing.itemCount) === 0) cache.set(liveFallbackNegativeKey(portal, mac, catalogOpts), { refreshedAt: Date.now() }, LIVE_FALLBACK_NEGATIVE_TTL_MS);
+      return page;
     }
 
     const buildKey = `${identityHash}|${generation}`;
@@ -471,12 +477,18 @@ function createStalkerRouter(deps) {
         } finally {
           stalkerMetrics.increment('stalker_live_snapshot_duration_ms', Date.now() - startedAt);
         }
-      })().finally(() => liveSnapshotRuns.delete(buildKey));
+      })().catch(() => null).finally(() => liveSnapshotRuns.delete(buildKey));
       liveSnapshotRuns.set(buildKey, { promise, controller: snapshotController });
     } else {
       stalkerMetrics.increment('stalker_live_snapshot_joined_total');
     }
-    return build.waitForPage({ category: request.category, page: request.page, pageSize: request.size, signal });
+    const page = await build.waitForPage({ category: request.category, page: request.page, pageSize: request.size, signal });
+    if (page && !page.complete) stalkerMetrics.increment('stalker_live_snapshot_waiters_resolved_early_total');
+    const manifest = liveSnapshotStore.getManifest(identityHash);
+    if (Number(manifest?.itemCount) === 0) {
+      cache.set(liveFallbackNegativeKey(portal, mac, catalogOpts), { refreshedAt: Date.now() }, LIVE_FALLBACK_NEGATIVE_TTL_MS);
+    }
+    return page;
   };
   const emptySnapshotPage = (request, total = 0) => ({
     kind: request.kind,
@@ -1117,6 +1129,10 @@ function createStalkerRouter(deps) {
           signal: requestContext.getStore()?.signal,
         });
       }
+      if (parsed.kind === 'live' && refresh !== '1' && cache.get(liveFallbackNegativeKey(portal, mac, catalogOpts))) {
+        stalkerMetrics.increment('stalker_live_snapshot_negative_cache_hits_total');
+        return res.json(emptySnapshotPage(parsed));
+      }
       if (refresh !== '1') {
         const cached = cache.get(key);
         if (cached) { stalkerMetrics.increment('stalker_catalog_cache_hits_total'); return res.json(materializeCatalogPage(cached, catalogBinding(portal, mac, catalogOpts))); }
@@ -1143,7 +1159,12 @@ function createStalkerRouter(deps) {
               && liveCategoryEvidence?.hasNonAggregateCategory
               && portalFetchChannelCatalog
               && isLiveProviderPageCompatibilityError(error);
-            if (!canFallback) throw error;
+            if (!canFallback) {
+              if (parsed.kind === 'live' && parsed.page === 1 && !parsed.query) {
+                stalkerMetrics.increment('stalker_live_snapshot_compatibility_suppressed_total');
+              }
+              throw error;
+            }
             stalkerMetrics.increment('stalker_live_snapshot_compatibility_detected_total');
             const snapshotPage = await buildOrJoinLiveSnapshot({ session, portal, mac, catalogOpts, request: parsed, signal });
             if (!snapshotPage) throw error;
@@ -1155,8 +1176,11 @@ function createStalkerRouter(deps) {
             }
             return snapshotPage;
           }
-          if (parsed.kind === 'live' && parsed.page === 1 && !parsed.query && !itemsFromPayload(payload).length
-            && liveCategoryEvidence?.hasNonAggregateCategory && portalFetchChannelCatalog) {
+          const emptyLiveProviderPage = parsed.kind === 'live' && parsed.page === 1 && !parsed.query && !itemsFromPayload(payload).length;
+          if (emptyLiveProviderPage && (!liveCategoryEvidence?.hasNonAggregateCategory || !portalFetchChannelCatalog)) {
+            stalkerMetrics.increment('stalker_live_snapshot_compatibility_suppressed_total');
+          }
+          if (emptyLiveProviderPage && liveCategoryEvidence?.hasNonAggregateCategory && portalFetchChannelCatalog) {
             stalkerMetrics.increment('stalker_live_snapshot_compatibility_detected_total');
             const snapshotPage = await buildOrJoinLiveSnapshot({ session, portal, mac, catalogOpts, request: parsed, signal });
             if (!snapshotPage) return normalizeCatalogPage(payload, {

@@ -59,9 +59,9 @@ function cacheBackedBy(records) {
     set: (key, value) => records.set(key, value),
     del: key => records.delete(key),
     keysByPrefix: prefix => [...records.keys()].filter(key => key.startsWith(prefix)),
-    deleteKeysByPrefix: prefix => {
+    deleteKeysByPrefix: vi.fn(prefix => {
       for (const key of [...records.keys()]) if (key.startsWith(prefix)) records.delete(key);
-    },
+    }),
     trackWatch: vi.fn(),
     trackCacheHit: vi.fn(),
     trackCacheMiss: vi.fn(),
@@ -2146,6 +2146,71 @@ describe('versioned lazy Stalker catalog routes', () => {
 
     expect(response.status).toBe(429);
     expect(deps.portalFetchChannelCatalog).not.toHaveBeenCalled();
+  });
+
+  it('negative-caches a completed zero-channel compatibility scan', async () => {
+    const records = new Map();
+    const deps = makeDeps({
+      cache: cacheBackedBy(records),
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        return { js: { data: [] } };
+      }),
+      portalFetchChannelCatalog: streamCatalog([]),
+    });
+    const app = makeApp(deps);
+    const url = '/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC';
+
+    const first = await request(app).get(url);
+    const providerCalls = deps.portalFetchRetry.mock.calls.length;
+    const second = await request(app).get(url);
+
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ items: [], complete: true, total: 0 });
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ items: [], complete: true, total: 0 });
+    expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1);
+    expect(deps.portalFetchRetry).toHaveBeenCalledTimes(providerCalls);
+  });
+
+  it('does not publish a failed snapshot manifest after a refresh invalidates the build', async () => {
+    const records = new Map();
+    let release;
+    let streamCalls = 0;
+    const cache = cacheBackedBy(records);
+    const deps = makeDeps({
+      cache,
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        return { js: { data: [] } };
+      }),
+      portalFetchChannelCatalog: vi.fn(async (_session, _limit, _timeout, options) => {
+        streamCalls += 1;
+        if (streamCalls === 1) {
+          await new Promise(resolve => { release = resolve; });
+          await options?.onItem?.({ id: 1, name: 'Stale', tv_genre_id: '3010', cmd: 'stale' });
+          return;
+        }
+        await options?.onItem?.({ id: 2, name: 'Fresh', tv_genre_id: '3010', cmd: 'fresh' });
+      }),
+    });
+    const app = makeApp(deps);
+    const url = '/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=1&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC';
+    const first = request(app).get(url).then(response => response);
+    await vi.waitFor(() => expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1));
+    const refreshed = request(app).get(`${url}&refresh=1`).then(response => response);
+    await vi.waitFor(() => expect(cache.deleteKeysByPrefix).toHaveBeenCalled());
+    release();
+
+    const firstResponse = await first;
+    const refreshedResponse = await refreshed;
+
+    expect(firstResponse.status).toBeGreaterThanOrEqual(400);
+    expect(refreshedResponse.status).toBe(200);
+    expect(refreshedResponse.body.items.map(item => item.id)).toEqual([2]);
+    expect([...records.keys()].some(key => key.includes('|manifest'))).toBe(true);
   });
 
   it('does not duplicate a provider-supplied All live category', async () => {
