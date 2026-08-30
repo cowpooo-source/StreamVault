@@ -1,16 +1,22 @@
-function createProviderMetadataCoordinator({ maxActive = 1, maxQueued = 2, safetyMs = 60_000 } = {}) {
+function createProviderMetadataCoordinator({ maxActive = 1, maxQueued = 2, safetyMs = 60_000, backgroundDelayMs = 250 } = {}) {
   const states = new Map();
   const abortError = () => Object.assign(new Error('Metadata request aborted'), { code: 'ABORT_ERR', status: 499 });
   const timeoutError = () => Object.assign(new Error('Metadata operation timed out'), { code: 'ETIMEDOUT', status: 504 });
 
   function stateFor(providerKey) {
-    if (!states.has(providerKey)) states.set(providerKey, { active: 0, queue: [], inFlight: new Map() });
+    if (!states.has(providerKey)) states.set(providerKey, { active: 0, queue: [], inFlight: new Map(), backgroundTimer: null });
     return states.get(providerKey);
   }
 
   function cleanup(state, providerKey, requestKey) {
     state.inFlight.delete(requestKey);
-    if (!state.active && !state.queue.length && !state.inFlight.size) states.delete(providerKey);
+    if (!state.active && !state.queue.length && !state.inFlight.size && !state.backgroundTimer) states.delete(providerKey);
+  }
+
+  function clearBackgroundTimer(state) {
+    if (!state.backgroundTimer) return;
+    clearTimeout(state.backgroundTimer);
+    state.backgroundTimer = null;
   }
 
   function releaseWaiter(entry) {
@@ -50,7 +56,7 @@ function createProviderMetadataCoordinator({ maxActive = 1, maxQueued = 2, safet
     });
   }
 
-  function runProviderMetadata({ providerKey, requestKey, signal, operation }) {
+  function runProviderMetadata({ providerKey, requestKey, signal, operation, priority = 'foreground' }) {
     const state = stateFor(providerKey);
     const existing = state.inFlight.get(requestKey);
     if (existing) return waitForEntry(existing, signal);
@@ -68,6 +74,7 @@ function createProviderMetadataCoordinator({ maxActive = 1, maxQueued = 2, safet
       state,
       providerKey,
       operation,
+      priority: priority === 'background' ? 'background' : 'foreground',
       waiters: 0,
       started: false,
       settled: false,
@@ -85,8 +92,31 @@ function createProviderMetadataCoordinator({ maxActive = 1, maxQueued = 2, safet
     state.inFlight.set(requestKey, entry);
 
     const startNext = () => {
-      const next = state.queue.shift();
-      if (next) start(next);
+      if (state.active >= maxActive) return;
+      const foregroundIndex = state.queue.findIndex(job => job.entry.priority !== 'background');
+      const nextIndex = foregroundIndex >= 0 ? foregroundIndex : 0;
+      const next = state.queue[nextIndex];
+      if (!next) {
+        cleanup(state, providerKey, requestKey);
+        return;
+      }
+      if (next.entry.priority === 'background') {
+        if (state.backgroundTimer) return;
+        state.backgroundTimer = setTimeout(() => {
+          state.backgroundTimer = null;
+          const index = state.queue.indexOf(next);
+          if (index >= 0) {
+            state.queue.splice(index, 1);
+            start(next);
+          } else {
+            startNext();
+          }
+        }, backgroundDelayMs);
+        state.backgroundTimer.unref?.();
+        return;
+      }
+      state.queue.splice(nextIndex, 1);
+      start(next);
     };
     const start = job => {
       const current = job.entry;
@@ -132,8 +162,15 @@ function createProviderMetadataCoordinator({ maxActive = 1, maxQueued = 2, safet
         });
     };
 
-    if (state.active < maxActive) start(entry.job);
-    else state.queue.push(entry.job);
+    if (entry.priority !== 'background' && state.backgroundTimer) clearBackgroundTimer(state);
+    if (state.active < maxActive && entry.priority !== 'background') {
+      start(entry.job);
+    } else {
+      const backgroundIndex = state.queue.findIndex(job => job.entry.priority === 'background');
+      if (entry.priority === 'background' || backgroundIndex < 0) state.queue.push(entry.job);
+      else state.queue.splice(backgroundIndex, 0, entry.job);
+      if (state.active < maxActive) startNext();
+    }
     return waitForEntry(entry, signal);
   }
 

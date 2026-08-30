@@ -1,7 +1,7 @@
 import { test, expect } from "./fixtures/app.fixture.js";
 import { mockAuthenticatedUser, mockTurnstile, mockAppBackend } from "./fixtures/auth.fixture.js";
 
-async function setupLazyStalker(appPage, { unsupportedLive = false } = {}) {
+async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVodTitles = false, rateLimitedVod = false } = {}) {
   await mockAuthenticatedUser(appPage);
   await mockTurnstile(appPage);
   await mockAppBackend(appPage);
@@ -44,13 +44,22 @@ async function setupLazyStalker(appPage, { unsupportedLive = false } = {}) {
     const kind = url.searchParams.get("kind");
     const category = url.searchParams.get("category") || "all";
     const page = Number(url.searchParams.get("page") || 1);
-    requests.push({ path: url.pathname, kind, category, page });
+    requests.push({
+      path: url.pathname,
+      kind,
+      category,
+      page,
+      refresh: url.searchParams.get("refresh") === "1",
+      mode: route.request().headers()["x-streamvault-catalog-mode"] || null,
+    });
 
     if (url.pathname.endsWith("/categories")) {
       const categories = kind === "live"
         ? ["live-10", "live-11", "live-12"].map((id, index) => ({ id, title: `Live Group ${index + 1}` }))
         : kind === "vod"
-        ? ["10", "11", "12", "13", "14"].map((id, index) => ({ id, title: `Movies ${index + 1}` }))
+        ? duplicateVodTitles
+          ? [{ id: "10", title: "Movies" }, { id: "11", title: "Movies" }, { id: "12", title: "Documentaries" }]
+          : ["10", "11", "12", "13", "14"].map((id, index) => ({ id, title: `Movies ${index + 1}` }))
         : ["20", "21", "22", "23", "24"].map((id, index) => ({ id, title: `Series ${index + 1}` }));
       return route.fulfill({
         status: 200,
@@ -60,6 +69,13 @@ async function setupLazyStalker(appPage, { unsupportedLive = false } = {}) {
     }
 
     if (url.pathname.endsWith("/items")) {
+      if (rateLimitedVod && kind === "vod" && category === "10") {
+        return route.fulfill({
+          status: 429,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Portal cooldown active. Retry in 98s.", code: "provider_cooldown", retryAfterSeconds: 98 }),
+        });
+      }
       const id = kind === "live" ? `live-${page}` : `${kind}-${category}-${page}`;
       const itemCount = kind === "live" && page === 1 ? 50 : 1;
       const items = Array.from({ length: itemCount }, (_, index) => ({
@@ -108,8 +124,9 @@ test.describe("Stalker lazy catalog", () => {
     await appPage.locator(".sidebar .nav", { hasText: "Live TV" }).click();
     await expect(appPage.getByText("Lazy Live 1-1", { exact: true })).toBeVisible({ timeout: 15000 });
     expect(requests.filter(request => request.path.endsWith("/categories")).map(request => request.kind)).toEqual(["live", "vod", "series"]);
+    expect(requests.filter(request => request.path.endsWith("/categories")).every(request => request.mode === "lazy-v1")).toBe(true);
     expect(requests.filter(request => request.path.endsWith("/items") && request.kind === "live").map(request => request.category)).toEqual(["live-10"]);
-    expect(requests.filter(request => request.path.endsWith("/items")).map(request => request.kind)).toEqual(["live", "vod", "series"]);
+    expect(requests.filter(request => request.path.endsWith("/items")).map(request => request.kind)).toEqual(["live"]);
 
     await appPage.getByText("Live Group 2", { exact: true }).click();
     await expect.poll(() => requests.filter(request => request.kind === "live" && request.category === "live-11" && request.page === 1).length).toBe(1);
@@ -154,5 +171,49 @@ test.describe("Stalker lazy catalog", () => {
     await expect(appPage.getByText("Lazy Live 1-1", { exact: true })).toBeVisible({ timeout: 15000 });
     expect(requests.find(request => request.kind === "live" && request.page === 1)).toMatchObject({ kind: "live", page: 1 });
     expect(requests.filter(request => request.path.endsWith("/items") && request.kind === "live" && request.page > 1)).toHaveLength(0);
+  });
+
+  test("refreshes the active VOD category without requesting the aggregate catalog", async ({ appPage }) => {
+    const requests = await setupLazyStalker(appPage);
+    await connectStalker(appPage);
+    await appPage.locator(".sidebar .nav", { hasText: "Movies" }).click();
+    await expect(appPage.getByText("Movie 10 1", { exact: true })).toBeVisible({ timeout: 15000 });
+
+    await appPage.getByText("Movies 2", { exact: true }).click();
+    await expect(appPage.getByText("Movie 11 1", { exact: true })).toBeVisible({ timeout: 15000 });
+    const refreshCountBefore = requests.filter(request => request.path.endsWith("/items") && request.kind === "vod" && request.refresh).length;
+    await appPage.getByTitle("Reload from portal").click();
+
+    await expect.poll(() => requests.filter(request => request.path.endsWith("/items") && request.kind === "vod" && request.refresh).length).toBeGreaterThan(refreshCountBefore);
+    const refreshes = requests.filter(request => request.path.endsWith("/items") && request.kind === "vod" && request.refresh).slice(refreshCountBefore);
+    expect(refreshes.map(request => request.category)).toEqual(["11"]);
+    expect(requests.some(request => request.path.endsWith("/stalker/vod"))).toBe(false);
+    expect(requests.some(request => request.path.endsWith("/items") && request.kind === "vod" && ["all", "*"].includes(request.category))).toBe(false);
+  });
+
+  test("keeps duplicate category titles bound to their distinct IDs", async ({ appPage }) => {
+    const requests = await setupLazyStalker(appPage, { duplicateVodTitles: true });
+    await connectStalker(appPage);
+    await appPage.locator(".sidebar .nav", { hasText: "Movies" }).click();
+    await expect(appPage.getByText("Movie 10 1", { exact: true })).toBeVisible({ timeout: 15000 });
+
+    const duplicateCategories = appPage.locator(".cats .cat").filter({ hasText: /^Movies$/ });
+    await expect(duplicateCategories).toHaveCount(2);
+    await duplicateCategories.nth(1).click();
+    await expect(appPage.getByText("Movie 11 1", { exact: true })).toBeVisible({ timeout: 15000 });
+    expect(requests.filter(request => request.path.endsWith("/items") && request.kind === "vod" && request.page === 1).map(request => request.category)).toEqual(["10", "11"]);
+  });
+
+  test("shows the provider cooldown and does not retry automatically", async ({ appPage, allowBrowserError }) => {
+    await allowBrowserError(/Portal cooldown active/);
+    await allowBrowserError(/429 GET .*kind=vod.*category=10/);
+    const requests = await setupLazyStalker(appPage, { rateLimitedVod: true });
+    await connectStalker(appPage);
+    await appPage.locator(".sidebar .nav", { hasText: "Movies" }).click();
+
+    await expect(appPage.getByText(/Please wait 98 seconds before trying again/i)).toBeVisible({ timeout: 15000 });
+    await expect.poll(() => requests.filter(request => request.kind === "vod" && request.category === "10").length).toBe(1);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(requests.filter(request => request.kind === "vod" && request.category === "10")).toHaveLength(1);
   });
 });

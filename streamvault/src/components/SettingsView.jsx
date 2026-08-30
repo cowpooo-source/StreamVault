@@ -9,7 +9,7 @@ import {
   subscribeAnalyticsConsent,
 } from '../analytics.js';
 
-export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings, onOpenAccountSettings, themeName, themeOptions = [], onThemeChange, language, languageOptions = {}, onLanguageChange, onFeedback, onLogout, maxConnections }) {
+export default function SettingsView({ connections, authUser, activeConnId, onAuth, onImportFull, autoLoadMore, setAutoLoadMore, contentMode = false, onOpenSecureSettings, onOpenAccountSettings, onOpenPlans, themeName, themeOptions = [], onThemeChange, language, languageOptions = {}, onLanguageChange, onFeedback, onLogout, maxConnections }) {
   const [tab, setTab] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get("settingsTab");
     return ["general", "account", "data"].includes(requested) ? requested : "general";
@@ -141,7 +141,15 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
               type="button"
               className="btn-go"
               style={{padding:".5rem 1.2rem",fontSize:".82rem",fontWeight:600}}
-              onClick={() => onOpenAccountSettings?.("billing")}
+              onClick={() => {
+                if (onOpenPlans) {
+                  onOpenPlans();
+                } else if (onOpenAccountSettings) {
+                  onOpenAccountSettings("billing");
+                } else {
+                  onOpenSecureSettings?.("billing");
+                }
+              }}
             >
               Billing & Plans
             </button>
@@ -260,20 +268,36 @@ export default function SettingsView({ connections, authUser, activeConnId, onAu
             </div>
           </div>
           {contentMode && (
+            <>
             <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:".8rem"}}>
               <div>
-                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:600}}>Account, Billing & Support</div>
-                <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem"}}>Manage your subscriptions, connection slots, and support tickets securely on HTTPS.</div>
+                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:600}}>Plans & Upgrade</div>
+                <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem"}}>Compare Guest, Free, Standard, and upcoming Pro features.</div>
               </div>
               <button
                 type="button"
                 className="btn-primary"
                 style={{padding:".5rem 1.2rem",fontSize:".82rem",fontWeight:600}}
-                onClick={() => onOpenSecureSettings ? onOpenSecureSettings("billing") : window.location.assign("https://media.portalheaven.stream/app?settingsTab=billing")}
+                onClick={() => onOpenPlans?.()}
+              >
+                Compare Plans
+              </button>
+            </div>
+            <div style={{marginTop:"1rem",padding:"1.2rem",background:"var(--s2)",borderRadius:10,border:"1px solid var(--b2)",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:".8rem"}}>
+              <div>
+                <div style={{fontSize:".88rem",color:"var(--t1)",fontWeight:600}}>Account, Billing & Support</div>
+                <div style={{fontSize:".72rem",color:"var(--t3)",marginTop:".2rem"}}>Manage subscriptions, connection slots, and support tickets securely on HTTPS.</div>
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{padding:".5rem 1.2rem",fontSize:".82rem",fontWeight:600}}
+                onClick={() => onOpenSecureSettings?.("billing")}
               >
                 Account, Billing & Support
               </button>
             </div>
+            </>
           )}
         </div>
       )}

@@ -45,6 +45,20 @@ The HilltopAds popunder loader is opt-in and runs only on eligible app pages. Th
 
 Production configuration belongs in the deployment environment. Never commit .env, provider credentials, CAPTCHA secrets, or analytics API secrets.
 
+## Displayed Account Plans
+
+The pricing comparison dialog presents these account tiers:
+
+| Tier | Live / Movies / Series | Watch time | Saved connections | Active sessions | Ads |
+| --- | --- | --- | --- | --- | --- |
+| Guest | 5,000 each | 3 hours/day | 2 | 1 | Included |
+| Free | 5,000 each | 3 hours/day | 2 | 1 | Included |
+| Standard | Unlimited | Unlimited | 5 | 3 | No ads |
+| Pro | Unlimited | Unlimited | 10 | 5 | No ads |
+
+Standard is currently available at $2.99 for a 30-day pass, $2.85 monthly, or $29.99 yearly. Pro is disabled and marked coming soon. The Guest and Free catalog and
+watch-time values are display-only for now; the application does not enforce those limits yet.
+
 ## Playback model
 
 The app classifies provider URLs before selecting a playback engine:

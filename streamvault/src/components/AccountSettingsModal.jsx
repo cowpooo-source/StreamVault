@@ -4,8 +4,16 @@ import AccountStatusCard from "./AccountStatusCard.jsx";
 import BillingSettings from "./BillingSettings.jsx";
 import SupportSettings from "./SupportSettings.jsx";
 
-export default function AccountSettingsModal({
-  isOpen,
+export default function AccountSettingsModal(props) {
+  if (!props.isOpen) return null;
+
+  return createPortal(
+    <AccountSettingsModalPanel key={props.initialTab || "account"} {...props} />,
+    document.body
+  );
+}
+
+function AccountSettingsModalPanel({
   onClose,
   initialTab = "account",
   accessState = {},
@@ -15,37 +23,31 @@ export default function AccountSettingsModal({
 }) {
   const [activeTab, setActiveTab] = useState(initialTab);
 
-  if (!isOpen) return null;
-
-  return createPortal(
+  return (
     <div
-      className="fixed inset-0 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-      style={{ position: "fixed", inset: 0, zIndex: 99999 }}
+      className="account-settings-overlay"
+      onClick={(event) => { if (event.target === event.currentTarget) onClose?.(); }}
     >
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="account-settings-modal" role="dialog" aria-modal="true" aria-labelledby="account-settings-title">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-          <h2 className="text-xl font-bold text-white">Account & Billing Settings</h2>
+        <div className="account-settings-header">
+          <h2 id="account-settings-title" className="account-settings-title">Account & Billing Settings</h2>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="text-gray-400 hover:text-white text-2xl font-bold p-1 leading-none rounded-lg hover:bg-gray-800 transition"
+            className="account-settings-close"
           >
             &times;
           </button>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-gray-800 px-6 bg-gray-950/40" role="tablist">
+        <div className="account-settings-tabs" role="tablist" aria-label="Account settings sections">
           <button
             role="tab"
             aria-selected={activeTab === "account"}
             onClick={() => setActiveTab("account")}
-            className={`py-3 px-4 text-sm font-semibold border-b-2 transition ${
-              activeTab === "account"
-                ? "border-blue-500 text-blue-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
-            }`}
+            className={`account-settings-tab ${activeTab === "account" ? "is-active" : ""}`}
           >
             Account
           </button>
@@ -53,11 +55,7 @@ export default function AccountSettingsModal({
             role="tab"
             aria-selected={activeTab === "billing"}
             onClick={() => setActiveTab("billing")}
-            className={`py-3 px-4 text-sm font-semibold border-b-2 transition ${
-              activeTab === "billing"
-                ? "border-blue-500 text-blue-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
-            }`}
+            className={`account-settings-tab ${activeTab === "billing" ? "is-active" : ""}`}
           >
             Billing
           </button>
@@ -65,11 +63,7 @@ export default function AccountSettingsModal({
             role="tab"
             aria-selected={activeTab === "connections"}
             onClick={() => setActiveTab("connections")}
-            className={`py-3 px-4 text-sm font-semibold border-b-2 transition ${
-              activeTab === "connections"
-                ? "border-blue-500 text-blue-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
-            }`}
+            className={`account-settings-tab ${activeTab === "connections" ? "is-active" : ""}`}
           >
             Connections
           </button>
@@ -77,21 +71,21 @@ export default function AccountSettingsModal({
             role="tab"
             aria-selected={activeTab === "support"}
             onClick={() => setActiveTab("support")}
-            className={`py-3 px-4 text-sm font-semibold border-b-2 transition ${
-              activeTab === "support"
-                ? "border-blue-500 text-blue-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
-            }`}
+            className={`account-settings-tab ${activeTab === "support" ? "is-active" : ""}`}
           >
             Support
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto flex-1 bg-gray-900/90">
+        <div className="account-settings-body">
           {activeTab === "account" && (
             <div className="space-y-6">
-              <AccountStatusCard access={accessState} onOpenBilling={() => setActiveTab("billing")} />
+              <AccountStatusCard
+                accessState={accessState}
+                onOpenUpgrade={() => setActiveTab("billing")}
+                onManageBilling={() => setActiveTab("billing")}
+              />
 
               <div className="bg-gray-800 border border-gray-700 rounded-xl p-5 text-white">
                 <h4 className="font-bold text-base mb-2">User Profile</h4>
@@ -130,7 +124,6 @@ export default function AccountSettingsModal({
           {activeTab === "support" && <SupportSettings billingApi={billingApi} />}
         </div>
       </div>
-    </div>,
-    document.body
+    </div>
   );
 }

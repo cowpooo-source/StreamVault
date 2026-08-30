@@ -22,6 +22,7 @@ describe('stalker catalog API', () => {
     await expect(api.fetchCatalogPage({ kind: 'vod', category: '1', contentToken: 'token' })).resolves.toEqual(page);
     expect(fetcher.mock.calls[0][0]).toContain('/stalker/catalog/v1/items?');
     expect(fetcher.mock.calls[0][0]).toContain('contentToken=token');
+    expect(fetcher.mock.calls[0][1].headers).toMatchObject({ 'X-StreamVault-Catalog-Mode': 'lazy-v1' });
     expect(fetcher.mock.calls[0][0]).not.toContain('refresh=1');
   });
 
@@ -38,6 +39,15 @@ describe('stalker catalog API', () => {
     await expect(api.fetchCatalogPage({ kind: 'vod', category: '1', contentToken: 'token' })).rejects.toBeInstanceOf(StalkerCatalogError);
     const disabled = createStalkerCatalogApi({ fetcher: vi.fn(), enabled: false });
     await expect(disabled.fetchCategories({ kind: 'live', contentToken: 'token' })).rejects.toMatchObject({ code: 'feature_disabled', status: 404 });
+  });
+
+  it('does not default a VOD page request to the aggregate category', async () => {
+    const fetcher = vi.fn();
+    const api = createStalkerCatalogApi({ fetcher, enabled: true });
+
+    await expect(api.fetchCatalogPage({ kind: 'vod', contentToken: 'token' }))
+      .rejects.toMatchObject({ code: 'invalid_parameter', status: 400 });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('aborts the underlying fetch when abortScope is called', async () => {

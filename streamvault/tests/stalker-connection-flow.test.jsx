@@ -1,16 +1,37 @@
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import "fake-indexeddb/auto";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const harness = vi.hoisted(() => ({
-  requests: [],
-  fetch: vi.fn(),
-  db: {
-    get: vi.fn(async (_key, fallback = null) => fallback),
-    set: vi.fn(async () => {}),
-  },
-  connection: {
+const harness = vi.hoisted(() => {
+  const hiddenCats = { live: [], vod: [], series: [] };
+  return {
+    requests: [],
+    fetch: vi.fn(),
+    hiddenCats,
+    db: {
+      get: vi.fn(async (key, fallback = null) => key === "sv-hiddenCats" ? hiddenCats : fallback),
+      set: vi.fn(async () => {}),
+    },
+    streamVaultState: {
+      connections: [],
+      activeConnId: null,
+      favorites: { live: {}, vod: {}, series: {} },
+      history: [],
+      hydrated: true,
+    },
+    streamVaultActions: {
+      setConnections: vi.fn(),
+      setActiveConnId: vi.fn(),
+      setFavorites: vi.fn(),
+      setHistory: vi.fn(),
+      addConnection: vi.fn(),
+      removeConnection: vi.fn(),
+      updateConnection: vi.fn(),
+      toggleFavorite: vi.fn(),
+      addHistory: vi.fn(),
+    },
+    connection: {
     id: "stalker-1",
     type: "stalker",
     label: "Test Stalker",
@@ -23,8 +44,12 @@ const harness = vi.hoisted(() => ({
       deviceId: "DEVICE-1",
       deviceId2: "DEVICE-2",
     },
-  },
-}));
+    },
+  };
+});
+
+harness.streamVaultState.connections = [harness.connection];
+harness.streamVaultState.activeConnId = harness.connection.id;
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -37,11 +62,28 @@ function catalogResponse(url) {
   const parsed = new URL(url, "http://test.local");
   if (parsed.pathname.endsWith("/categories")) {
     const kind = parsed.searchParams.get("kind");
+    if (!kind && parsed.pathname.endsWith("/stalker/vod/categories")) {
+      return jsonResponse({
+        categories: [
+          { id: "all", title: "All" },
+          { id: "vod-20", title: "Movies" },
+        ],
+      });
+    }
+    if (!kind && parsed.pathname.endsWith("/stalker/series/categories")) {
+      return jsonResponse({
+        categories: [
+          { id: "all", title: "All" },
+          { id: "series-20", title: "Shows" },
+        ],
+      });
+    }
     return jsonResponse({
       kind,
       categories: [
         { id: "all", title: "All", count: null },
         { id: kind === "vod" ? "vod-1" : "series-1", title: kind === "vod" ? "Movies" : "Shows", count: 1 },
+        { id: kind === "vod" ? "vod-2" : "series-2", title: kind === "vod" ? "Archive" : "Classics", count: 1 },
       ],
     });
   }
@@ -107,24 +149,8 @@ vi.mock("../src/direct-content-session.js", () => ({
 
 vi.mock("../src/useStreamVault.js", () => ({
   useStreamVault: () => ({
-    state: {
-      connections: [harness.connection],
-      activeConnId: harness.connection.id,
-      favorites: { live: {}, vod: {}, series: {} },
-      history: [],
-      hydrated: true,
-    },
-    actions: {
-      setConnections: vi.fn(),
-      setActiveConnId: vi.fn(),
-      setFavorites: vi.fn(),
-      setHistory: vi.fn(),
-      addConnection: vi.fn(),
-      removeConnection: vi.fn(),
-      updateConnection: vi.fn(),
-      toggleFavorite: vi.fn(),
-      addHistory: vi.fn(),
-    },
+    state: harness.streamVaultState,
+    actions: harness.streamVaultActions,
   }),
 }));
 
@@ -135,6 +161,7 @@ vi.mock("../src/stalker-catalog-cache.js", () => ({
     putCategories: vi.fn(async () => {}),
     getPage: vi.fn(async () => null),
     putPage: vi.fn(async () => {}),
+    invalidateScope: vi.fn(async () => {}),
     clearOwner: vi.fn(async () => {}),
     clearConnection: vi.fn(async () => {}),
   })),
@@ -216,5 +243,87 @@ describe("Stalker connection activation", () => {
     expect(urls.some(url => isCatalogItemsRequest(url, "series"))).toBe(false);
     expect(urls.some(url => isLegacyItemsRequest(url, "vod"))).toBe(false);
     expect(urls.some(url => isLegacyItemsRequest(url, "series"))).toBe(false);
+  });
+
+  it("loads the selected legacy VOD category when lazy loading is disabled", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_STALKER_LAZY_CATALOG_ENABLED", "false");
+    vi.stubGlobal("fetch", harness.fetch);
+    harness.requests.length = 0;
+    harness.fetch.mockReset();
+    harness.fetch.mockImplementation(async (url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("/stalker/")) return catalogResponse(requestUrl);
+      return jsonResponse({});
+    });
+    window.history.pushState({}, "", "/content?token=content-token");
+
+    const { default: App } = await import("../src/App.jsx");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Movies").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByText("Movies")[0]);
+
+    await waitFor(() => {
+      expect(document.querySelector('.cats .cat[title="Movies"]')).not.toBeNull();
+    });
+
+    fireEvent.click(document.querySelector('.cats .cat[title="Movies"]'));
+
+    await waitFor(() => {
+      expect(requestUrls().some(url => {
+        const parsed = new URL(url, "http://test.local");
+        return parsed.pathname.endsWith("/stalker/vod")
+          && parsed.searchParams.get("cat") === "vod-20";
+      })).toBe(true);
+    });
+  });
+
+  it("refreshes only the selected lazy category without clearing the category panel", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_STALKER_LAZY_CATALOG_ENABLED", "true");
+    vi.stubGlobal("fetch", harness.fetch);
+    harness.requests.length = 0;
+    harness.fetch.mockReset();
+    harness.fetch.mockImplementation(async (url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("/stalker/catalog/v1/")) return catalogResponse(requestUrl);
+      if (requestUrl.includes("/stalker/epg")) return jsonResponse({ programs: {} });
+      return jsonResponse({});
+    });
+    window.history.pushState({}, "", "/content?token=content-token");
+
+    const { default: App } = await import("../src/App.jsx");
+    render(<App />);
+
+    await waitFor(() => expect(screen.getAllByText("Movies").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByText("Movies")[0]);
+    await waitFor(() => expect(document.querySelector('.cats .cat[title="Movies"]')).not.toBeNull());
+    fireEvent.click(document.querySelector('.cats .cat[title="Archive"]'));
+
+    await waitFor(() => expect(requestUrls().some(url => {
+      const parsed = new URL(url, "http://test.local");
+      return isCatalogItemsRequest(url, "vod") && parsed.searchParams.get("category") === "vod-2";
+    })).toBe(true));
+
+    const refreshButton = screen.getByTitle("Reload from portal");
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => expect(requestUrls().some(url => {
+      const parsed = new URL(url, "http://test.local");
+      return isCatalogItemsRequest(url, "vod")
+        && parsed.searchParams.get("category") === "vod-2"
+        && parsed.searchParams.get("refresh") === "1";
+    })).toBe(true));
+
+    const refreshedUrls = requestUrls().filter(url => new URL(url, "http://test.local").searchParams.get("refresh") === "1");
+    expect(refreshedUrls.some(url => {
+      const parsed = new URL(url, "http://test.local");
+      return isCatalogItemsRequest(url, "vod") && parsed.searchParams.get("category") === "vod-1";
+    })).toBe(false);
+    expect(document.querySelector('.cats .cat[title="Archive"]')?.classList.contains("on")).toBe(true);
   });
 });

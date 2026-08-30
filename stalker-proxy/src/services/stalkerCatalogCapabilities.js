@@ -23,12 +23,12 @@ function createCatalogCapabilities({ cache, now = () => Date.now() }) {
       const first = pageSignature(firstItems || []);
       const second = pageSignature(secondItems || []);
       if (!secondItems?.length || first !== second) return set(providerKey, kind, { pagination: 'supported', mode: 'provider_pages', firstSignature: first }, options);
-      return set(providerKey, kind, { pagination: 'unsupported', mode: kind === 'live' ? 'bounded_live_snapshot' : 'first_page_only', firstSignature: first }, options);
+      return set(providerKey, kind, { pagination: 'unsupported', mode: 'first_page_only', firstSignature: first }, options);
     },
     recordPaginationUnsupported(providerKey, kind, options) {
       return set(providerKey, kind, {
         pagination: 'unsupported',
-        mode: kind === 'live' ? 'bounded_live_snapshot' : 'first_page_only',
+        mode: 'first_page_only',
       }, options);
     },
     recordSearchProbe(providerKey, kind, firstItems, secondItems, options) {

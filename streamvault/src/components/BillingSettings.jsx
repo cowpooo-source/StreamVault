@@ -158,15 +158,30 @@ export default function BillingSettings({ billingApi, accessState = {}, onRefres
           />
           <label htmlFor="billing-policy-agree" className="cursor-pointer">
             I agree to the{" "}
-            <a href={policies.terms?.url || "/terms"} target="_blank" rel="noreferrer" className="text-blue-400 underline">
+            <a
+              href={policies.terms?.publicUrl || policies.terms?.url || "/legal/terms-v1.html"}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-400 underline"
+            >
               Terms of Service
             </a>
             ,{" "}
-            <a href={policies.privacy?.url || "/privacy"} target="_blank" rel="noreferrer" className="text-blue-400 underline">
+            <a
+              href={policies.privacy?.publicUrl || policies.privacy?.url || "/legal/privacy-v1.html"}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-400 underline"
+            >
               Privacy Policy
             </a>
             , and 7-day{" "}
-            <a href={policies.refund?.url || "/refund"} target="_blank" rel="noreferrer" className="text-blue-400 underline">
+            <a
+              href={policies.refund?.publicUrl || policies.refund?.url || "/legal/refund-v1.html"}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-400 underline"
+            >
               Refund Policy
             </a>
             .

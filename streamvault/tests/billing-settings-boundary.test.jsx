@@ -72,4 +72,20 @@ describe("Billing Settings Boundary (HTTP Content Mode vs HTTPS)", () => {
     fireEvent.click(billingBtn);
     expect(onOpenAccount).toHaveBeenCalledWith("billing");
   });
+
+  it("delegates billing access to the secure settings handler when the modal handler is unavailable", () => {
+    const openSecure = vi.fn();
+    render(
+      <SettingsView
+        {...defaultProps}
+        contentMode={false}
+        onOpenSecureSettings={openSecure}
+      />
+    );
+
+    fireEvent.click(screen.getByText("Account"));
+    fireEvent.click(screen.getByRole("button", { name: /billing & plans/i }));
+
+    expect(openSecure).toHaveBeenCalledWith("billing");
+  });
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { API, validateM3UChunk, trackAnalytics } from '../utils.js';
 import { db, makeXtreamAPI, track, GUEST_ID } from '../app-runtime.js';
@@ -17,7 +17,7 @@ import SettingsView from './SettingsView.jsx';
 
 const CONN_ICONS = { xtream:"📡", stalker:"📺", m3u:"📋", hls:"🔗" };
 
-export default function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, onAuth, themeName, themeOptions, onThemeChange, language, languageOptions, onLanguageChange, onFeedback, maxConnections, autoLoadMore, setAutoLoadMore, t: st }) {
+export default function Setup({ onConnect, onImportMultiple, onImportFull, connections = [], onReconnect, onRemoveConn, onEdit, authUser, isGuest, onLogout, onAuth, themeName, themeOptions, onThemeChange, language, languageOptions, onLanguageChange, onFeedback, onOpenSecureSettings, onOpenAccountSettings, maxConnections, autoLoadMore, setAutoLoadMore, t: st }) {
   const t = st || ((k) => k);
   const [type, setType]     = useState("xtream");
   const [f, setF]           = useState({ server:"", user:"", pass:"", mac:"", url:"", serial:"", deviceId:"", deviceId2:"" });
@@ -30,6 +30,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
   const [skipValidation, setSkipValidation] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(() => localStorage.getItem("sv-disclaimer-accepted") === "1");
+  const pendingDisclaimerActionRef = useRef(null);
   const [diagResults, setDiagResults] = useState({});
   const [diagLoading, setDiagLoading] = useState({});
   const [showSettings, setShowSettings] = useState(false);
@@ -45,6 +46,26 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     });
   }
 
+  function runWithDisclaimer(action) {
+    if (disclaimerAccepted) return action();
+
+    return new Promise((resolve, reject) => {
+      pendingDisclaimerActionRef.current = { action, resolve, reject };
+      setShowDisclaimer(true);
+    });
+  }
+
+  function handleImportFull(data) {
+    return runWithDisclaimer(() => onImportFull(data));
+  }
+
+  function handleImportMultiple(items) {
+    const result = runWithDisclaimer(() => onImportMultiple(items));
+    // Child import forms do not await this callback, so surface deferred errors here.
+    if (result?.catch) result.catch(e => setErr(e.message || "Import failed"));
+    return result;
+  }
+
   const handleFileImport = (e) => {
     setErr("");
     const file = e.target.files?.[0];
@@ -53,8 +74,11 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
     reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        const resultMsg = await onImportFull(data);
-        alert(`Imported: ${resultMsg}. Refresh to see all changes.`);
+        await runWithDisclaimer(async () => {
+          const resultMsg = await onImportFull(data);
+          alert(`Imported: ${resultMsg}. Refresh to see all changes.`);
+          return resultMsg;
+        });
       } catch (err) {
         setErr(err.message || "Import failed");
       }
@@ -181,15 +205,29 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
   }, []);
 
   function handleConnectClick() {
-    if (!disclaimerAccepted) { setShowDisclaimer(true); return; }
-    connect();
+    runWithDisclaimer(connect);
   }
 
   function acceptDisclaimer() {
     setDisclaimerAccepted(true);
     localStorage.setItem("sv-disclaimer-accepted", "1");
     setShowDisclaimer(false);
-    connect();
+    const pending = pendingDisclaimerActionRef.current;
+    pendingDisclaimerActionRef.current = null;
+    if (!pending) {
+      connect();
+      return;
+    }
+    Promise.resolve()
+      .then(pending.action)
+      .then(pending.resolve, pending.reject);
+  }
+
+  function cancelDisclaimer() {
+    const pending = pendingDisclaimerActionRef.current;
+    pendingDisclaimerActionRef.current = null;
+    pending?.resolve(null);
+    setShowDisclaimer(false);
   }
 
   async function connect() {
@@ -354,7 +392,9 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
               <button type="button" onClick={() => setShowSettings(false)} aria-label="Close settings"
                 style={{position:"absolute",top:10,right:10,background:"none",border:"none",color:"var(--t2)",fontSize:"1.2rem",cursor:"pointer"}}>{"\u00d7"}</button>
               <SettingsView connections={connections} authUser={authUser} activeConnId={null}
-                onAuth={onAuth} onImportFull={onImportFull} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
+                onAuth={onAuth} onImportFull={handleImportFull} autoLoadMore={autoLoadMore} setAutoLoadMore={setAutoLoadMore}
+                onOpenSecureSettings={onOpenSecureSettings}
+                onOpenAccountSettings={(tab) => { setShowSettings(false); onOpenAccountSettings?.(tab); }}
                 themeName={themeName} themeOptions={themeOptions} onThemeChange={onThemeChange}
                 language={language} languageOptions={languageOptions} onLanguageChange={onLanguageChange}
                 onFeedback={() => { setShowSettings(false); onFeedback?.(); }}
@@ -404,7 +444,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
             setSelected={setSelected}
             onSubmit={handleConnectClick}
             onFileImport={handleFileImport}
-            onImportMultiple={onImportMultiple}
+            onImportMultiple={handleImportMultiple}
           />
         )}
         {type==="stalker" && (
@@ -435,7 +475,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
             selected={selected}
             setSelected={setSelected}
             onFileImport={handleFileImport}
-            onImportMultiple={onImportMultiple}
+            onImportMultiple={handleImportMultiple}
             onFillSingle={handleFillSingle}
           />
         )}
@@ -506,7 +546,7 @@ export default function Setup({ onConnect, onImportMultiple, onImportFull, conne
                 <p style={{marginTop:".6rem",fontSize:".72rem",color:"var(--t3)"}}>This disclaimer is shown once and your acceptance is stored locally.</p>
               </div>
               <div style={{display:"flex",gap:".5rem"}}>
-                <button onClick={() => setShowDisclaimer(false)}
+                <button onClick={cancelDisclaimer}
                   style={{flex:1,padding:".6rem",background:"var(--s2,#16162a)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,
                     color:"var(--t2,#8080aa)",fontSize:".82rem",cursor:"pointer"}}>
                   Cancel

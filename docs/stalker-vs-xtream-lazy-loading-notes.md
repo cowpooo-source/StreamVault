@@ -420,6 +420,14 @@ Capabilities are cached by normalized portal origin, MAC hash, serial, deviceId,
 - Expired cached playback reference
 - Direct playback failure with and without relay compatibility
 
+## Release Contract
+
+The lazy frontend and backend must be released from the same Git commit. The frontend build emits `streamvault/dist/release.json` with `commit`, `builtAt`, `lazyCatalogFrontend`, and `lazyCatalogBackend`, and adds the commit to `<meta name="sv-release">`. The backend exposes its configured `RELEASE_COMMIT` at `/health`. A release is invalid when these identifiers differ.
+
+Use `scripts/verify-release.ps1` before deployment. It runs the backend and frontend regression suites, lint, production build, default Playwright coverage, and the dedicated lazy-catalog Playwright gate. Set `RELEASE_COMMIT` and `VITE_RELEASE_COMMIT` in CI/deployment; if omitted, the build derives the current Git commit. `VITE_STALKER_LAZY_CATALOG_ENABLED` controls the frontend gate and `STALKER_LAZY_CATALOG_ENABLED` controls the backend rollout.
+
+Deploy backend and frontend from one release directory. Keep `/content`, Stalker catalog APIs, playback, and media network-only in the service worker. To roll back, select one previous release for both artifacts, restore its matching environment, reload the backend, and serve that release's frontend assets. Do not mix assets or `release.json` from different commits.
+
 ## Non-Goals
 
 - Complete VPS-side VOD/series indexing

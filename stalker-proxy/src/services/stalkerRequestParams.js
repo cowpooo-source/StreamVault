@@ -20,7 +20,7 @@ const LOCAL_ONLY_KEYS = new Set([
 // extraFields:    parameters accepted beyond "action" and "type".
 
 const SAFE_ACTIONS = new Set([
-  "get_genres", "get_all_channels", "get_ichannels_via_api", "get_epg_info",
+  "get_genres", "get_all_channels", "get_ichannels_via_api", "get_epg_info", "get_short_epg",
   "get_categories", "get_ordered_list", "get_series", "get_seasons",
   "get_main_info", "get_profile",
   "get_full_info", "get_user_packages", "get_simple_data_table",
@@ -31,6 +31,7 @@ const ACTION_SCHEMAS = {
   get_all_channels:      { requiredTypes: ["itv"],          extraFields: ["page", "p", "fav", "sortby", "hd", "not_ended", "from_ch_id"] },
   get_ichannels_via_api: { requiredTypes: ["itv"],          extraFields: ["page", "p", "fav", "sortby"] },
   get_epg_info:          { requiredTypes: ["itv"],          extraFields: ["period"] },
+  get_short_epg:        { requiredTypes: ["itv"],          extraFields: ["ch_id", "size"] },
   get_categories:        { requiredTypes: ["vod", "series", "itv"], extraFields: [] },
   get_ordered_list:      { requiredTypes: ["vod", "series"], extraFields: ["category", "movie_id", "season_id", "page", "p", "per_page"] },
   get_series:            { requiredTypes: ["series"],       extraFields: ["category", "page", "p"] },
@@ -49,6 +50,7 @@ const MULTI = new Set([
   "page", "p", "period", "per_page", "limit", "offset",
   "fav", "sortby", "sort_by",
   "hd", "not_ended", "from_ch_id", "JsHttpRequest", "stb_type",
+  "size",
   "video_id", "season_id", "season", "genre",
   "id", "search", "need_epg", "epg_limit",
 ]);

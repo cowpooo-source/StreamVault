@@ -1723,6 +1723,12 @@ describe('createStalkerRouter - unit', () => {
     const res = await request(app).get('/stalker/epg?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&ch_id=123');
     expect(res.status).toBe(200);
     expect(res.body.programs['123'][0].title).toBe('Program');
+    expect(deps.portalFetchRetry.mock.calls[0][1]).toMatchObject({
+      type: 'itv',
+      action: 'get_short_epg',
+      ch_id: '123',
+      size: '10',
+    });
   });
 
   it('GET /stalker/epg returns 200 with empty array on upstream failure', async () => {
@@ -1910,6 +1916,54 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(lazy.body.code).toBe('feature_disabled');
   });
 
+  it('rejects legacy aggregate catalog routes from a lazy-mode client', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn(),
+      portalFetchRetry: vi.fn(),
+    });
+    const app = makeApp(deps);
+    const channels = await request(app)
+      .get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc')
+      .set('X-StreamVault-Catalog-Mode', 'lazy-v1');
+    const vod = await request(app)
+      .get('/stalker/vod?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc&cat=*')
+      .set('X-StreamVault-Catalog-Mode', 'lazy-v1');
+
+    expect(channels.status).toBe(409);
+    expect(channels.body).toMatchObject({ code: 'lazy_catalog_required' });
+    expect(vod.status).toBe(409);
+    expect(vod.body).toMatchObject({ code: 'lazy_catalog_required' });
+    expect(deps.getSession).not.toHaveBeenCalled();
+    expect(deps.portalFetchRetry).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy aggregate routes available when the lazy backend is disabled', async () => {
+    process.env.STALKER_LAZY_CATALOG_ENABLED = 'false';
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn()
+        .mockResolvedValueOnce({ js: [] })
+        .mockResolvedValueOnce({ js: { data: [{ id: 1, name: 'Legacy', cmd: 'legacy' }] } }),
+    });
+    const res = await request(makeApp(deps))
+      .get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc')
+      .set('X-StreamVault-Catalog-Mode', 'lazy-v1');
+    expect(res.status).toBe(200);
+    expect(res.body.channels).toHaveLength(1);
+  });
+
+  it('keeps legacy aggregate routes unchanged without the lazy-mode header', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      portalFetchRetry: vi.fn()
+        .mockResolvedValueOnce({ js: [] })
+        .mockResolvedValueOnce({ js: { data: [{ id: 1, name: 'Legacy', cmd: 'legacy' }] } }),
+    });
+    const res = await request(makeApp(deps)).get('/stalker/channels?portal=http://p.com/c/&mac=00:1a:79:aa:bb:cc');
+    expect(res.status).toBe(200);
+    expect(res.body.channels).toHaveLength(1);
+  });
+
   it('returns normalized live pages without exposing raw commands', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
@@ -1923,7 +1977,7 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(res.body.items[0].playRef).toMatch(/^svopaque:/);
   });
 
-  it('uses a bounded streaming page fallback when the live page endpoint fails', async () => {
+  it('does not use the full-catalog fallback when a real live category page fails', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockRejectedValue(Object.assign(
@@ -1942,13 +1996,11 @@ describe('versioned lazy Stalker catalog routes', () => {
 
     const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=live&category=3&page=1&pageSize=1');
 
-    expect(res.status).toBe(200);
-    expect(res.body.items).toHaveLength(1);
-    expect(res.body.items[0].id).toBe(7);
-    expect(deps.portalFetchChannelCatalogPage).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(502);
+    expect(deps.portalFetchChannelCatalogPage).not.toHaveBeenCalled();
   });
 
-  it('uses the bounded live fallback when the provider returns an empty page', async () => {
+  it('does not use the full-catalog fallback when a real live category page is empty', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: [] }),
@@ -1960,64 +2012,27 @@ describe('versioned lazy Stalker catalog routes', () => {
     const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=live&category=3&page=1&pageSize=1');
 
     expect(res.status).toBe(200);
-    expect(res.body.items[0].id).toBe(8);
-    expect(deps.portalFetchChannelCatalogPage).toHaveBeenCalledTimes(1);
+    expect(res.body.items).toEqual([]);
+    expect(deps.portalFetchChannelCatalogPage).not.toHaveBeenCalled();
   });
 
-  it('shares one streaming live snapshot across empty-provider category requests', async () => {
-    const cacheValues = new Map();
-    let providerStarted;
-    let releaseProvider;
-    const providerReady = new Promise(resolve => { providerStarted = resolve; });
-    const providerGate = new Promise(resolve => { releaseProvider = resolve; });
+  it('does not build a full live snapshot for a real category request', async () => {
     const deps = makeDeps({
-      cache: {
-        ...makeDeps().cache,
-        get: vi.fn(key => cacheValues.get(key) || null),
-        set: vi.fn((key, value) => cacheValues.set(key, value)),
-        del: vi.fn(key => cacheValues.delete(key)),
-      },
-      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', portal: 'https://p.com/c/', mac: '00:1a:79:aa:bb:cc', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
+      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
       portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: [] } }),
-      portalFetchChannelCatalog: vi.fn(async (_session, _limit, _timeout, { onItem }) => {
-        providerStarted();
-        await onItem({ id: 1, name: 'Sports One', tv_genre_id: '1164', cmd: 'sports-one' });
-        await onItem({ id: 2, name: 'News One', tv_genre_id: '1478', cmd: 'news-one' });
-        await providerGate;
-        return 2;
+      portalFetchChannelCatalog: vi.fn(),
+      portalFetchChannelCatalogPage: vi.fn().mockResolvedValue({
+        js: { data: [{ id: 1, name: 'Sports One', tv_genre_id: '1164', cmd: 'sports-one' }], max_page_items: 1, total_items: 1, total_pages: 1 },
       }),
     });
 
     const app = makeApp(deps);
-    const requests = [
-      request(app).get('/stalker/catalog/v1/items?kind=live&category=1164&page=1&pageSize=100').then(response => response),
-      request(app).get('/stalker/catalog/v1/items?kind=live&category=1478&page=1&pageSize=100').then(response => response),
-    ];
-    await providerReady;
-    releaseProvider();
-    const [sports, news] = await Promise.all(requests);
+    const res = await request(app).get('/stalker/catalog/v1/items?kind=live&category=1164&page=1&pageSize=100');
 
-    expect(sports.status).toBe(200);
-    expect(news.status).toBe(200);
-    expect(sports.body.items[0].name).toBe('Sports One');
-    expect(news.body.items[0].name).toBe('News One');
-    expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1);
-    const metrics = await request(app).get('/stalker/audit-metrics');
-    expect(metrics.body).toMatchObject({
-      stalker_live_snapshot_started_total: expect.any(Number),
-      stalker_live_snapshot_joined_total: expect.any(Number),
-      stalker_live_snapshot_completed_total: expect.any(Number),
-      stalker_live_snapshot_failed_total: 0,
-      stalker_live_snapshot_items_total: expect.any(Number),
-    });
-    expect(metrics.body.stalker_live_snapshot_started_total).toBeGreaterThanOrEqual(1);
-    // Depending on event-loop scheduling, the second request may observe the
-    // just-published manifest instead of joining the in-flight build. The
-    // single upstream scan assertion covers both coalescing paths.
-    expect(metrics.body.stalker_live_snapshot_joined_total).toBeGreaterThanOrEqual(0);
-    expect(metrics.body.stalker_live_snapshot_completed_total).toBeGreaterThanOrEqual(1);
-    expect(metrics.body.stalker_live_snapshot_items_total).toBeGreaterThanOrEqual(2);
-    expect(metrics.body.stalker_live_snapshot_duration_ms).toBeGreaterThanOrEqual(0);
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(deps.portalFetchChannelCatalog).not.toHaveBeenCalled();
+    expect(deps.portalFetchChannelCatalogPage).not.toHaveBeenCalled();
   });
 
   it('does not duplicate a provider-supplied All live category', async () => {
@@ -2034,6 +2049,7 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.categories.map(category => category.title)).toEqual(['All', 'Sports']);
   });
+
   it.each(['live', 'vod', 'series'])('normalizes aggregate categories for %s', async kind => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
@@ -2055,7 +2071,6 @@ describe('versioned lazy Stalker catalog routes', () => {
     ]);
   });
 
-
   it('probes one additional page and marks pagination supported', async () => {
     const deps = makeDeps({
       getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
@@ -2065,8 +2080,8 @@ describe('versioned lazy Stalker catalog routes', () => {
     });
     const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=vod&category=1&page=1&pageSize=1');
     expect(res.status).toBe(200);
-    expect(deps.portalFetchRetry).toHaveBeenCalledTimes(2);
-    expect(res.body.capabilities.pagination).toBe('supported');
+    await vi.waitFor(() => expect(deps.portalFetchRetry).toHaveBeenCalledTimes(2));
+    expect(res.body.capabilities.pagination).toBe('unknown');
     expect(res.body.hasMore).toBe(true);
   });
 
@@ -2105,8 +2120,8 @@ describe('versioned lazy Stalker catalog routes', () => {
       }),
     });
     const app = makeApp(deps);
-    const first = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=1&pageSize=2');
-    const second = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=2&pageSize=2');
+    const first = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=1&pageSize=2&snapshot=1');
+    const second = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=2&pageSize=2&snapshot=1');
 
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ hasMore: true, capabilities: { mode: 'bounded_live_snapshot' } });
@@ -2114,7 +2129,7 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(second.status).toBe(200);
     expect(second.body.items.map(item => item.id)).toEqual([3]);
     expect(second.body.hasMore).toBe(false);
-    const beyond = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=3&pageSize=2');
+    const beyond = await request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=3&pageSize=2&snapshot=1');
     expect(beyond.status).toBe(200);
     expect(beyond.body).toMatchObject({ items: [], total: 3, totalKnown: true, complete: true, hasMore: false, nextPage: null });
     expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1);
@@ -2132,6 +2147,15 @@ describe('versioned lazy Stalker catalog routes', () => {
   it('rejects item-only parameters on the categories endpoint', async () => {
     const deps = makeDeps({ getSession: vi.fn() });
     const res = await request(makeApp(deps)).get('/stalker/catalog/v1/categories?kind=vod&page=2');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_parameter');
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing VOD category on the items endpoint', async () => {
+    const deps = makeDeps({ getSession: vi.fn() });
+    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=vod&page=1&pageSize=100');
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('invalid_parameter');

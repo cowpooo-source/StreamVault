@@ -6,6 +6,7 @@ const externalTestIgnore = [
   "**/canary/**",
   "**/deployment-smoke.spec.js",
   "**/stalker-catalog.spec.js",
+  "**/stalker-lazy-flow.spec.js",
 ];
 
 export default defineConfig({

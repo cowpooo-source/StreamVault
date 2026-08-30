@@ -121,6 +121,21 @@ describe("deployment route contract", () => {
     }
   });
 
+  it("forces app documents and the service worker to revalidate after a deployment", () => {
+    for (const route of ["/app", "/content"]) {
+      const escaped = route.replace("/", "\\/");
+      const block = nginx.match(new RegExp(`location = ${escaped} \\{([\\s\\S]*?)\\n    \\}`));
+      expect(block).not.toBeNull();
+      expect(block[1]).toContain('Cache-Control "no-cache, max-age=0, must-revalidate"');
+    }
+
+    const deepApp = nginx.match(/location \^~ \/app\/ \{([\s\S]*?)\n    \}/);
+    expect(deepApp).not.toBeNull();
+    expect(deepApp[1]).toContain('Cache-Control "no-cache, max-age=0, must-revalidate"');
+
+    expect(nginx).toMatch(/location = \/sw\.js \{[\s\S]*?Cache-Control "no-cache, max-age=0, must-revalidate"[\s\S]*?try_files \$uri =404;/);
+  });
+
   it("returns real 404 responses and canonicalizes duplicate URLs", () => {
     expect(nginx).toContain("error_page 404 /404.html;");
     expect(nginx).toContain("location / { try_files $uri =404; }");

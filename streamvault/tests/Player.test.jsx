@@ -72,6 +72,7 @@ describe("Player", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
   });
 
   it("should be defined as a function/component", () => {
@@ -107,11 +108,104 @@ describe("Player", () => {
     const video = document.querySelector("video");
     Object.defineProperty(video, "currentTime", { value: 0, writable: true, configurable: true });
 
+    expect(vi.mocked(fetchVastAd)).not.toHaveBeenCalled();
+    fireEvent(video, new Event("playing"));
     await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalled());
     fireEvent(video, new Event("loadedmetadata"));
     expect(video.currentTime).toBe(0);
 
     fireEvent(video, new Event("ended"));
+  });
+  it("runs VAST prerolls on the first and every fifth successful live play", async () => {
+    const channelList = [
+      { id: "channel-1", name: "Channel One", url: "http://example.com/one.ts", type: "live" },
+      { id: "channel-2", name: "Channel Two", url: "http://example.com/two.ts", type: "live" },
+      { id: "channel-3", name: "Channel Three", url: "http://example.com/three.ts", type: "live" },
+      { id: "channel-4", name: "Channel Four", url: "http://example.com/four.ts", type: "live" },
+      { id: "channel-5", name: "Channel Five", url: "http://example.com/five.ts", type: "live" },
+    ];
+
+    render(<Player
+      {...defaultProps}
+      item={channelList[0]}
+      channelList={channelList}
+      isAdEligible={true}
+    />);
+
+    expect(vi.mocked(fetchVastAd)).not.toHaveBeenCalled();
+    fireEvent(document.querySelector("video"), new Event("playing"));
+    await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalledTimes(1));
+
+    for (let channelNumber = 2; channelNumber <= 4; channelNumber += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /next/i }));
+      fireEvent(document.querySelector("video"), new Event("playing"));
+      await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalledTimes(1));
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent(document.querySelector("video"), new Event("playing"));
+    await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalledTimes(2));
+  });
+  it("does not request a VAST ad when the stream errors before playing", async () => {
+    render(<Player {...defaultProps} isAdEligible={true} />);
+    const video = document.querySelector("video");
+
+    expect(vi.mocked(fetchVastAd)).not.toHaveBeenCalled();
+    fireEvent(video, new Event("error"));
+    await waitFor(() => expect(vi.mocked(fetchVastAd)).not.toHaveBeenCalled());
+  });
+  it("does not consume an ad frequency slot when a stream fails before playing", async () => {
+    const channelList = [
+      { id: "failed-channel", name: "Failed Channel", url: "http://example.com/failed.ts", type: "live" },
+      { id: "working-channel", name: "Working Channel", url: "http://example.com/working.ts", type: "live" },
+    ];
+
+    render(<Player
+      {...defaultProps}
+      item={channelList[0]}
+      channelList={channelList}
+      isAdEligible={true}
+    />);
+
+    fireEvent(document.querySelector("video"), new Event("error"));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent(document.querySelector("video"), new Event("playing"));
+
+    await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalledTimes(1));
+  });
+  it("keeps the ad frequency across separate player mounts", async () => {
+    const items = Array.from({ length: 5 }, (_, index) => ({
+      id: `video-${index + 1}`,
+      name: `Video ${index + 1}`,
+      url: `http://example.com/video-${index + 1}.mp4`,
+      type: "vod",
+    }));
+
+    for (const [index, item] of items.entries()) {
+      const view = render(<Player {...defaultProps} item={item} isAdEligible={true} />);
+      fireEvent(document.querySelector("video"), new Event("playing"));
+      const expectedAds = index === 0 || index === 4 ? index / 4 + 1 : 1;
+      await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalledTimes(expectedAds));
+      view.unmount();
+    }
+  });
+  it("does not advance ad frequency for ineligible accounts", async () => {
+    const firstView = render(<Player
+      {...defaultProps}
+      item={{ ...defaultProps.item, id: "paid-video" }}
+      isAdEligible={false}
+    />);
+    fireEvent(document.querySelector("video"), new Event("playing"));
+    firstView.unmount();
+
+    render(<Player
+      {...defaultProps}
+      item={{ ...defaultProps.item, id: "free-video" }}
+      isAdEligible={true}
+    />);
+    fireEvent(document.querySelector("video"), new Event("playing"));
+
+    await waitFor(() => expect(vi.mocked(fetchVastAd)).toHaveBeenCalledTimes(1));
   });
   it("should skip resume when VOD is almost complete", () => {
     const props = {

@@ -78,6 +78,12 @@ docker compose -f docker-compose.feature.yml up --build
 
 Never use production passwords, JWT secrets, Turnstile secrets, provider credentials, or webhook URLs in local compose files.
 
+## Release verification
+
+Run `scripts/verify-release.ps1` before a release from a clean Git worktree. It runs backend and frontend tests, lint, a production build, the default Playwright suite, and the lazy Stalker suite. The build emits `streamvault/dist/release.json` and adds `sv-release` metadata to the app documents. Set `RELEASE_COMMIT`/`VITE_RELEASE_COMMIT` in CI or deployment to the Git commit being released; the backend exposes the same value at `/health`.
+
+The frontend service worker cache is derived from that release commit and removes older shell caches on activation. Stalker API, content, playback, and media requests remain network-only. Deploy backend and frontend artifacts from the same release directory; never copy assets from a different historical build. The deployment script refuses dirty or mixed revisions before checkout/build. For rollback, point the deployment symlink and process environment at one previous release, then reload both the backend and frontend together.
+
 ## Verification
 
 Backend:

@@ -21,6 +21,7 @@ const { catalogIdentityHash } = require('../services/stalkerCatalogIdentity');
 const { createCatalogGenerations } = require('../services/stalkerCatalogGeneration');
 const { createCatalogPageHistory } = require('../services/stalkerCatalogPageHistory');
 const { createLiveSnapshotStore } = require('../services/stalkerLiveSnapshot');
+const { getCatalogMode, isLazyCatalogRequest } = require('../services/stalkerCatalogMode');
 const { normalizeCatalogPage, hashPart, pageSignature, pageSize: normalizePageSize, itemsFromPayload } = require('../services/stalkerCatalogPager');
 const rateLimit = require('express-rate-limit');
 
@@ -154,9 +155,30 @@ function normalizeCatalogCategories(rawCategories, { includeSyntheticAll = false
   }
   return categories;
 }
+const STALKER_SHORT_EPG_SIZE = 10;
+
+function epgShowsForChannel(payload, channelId) {
+  const data = payload?.js?.data ?? payload?.data ?? payload?.js;
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== "object") return [];
+  const exact = data[channelId];
+  if (Array.isArray(exact)) return exact;
+  const matchingKey = Object.keys(data).find(key => String(key) === String(channelId));
+  return matchingKey && Array.isArray(data[matchingKey]) ? data[matchingKey] : [];
+}
+
+function normalizeEpgProgram(show) {
+  return {
+    id: show.id || show.program_id || null,
+    title: show.name || show.title || "",
+    start: Number(show.start_timestamp || show.start || 0) * 1000,
+    stop: Number(show.stop_timestamp || show.stop || 0) * 1000,
+    cmd: encodeOpaqueCommand(show.cmd || show.command),
+  };
+}
 
 function createStalkerRouter(deps) {
-  const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry: rawPortalFetchRetry, portalFetchChannelCatalog: rawPortalFetchChannelCatalog, portalFetchChannelCatalogPage: rawPortalFetchChannelCatalogPage, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
+  const { cache, auth, fetch, isUrlAllowed, fetchWithRedirectCheck, getSession, portalFetchRetry: rawPortalFetchRetry, portalFetchChannelCatalog: rawPortalFetchChannelCatalog, safeError, buildStalkerStreamHeaders, summarizeUpstreamHeaders } = deps;
   const sessionStore = deps.contentSessionStore || (deps.cache?.db && typeof deps.cache.db.exec === 'function' ? createContentSessionStore({ db: deps.cache.db }) : fallbackSessionStore);
   const router = express.Router();
   const requestContext = new AsyncLocalStorage();
@@ -173,17 +195,6 @@ function createStalkerRouter(deps) {
         : { signal: requestOptions };
       if (!options.signal) options.signal = requestContext.getStore()?.signal;
       return rawPortalFetchChannelCatalog(session, maxItems, timeout, options);
-    }
-    : null;
-  const portalFetchChannelCatalogPage = rawPortalFetchChannelCatalogPage
-    ? (session, options, timeout, requestOptions) => {
-      const signal = requestOptions && typeof requestOptions === 'object' && 'signal' in requestOptions
-        ? requestOptions.signal
-        : requestOptions;
-      return rawPortalFetchChannelCatalogPage(session, options, timeout, {
-        ...(requestOptions && typeof requestOptions === 'object' ? requestOptions : {}),
-        signal: signal || requestContext.getStore()?.signal,
-      });
     }
     : null;
   router.use((req, res, next) => {
@@ -220,6 +231,40 @@ function createStalkerRouter(deps) {
       res.status(error.status || 400).json({
         error: sanitizeStalkerUrl(error.message),
         code: error.code || "invalid_parameter",
+      });
+    }
+  };
+  const rejectLazyLegacyAggregate = aggregate => (req, res, next) => {
+    try {
+      if (lazyCatalogEnabled() && isLazyCatalogRequest(req) && aggregate(req)) {
+        stalkerMetrics.increment('stalker_lazy_legacy_route_blocked_total');
+        const routeMetric = {
+          '/channels': 'stalker_lazy_legacy_route_blocked_channels_total',
+          '/vod': 'stalker_lazy_legacy_route_blocked_vod_total',
+          '/series': 'stalker_lazy_legacy_route_blocked_series_total',
+        }[req.path];
+        if (routeMetric) stalkerMetrics.increment(routeMetric);
+        return res.status(409).json({
+          error: 'Use the versioned lazy catalog endpoint for this catalog request',
+          code: 'lazy_catalog_required',
+        });
+      }
+      next();
+    } catch (error) {
+      res.status(error.status || 400).json({
+        error: sanitizeStalkerUrl(error.message),
+        code: error.code || 'invalid_catalog_mode',
+      });
+    }
+  };
+  const validateCatalogMode = (req, res, next) => {
+    try {
+      getCatalogMode(req);
+      next();
+    } catch (error) {
+      res.status(error.status || 400).json({
+        error: sanitizeStalkerUrl(error.message),
+        code: error.code || 'invalid_catalog_mode',
       });
     }
   };
@@ -304,7 +349,7 @@ function createStalkerRouter(deps) {
     const authParams = ['contentToken', 'portal', 'mac', 'serial', 'deviceId', 'deviceId2'];
     const endpointParams = {
       categories: ['kind', 'refresh'],
-      items: ['kind', 'category', 'page', 'pageSize', 'refresh'],
+      items: ['kind', 'category', 'page', 'pageSize', 'refresh', 'snapshot'],
       search: ['kind', 'category', 'query', 'page', 'pageSize'],
     };
     const allowed = new Set([...(endpointParams[endpoint] || endpointParams.items), ...authParams]);
@@ -312,8 +357,11 @@ function createStalkerRouter(deps) {
     if (unexpected) throw catalogRequestError(`Unsupported catalog parameter: ${unexpected}`);
     const kind = catalogKind(catalogParam(req.query.kind));
     if (!kind) throw catalogRequestError('kind must be live, vod, or series');
-    const category = catalogParam(req.query.category, 'all');
-    if ((kind === 'vod' || kind === 'series') && !category) throw catalogRequestError('category is required');
+    const rawCategory = req.query.category;
+    if (endpoint !== 'categories' && (kind === 'vod' || kind === 'series') && (rawCategory === undefined || !String(rawCategory).trim())) {
+      throw catalogRequestError('category is required');
+    }
+    const category = catalogParam(rawCategory, 'all');
     const page = Number.parseInt(req.query.page || '1', 10);
     const size = normalizePageSize(req.query.pageSize || '100');
     if (!/^\d+$/.test(String(req.query.page || '1')) || page < 1) throw catalogRequestError('page must be a positive integer');
@@ -321,7 +369,13 @@ function createStalkerRouter(deps) {
     if (!/^\d+$/.test(rawPageSize) || Number(rawPageSize) < 1 || Number(rawPageSize) > 250) throw catalogRequestError('pageSize must be between 1 and 250');
     const query = endpoint === 'search' ? catalogParam(req.query.query) : '';
     if (endpoint === 'search' && (query.length < 2 || query.length > 128)) throw catalogRequestError('query must contain between 2 and 128 characters');
-    return { kind, category, page, size, query };
+    const snapshot = req.query.snapshot === undefined ? false : req.query.snapshot === '1'
+      ? true
+      : (() => { throw catalogRequestError('snapshot must be 1 when provided'); })();
+    if (snapshot && (endpoint !== 'items' || kind !== 'live' || category !== 'all')) {
+      throw catalogRequestError('snapshot is only supported for the live All category');
+    }
+    return { kind, category, page, size, query, snapshot };
   };
   const mapCatalogItem = (kind, item, binding) => {
     const base = {
@@ -371,34 +425,19 @@ function createStalkerRouter(deps) {
   };
   const fetchCatalogProviderPage = async (session, request, signal) => {
     const params = providerPageParams(request);
+    const canBuildFullSnapshot = request.kind === 'live'
+      && request.category === 'all'
+      && request.snapshot === true
+      && portalFetchChannelCatalog;
     try {
       const payload = await portalFetchRetry(session, Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined)), undefined, signal);
-      if (request.kind === 'live' && request.page === 1 && !request.query && !itemsFromPayload(payload).length && portalFetchChannelCatalog && liveSnapshotStore) {
+      if (request.kind === 'live' && request.page === 1 && !request.query && !itemsFromPayload(payload).length && canBuildFullSnapshot && liveSnapshotStore) {
         return { js: { data: [] }, __liveSnapshotFallback: true };
-      }
-      if (request.kind === 'live' && request.page === 1 && !request.query && !itemsFromPayload(payload).length && portalFetchChannelCatalogPage) {
-        return portalFetchChannelCatalogPage(session, {
-          category: request.category,
-          page: request.page,
-          pageSize: request.size,
-        }, undefined, { signal });
       }
       return payload;
     } catch (error) {
-      if (request.kind === 'live' && !request.query && canUseLiveCatalogFallback(error) && portalFetchChannelCatalog) {
+      if (request.kind === 'live' && !request.query && canUseLiveCatalogFallback(error) && canBuildFullSnapshot) {
         return { js: { data: [] }, __liveSnapshotFallback: true };
-      }
-      if (request.kind === 'live' && !request.query && canUseLiveCatalogFallback(error)) {
-        if (portalFetchChannelCatalogPage) {
-          return portalFetchChannelCatalogPage(session, {
-            category: request.category,
-            page: request.page,
-            pageSize: request.size,
-          }, undefined, { signal });
-        }
-        if (request.page === 1) {
-          return portalFetchRetry(session, { type: 'itv', action: 'get_all_channels', page: 1, p: 1 }, undefined, signal);
-        }
       }
       throw error;
     }
@@ -968,7 +1007,7 @@ function createStalkerRouter(deps) {
     } catch (e) { respondWithError(res, e); }
   });
 
-  router.get("/catalog/v1/categories", requireStalkerAuth, async (req, res) => {
+  router.get("/catalog/v1/categories", requireStalkerAuth, validateCatalogMode, async (req, res) => {
     if (!lazyCatalogEnabled()) return res.status(404).json({ error: 'Lazy catalog is disabled', code: 'feature_disabled' });
     stalkerMetrics.increment('stalker_catalog_requests_total');
     try {
@@ -1015,7 +1054,7 @@ function createStalkerRouter(deps) {
     } catch (e) { respondWithError(res, e); }
   });
 
-  router.get("/catalog/v1/items", requireStalkerAuth, async (req, res) => {
+  router.get("/catalog/v1/items", requireStalkerAuth, validateCatalogMode, async (req, res) => {
     if (!lazyCatalogEnabled()) return res.status(404).json({ error: 'Lazy catalog is disabled', code: 'feature_disabled' });
     stalkerMetrics.increment('stalker_catalog_requests_total');
     try {
@@ -1041,12 +1080,12 @@ function createStalkerRouter(deps) {
           stalkerMetrics.increment('stalker_catalog_upstream_calls_total');
           const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
           const currentCapabilities = catalogCapabilities.get(providerKey, parsed.kind);
-          if (parsed.kind === 'live' && !parsed.query && currentCapabilities.mode === 'bounded_live_snapshot') {
+          if (parsed.snapshot) {
             const snapshotPage = await buildOrJoinLiveSnapshot({ session, portal, mac, catalogOpts, request: parsed, signal });
             if (snapshotPage) return snapshotPage;
           }
           const payload = await fetchCatalogProviderPage(session, { ...parsed }, signal);
-          if (parsed.kind === 'live' && !parsed.query && payload?.__liveSnapshotFallback) {
+          if (parsed.snapshot && payload?.__liveSnapshotFallback) {
             const nextCapabilities = catalogCapabilities.recordPaginationUnsupported(providerKey, parsed.kind, {
               canCommit: () => catalogGenerations.isCurrent(capabilityGenerationKey, operationCapabilityGeneration),
             });
@@ -1075,49 +1114,49 @@ function createStalkerRouter(deps) {
             result.complete = true;
             result.capabilities = { ...capabilities, pagination: 'unsupported', mode: 'first_page_only' };
           }
-          // Probe one additional page only once. It is never returned as part
-          // of page 1, and no later pages are crawled automatically.
+          // Probe one additional page in the background. It is never returned
+          // as part of page 1, and no later pages are crawled automatically.
           if (parsed.page === 1 && result.hasMore && capabilities.pagination === 'unknown' && !parsed.query) {
-            const secondPayload = await fetchCatalogProviderPage(session, { ...parsed, page: 2 }, signal);
-            const secondItems = itemsFromPayload(secondPayload);
-            // Record the probe page in the same generation history. If the
-            // provider repeats it for the browser's page-2 request, the
-            // client can stop immediately instead of probing page-3 forever.
-            catalogPageHistory.observe(
-              pageHistoryKey,
-              operationGeneration,
-              pageSignature(secondItems),
-            );
-            const nextCapabilities = catalogCapabilities.recordPaginationProbe(
+            void metadataCoordinator.runProviderMetadata({
               providerKey,
-              parsed.kind,
-              itemsFromPayload(payload),
-              secondItems,
-              { canCommit: () => catalogGenerations.isCurrent(capabilityGenerationKey, operationCapabilityGeneration) },
-            );
-            result.capabilities = nextCapabilities;
-            if (nextCapabilities.pagination === 'unsupported') {
-              if (parsed.kind === 'live') {
-                const snapshotPage = await buildOrJoinLiveSnapshot({ session, portal, mac, catalogOpts, request: parsed, signal });
-                if (snapshotPage) return snapshotPage;
+              requestKey: `pagination-probe|${parsed.kind}|${parsed.category}|${parsed.size}|generation:${operationGeneration}`,
+              priority: 'background',
+              operation: async probeSignal => {
+                try {
+                  const secondPayload = await fetchCatalogProviderPage(session, { ...parsed, page: 2 }, probeSignal);
+                  const secondItems = itemsFromPayload(secondPayload);
+                  if (!catalogGenerations.isCurrent(epochKey, operationGeneration)) return;
+                  catalogPageHistory.observe(pageHistoryKey, operationGeneration, pageSignature(secondItems));
+                  const nextCapabilities = catalogCapabilities.recordPaginationProbe(
+                    providerKey,
+                    parsed.kind,
+                    itemsFromPayload(payload),
+                    secondItems,
+                    { canCommit: () => catalogGenerations.isCurrent(capabilityGenerationKey, operationCapabilityGeneration) },
+                  );
+                  if (nextCapabilities.pagination !== 'supported') return;
+                  const secondPage = normalizeCatalogPage(secondPayload, {
+                    kind: parsed.kind,
+                    category: parsed.category,
+                    page: 2,
+                    pageSize: parsed.size,
+                    capabilities: nextCapabilities,
+                    mapItem: item => mapCatalogItem(parsed.kind, item, catalogBinding(portal, mac, catalogOpts)),
+                  });
+                  if (catalogGenerations.isCurrent(epochKey, operationGeneration)) {
+                    cache.set(catalogCacheKey(portal, mac, parsed.kind, parsed.category, 2, parsed.size, '', catalogOpts), secondPage, parsed.kind === 'live' ? LAZY_CATALOG_TTL.live : LAZY_CATALOG_TTL.content);
+                  }
+                } catch (error) {
+                  if (error?.code !== 'ABORT_ERR' && error?.name !== 'AbortError') {
+                    console.warn('Stalker catalog pagination probe failed:', sanitizeStalkerUrl(error?.message || error));
+                  }
+                }
+              },
+            }).catch(error => {
+              if (error?.code !== 'ABORT_ERR' && error?.name !== 'AbortError') {
+                console.warn('Stalker catalog pagination probe rejected:', sanitizeStalkerUrl(error?.message || error));
               }
-              result.hasMore = false;
-              result.nextPage = null;
-              result.complete = false;
-              result.capabilities = { ...nextCapabilities, mode: 'first_page_only' };
-            } else {
-              const secondPage = normalizeCatalogPage(secondPayload, {
-                kind: parsed.kind,
-                category: parsed.category,
-                page: 2,
-                pageSize: parsed.size,
-                capabilities: nextCapabilities,
-                mapItem: item => mapCatalogItem(parsed.kind, item, catalogBinding(portal, mac, catalogOpts)),
-              });
-              if (catalogGenerations.isCurrent(epochKey, operationGeneration)) {
-                cache.set(catalogCacheKey(portal, mac, parsed.kind, parsed.category, 2, parsed.size, '', catalogOpts), secondPage, parsed.kind === 'live' ? LAZY_CATALOG_TTL.live : LAZY_CATALOG_TTL.content);
-              }
-            }
+            });
           }
           if (!catalogGenerations.isCurrent(epochKey, operationGeneration)) {
             throw catalogRequestError('Catalog request was superseded by a refresh', 'catalog_superseded', 409);
@@ -1130,7 +1169,7 @@ function createStalkerRouter(deps) {
     } catch (e) { respondWithError(res, e); }
   });
 
-  router.get("/catalog/v1/search", requireStalkerAuth, async (req, res) => {
+  router.get("/catalog/v1/search", requireStalkerAuth, validateCatalogMode, async (req, res) => {
     if (!lazyCatalogEnabled()) return res.status(404).json({ error: 'Lazy catalog is disabled', code: 'feature_disabled' });
     stalkerMetrics.increment('stalker_catalog_requests_total');
     try {
@@ -1202,7 +1241,7 @@ function createStalkerRouter(deps) {
     }
   });
 
-  router.get("/channels", requireStalkerAuth, validateQuery("channels"), async (req, res) => {
+  router.get("/channels", requireStalkerAuth, validateQuery("channels"), rejectLazyLegacyAggregate(() => true), async (req, res) => {
     const { portal, mac, refresh, serial } = req.query;
     if (!portal || !mac) return res.status(400).end();
     const ck = cache.cacheKey(portal, mac, "channels");
@@ -1284,7 +1323,10 @@ function createStalkerRouter(deps) {
     } catch (e) { respondWithError(res, e); }
   });
 
-  router.get("/vod", requireStalkerAuth, validateQuery("vod"), async (req, res) => {
+  router.get("/vod", requireStalkerAuth, validateQuery("vod"), rejectLazyLegacyAggregate(req => {
+    const category = String(req.query.cat || '').trim().toLowerCase();
+    return !category || category === '*' || category === 'all';
+  }), async (req, res) => {
     const { portal, mac, cat, serial, refresh } = req.query;
     const ck = cache.cacheKey(portal, mac, "vod", cat || "all");
     if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(opaqueSeasonCommands(cached)); }
@@ -1559,18 +1601,30 @@ function createStalkerRouter(deps) {
   });
 
   router.get("/epg", requireStalkerAuth, validateQuery("epg"), async (req, res) => {
-    const { portal, mac, period = 4, serial, deviceId, deviceId2, refresh } = req.query;
+    const { portal, mac, period = 4, ch_id: channelId, serial, deviceId, deviceId2, refresh } = req.query;
     const epgIdentity = catalogIdentityHash({ portal, mac, serial, deviceId, deviceId2 });
-    const ck = `stalker-epg-v2|${epgIdentity}|${hashPart(period)}`;
+    const epgScope = channelId ? `channel:${hashPart(channelId)}` : "all";
+    const ck = `stalker-epg-v2|${epgIdentity}|${epgScope}|${hashPart(period)}`;
     if (!refresh) { const cached = cache.get(ck); if (cached) return res.json(opaqueSeasonCommands(cached)); }
     try {
       const session = await getSession(portal, mac, { serial, deviceId, deviceId2 });
-      const epgData = await portalFetchRetry(session, { type: "itv", action: "get_epg_info", period });
+      const epgData = channelId
+        ? await portalFetchRetry(session, {
+          type: "itv",
+          action: "get_short_epg",
+          ch_id: channelId,
+          size: String(STALKER_SHORT_EPG_SIZE),
+        })
+        : await portalFetchRetry(session, { type: "itv", action: "get_epg_info", period });
       const programs = {};
-      for (const [id, shows] of Object.entries(epgData?.js?.data || {})) {
-        if (Array.isArray(shows)) programs[id] = shows.map(s => ({ id: s.id || s.program_id || null, title: s.name || s.title, start: (s.start_timestamp || 0) * 1000, stop: (s.stop_timestamp || 0) * 1000, cmd: encodeOpaqueCommand(s.cmd || s.command) }));
+      if (channelId) {
+        programs[channelId] = epgShowsForChannel(epgData, channelId).map(normalizeEpgProgram);
+      } else {
+        for (const [id, shows] of Object.entries(epgData?.js?.data || {})) {
+          if (Array.isArray(shows)) programs[id] = shows.map(normalizeEpgProgram);
+        }
       }
-      const data = { programs, refreshed_at: Date.now() };
+      const data = { programs, refreshed_at: Date.now(), ...(channelId ? { channelId, partial: true } : {}) };
       cache.set(ck, data, CATALOG_TTL.epg);
       res.json(data);
     } catch (e) { respondWithError(res, e); }
@@ -1788,7 +1842,10 @@ function createStalkerRouter(deps) {
     }
   });
 
-  router.get("/series", requireStalkerAuth, validateQuery("series"), async (req, res) => {
+  router.get("/series", requireStalkerAuth, validateQuery("series"), rejectLazyLegacyAggregate(req => {
+    const category = String(req.query.cat || '').trim().toLowerCase();
+    return !category || category === '*' || category === 'all';
+  }), async (req, res) => {
     const { portal, mac, cat, refresh, serial, deviceId, deviceId2 } = req.query;
     if (!portal || !mac) return res.status(400).json({ error: "portal and mac required" });
     if (!cat)            return res.status(400).json({ error: "cat (category id) required" });

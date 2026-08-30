@@ -68,6 +68,19 @@ describe("hydrateContentSession", () => {
     expect(result.connection).toBeDefined();
     expect(result.connection.id).toBe("conn-1");
     expect(result.connection.config).toBeDefined();
+    expect(result.adEligible).toBe(false);
+  });
+
+  it("preserves the server-derived ad eligibility for HTTP content mode", async () => {
+    contentSessionToken.mockReturnValue("valid-token");
+    validateContentSession.mockResolvedValue({
+      connection: { id: "conn-1", type: "xtream" },
+      adEligible: true,
+    });
+
+    const result = await hydrateContentSession();
+
+    expect(result.adEligible).toBe(true);
   });
 
   it("returns normalized connection with defaults when config is missing", async () => {

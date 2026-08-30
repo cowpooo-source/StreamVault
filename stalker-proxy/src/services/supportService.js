@@ -25,6 +25,59 @@ const CATEGORY_MAP = Object.freeze({
   "other inquiry": "other",
 });
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function formatBillingEmail(template, payload) {
+  const details = [
+    ["Product", payload.productCode || "Standard"],
+    ["Order", payload.orderId || null],
+    ["Subscription", payload.subscriptionId || null],
+    ["Access ends", payload.accessEndsAt ? new Date(payload.accessEndsAt).toLocaleString() : null],
+  ].filter(([, value]) => value);
+  const copy = {
+    billing_subscription_created: {
+      subject: "Your Portal Heaven subscription is active",
+      heading: "Subscription created",
+      message: "Your Standard subscription is active and your account access has been updated.",
+    },
+    billing_subscription_canceled: {
+      subject: "Your Portal Heaven subscription was canceled",
+      heading: "Subscription canceled",
+      message: payload.cancellationType === "period_end"
+        ? "Your subscription will not renew. Access remains available until the end of the current paid period."
+        : "Your subscription has been canceled and access has been updated.",
+    },
+    billing_refund_completed: {
+      subject: "Your Portal Heaven refund was completed",
+      heading: "Refund completed",
+      message: "Stripe confirmed your refund. Your account has returned to the Free tier.",
+    },
+  }[template] || {
+    subject: "Portal Heaven billing update",
+    heading: "Billing update",
+    message: "There was an update to your Portal Heaven billing account.",
+  };
+  const text = `${copy.message}\n\n${details.map(([label, value]) => `${label}: ${value}`).join("\n")}`;
+  const htmlDetails = details
+    .map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`)
+    .join("");
+  const html = `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px">
+    <h2>${escapeHtml(copy.heading)}</h2>
+    <p>${escapeHtml(copy.message)}</p>
+    ${htmlDetails ? `<ul>${htmlDetails}</ul>` : ""}
+    <p>Portal Heaven Support</p>
+  </div>`;
+  return { subject: copy.subject, text, html };
+}
+
 function normalizeCategory(cat) {
   if (!cat) return null;
   const key = String(cat).trim().toLowerCase();
@@ -258,19 +311,38 @@ function createSupportService(deps) {
         const recipient = notif.recipient || notif.recipient_email;
 
         if (notif.channel === "discord" && recipient && fetchFn) {
+          const billingTitle = {
+            billing_subscription_created: "Subscription created",
+            billing_subscription_canceled: "Subscription canceled",
+            billing_refund_completed: "Refund completed",
+          }[notif.template];
+          const isBillingNotification = Boolean(billingTitle);
           const res = await fetchFn(recipient, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               embeds: [
                 {
-                  title: `[Support Ticket ${payload.ticketId || notif.id}]`,
-                  description: payload.messagePreview || "New support ticket received",
-                  color: 0x3b82f6,
-                  fields: [
-                    { name: "Category", value: payload.category || "General", inline: true },
-                    { name: "User ID", value: String(payload.userId || notif.user_id || "N/A"), inline: true },
-                  ],
+                  title: isBillingNotification
+                    ? `[Billing] ${billingTitle}`
+                    : `[Support Ticket ${payload.ticketId || notif.id}]`,
+                  description: isBillingNotification
+                    ? (payload.cancellationType === "period_end"
+                      ? "A subscription was canceled at period end."
+                      : billingTitle)
+                    : (payload.messagePreview || "New support ticket received"),
+                  color: isBillingNotification ? 0xf59e0b : 0x3b82f6,
+                  fields: isBillingNotification
+                    ? [
+                      { name: "User ID", value: String(payload.userId || notif.user_id || "N/A"), inline: true },
+                      { name: "Product", value: String(payload.productCode || "Standard"), inline: true },
+                      ...(payload.orderId ? [{ name: "Order", value: String(payload.orderId), inline: true }] : []),
+                      ...(payload.subscriptionId ? [{ name: "Subscription", value: String(payload.subscriptionId), inline: true }] : []),
+                    ]
+                    : [
+                      { name: "Category", value: payload.category || "General", inline: true },
+                      { name: "User ID", value: String(payload.userId || notif.user_id || "N/A"), inline: true },
+                    ],
                   timestamp: new Date(payload.createdAt || ts).toISOString(),
                 },
               ],
@@ -280,21 +352,31 @@ function createSupportService(deps) {
             const status = res ? res.status : "unknown";
             throw new Error(`Discord webhook responded with status ${status}`);
           }
-        } else if (notif.channel === "email" && recipient && mailService && typeof mailService.sendMail === "function") {
+        } else if (notif.channel === "email" && recipient && mailService) {
+          const sendMail = mailService.sendMail || mailService.sendEmail;
+          if (typeof sendMail !== "function") {
+            throw new Error("email_service_unavailable");
+          }
           const isUserAck = notif.template === "ticket_received";
-          const subject = isUserAck
+          const billingEmail = notif.template.startsWith("billing_")
+            ? formatBillingEmail(notif.template, payload)
+            : null;
+          const subject = billingEmail?.subject || (isUserAck
             ? `[StreamVault Support Ticket ${payload.ticketId || notif.id}] Received`
-            : `[SUPPORT ALERT] Ticket #${payload.ticketId || notif.id} (${payload.category || "General"}) from User #${payload.userId || "N/A"}`;
+            : `[SUPPORT ALERT] Ticket #${payload.ticketId || notif.id} (${payload.category || "General"}) from User #${payload.userId || "N/A"}`);
 
-          const text = isUserAck
+          const text = billingEmail?.text || (isUserAck
             ? `Thank you for contacting StreamVault support. We received your ticket regarding "${payload.category || "General"}". Our team will review it shortly.\n\nMessage preview:\n${payload.messagePreview || ""}`
-            : `New support ticket received:\nTicket ID: ${payload.ticketId || notif.id}\nUser ID: ${payload.userId || "N/A"}\nUser Email: ${payload.userEmail || "none"}\nCategory: ${payload.category || "General"}\nOrder ID: ${payload.orderId || "N/A"}\n\nMessage:\n${payload.messagePreview || ""}`;
+            : `New support ticket received:\nTicket ID: ${payload.ticketId || notif.id}\nUser ID: ${payload.userId || "N/A"}\nUser Email: ${payload.userEmail || "none"}\nCategory: ${payload.category || "General"}\nOrder ID: ${payload.orderId || "N/A"}\n\nMessage:\n${payload.messagePreview || ""}`);
+          const html = billingEmail?.html || `<div style="font-family:sans-serif;white-space:pre-line">${escapeHtml(text)}</div>`;
 
-          await mailService.sendMail({
+          const result = await sendMail({
             to: recipient,
             subject,
             text,
+            html,
           });
+          if (result === false) throw new Error("email_send_failed");
         }
 
         store.markNotificationSent(notif.id);

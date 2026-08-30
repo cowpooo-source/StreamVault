@@ -287,6 +287,41 @@ describe("supportService", () => {
       expect(laterDue.length).toBeGreaterThanOrEqual(1);
     });
 
+    it("delivers billing notifications through sendEmail with safe HTML content", async () => {
+      const sendEmail = vi.fn().mockResolvedValue(true);
+      const billingMailService = createSupportService({
+        store,
+        catalog,
+        mailService: { sendEmail },
+        fetchFn: mockFetch,
+        now: () => fixedNow,
+      });
+
+      store.enqueueNotification({
+        id: "notif_billing_email",
+        channel: "email",
+        template: "billing_subscription_created",
+        recipient: "billing@example.com",
+        payloadJson: JSON.stringify({
+          userId: 42,
+          productCode: "standard_monthly",
+          subscriptionId: "sub_123",
+          accessEndsAt: fixedNow + 30 * 86400000,
+        }),
+        status: "queued",
+        nextAttemptAt: fixedNow,
+      });
+
+      const result = await billingMailService.processOutbox({ batchSize: 1 });
+
+      expect(result).toEqual({ sentCount: 1, failedCount: 0 });
+      expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+        to: "billing@example.com",
+        subject: "Your Portal Heaven subscription is active",
+        html: expect.stringContaining("Subscription created"),
+      }));
+    });
+
     it("reclaims processing notifications if a worker crashed and lock expired", async () => {
       await supportService.createTicket({
         userId: 100,

@@ -122,7 +122,9 @@ describe("useStreamVault", () => {
 
     await act(async () => { result.current.actions.setActiveConnId("c1"); });
 
-    expect(mockDb.set).toHaveBeenCalledWith("sv-activeConn", expect.stringMatching(/^sv-active-v2:/));
+    await vi.waitFor(() => {
+      expect(mockDb.set).toHaveBeenCalledWith("sv-activeConn", expect.stringMatching(/^sv-active-v2:/));
+    });
   });
 
   it("setActiveConnId skips persistence when requested", async () => {

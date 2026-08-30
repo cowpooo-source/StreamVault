@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   API,
+  HILLTOP_INPAGE_PUSH_URL,
+  HILLTOP_POPUNDER_URL,
   vastProxyUrl,
   resolveUrl,
   parseVastTime,
@@ -13,6 +15,18 @@ import {
   genCSS,
   streamProxy,
 } from "../src/utils.js";
+
+describe("Hilltop in-page push configuration", () => {
+  it("uses the supplied HTTPS in-page push endpoint", () => {
+    expect(HILLTOP_INPAGE_PUSH_URL).toBe("https://quarrelsomebitter.com/brX.V/sedhGPlb0SY/WCcQ/iepmV9xu/ZtURlVkPP/T/c/wWMhjhAc0wNnDuEotsN/z/AdyEMhDSQF0BN_Qk");
+  });
+});
+
+describe("Hilltop popunder configuration", () => {
+  it("uses the supplied HTTPS popunder endpoint", () => {
+    expect(HILLTOP_POPUNDER_URL).toBe("https://crookedagreement.com/cQDs9.6Pbw2j5Ul/ShW-QP9tN/zoMi1_NKjdIPyGMkSd0g3_MwzVUK2fMNjVIp1J");
+  });
+});
 
 describe("streamProxy", () => {
   it("should return relative URLs as is", () => {

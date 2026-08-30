@@ -1,4 +1,4 @@
-const CACHE = "sv-mta3j5d8";
+const CACHE = "sv-mtf1afhe";
 const APP_SHELL = ['/app'];
 
 self.addEventListener("install", e => {

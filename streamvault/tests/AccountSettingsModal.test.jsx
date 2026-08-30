@@ -1,6 +1,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AccountSettingsModal from "../src/components/AccountSettingsModal.jsx";
 
 describe("AccountSettingsModal Component", () => {
@@ -47,6 +48,20 @@ describe("AccountSettingsModal Component", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("renders an accessible themed dialog shell", () => {
+    render(
+      <AccountSettingsModal
+        isOpen={true}
+        onClose={() => {}}
+        accessState={mockAccessState}
+        billingApi={mockBillingApi}
+        user={{ username: "stream_user" }}
+      />
+    );
+
+    expect(screen.getByRole("dialog", { name: "Account & Billing Settings" })).toHaveClass("account-settings-modal");
+  });
+
   it("switches tabs and displays billing content", async () => {
     render(
       <AccountSettingsModal
@@ -62,5 +77,74 @@ describe("AccountSettingsModal Component", () => {
     fireEvent.click(billingTab);
 
     expect(mockBillingApi.getConfig).toHaveBeenCalled();
+  });
+
+  it("opens on the requested initial tab", async () => {
+    render(
+      <AccountSettingsModal
+        isOpen={true}
+        initialTab="billing"
+        onClose={() => {}}
+        accessState={mockAccessState}
+        billingApi={mockBillingApi}
+        user={{ username: "stream_user" }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Billing/i })).toHaveAttribute("aria-selected", "true");
+    });
+  });
+
+  it("resets to the requested tab when reopened with a new initial tab", () => {
+    const view = render(
+      <AccountSettingsModal
+        isOpen={true}
+        initialTab="account"
+        onClose={() => {}}
+        accessState={mockAccessState}
+        billingApi={mockBillingApi}
+        user={{ username: "stream_user" }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: /Support/i }));
+    view.rerender(
+      <AccountSettingsModal
+        isOpen={false}
+        initialTab="billing"
+        onClose={() => {}}
+        accessState={mockAccessState}
+        billingApi={mockBillingApi}
+        user={{ username: "stream_user" }}
+      />
+    );
+    view.rerender(
+      <AccountSettingsModal
+        isOpen={true}
+        initialTab="billing"
+        onClose={() => {}}
+        accessState={mockAccessState}
+        billingApi={mockBillingApi}
+        user={{ username: "stream_user" }}
+      />
+    );
+
+    expect(screen.getByRole("tab", { name: /Billing/i })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens Billing from the free-tier upgrade action", () => {
+    render(
+      <AccountSettingsModal
+        isOpen={true}
+        onClose={() => {}}
+        accessState={{ role: "free", plan: "free", limits: { maxConnections: 2, maxLogins: 1 } }}
+        billingApi={mockBillingApi}
+        user={{ username: "stream_user" }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /upgrade plan/i }));
+    expect(screen.getByRole("tab", { name: /billing/i })).toHaveAttribute("aria-selected", "true");
   });
 });

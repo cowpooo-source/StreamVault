@@ -37,6 +37,7 @@ describe("AccountStatusCard Component", () => {
 
     expect(screen.getByRole("heading", { name: /Standard Plan/i })).toBeDefined();
     expect(screen.getByText(/5 Connections/i)).toBeDefined();
+    expect(screen.getByText(/Subscription expires/i)).toBeDefined();
     const manageBtn = screen.getByRole("button", { name: /Manage Billing/i });
     fireEvent.click(manageBtn);
     expect(onManageBilling).toHaveBeenCalled();

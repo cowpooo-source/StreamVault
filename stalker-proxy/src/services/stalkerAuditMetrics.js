@@ -21,6 +21,10 @@ const COUNTERS = [
   'stalker_live_snapshot_failed_total',
   'stalker_live_snapshot_items_total',
   'stalker_live_snapshot_duration_ms',
+  'stalker_lazy_legacy_route_blocked_total',
+  'stalker_lazy_legacy_route_blocked_channels_total',
+  'stalker_lazy_legacy_route_blocked_vod_total',
+  'stalker_lazy_legacy_route_blocked_series_total',
 ];
 const counters = new Map(COUNTERS.map(name => [name, 0]));
 

@@ -69,7 +69,7 @@ export async function hydrateContentSession({ signal, defaultColor = "#4a90d9" }
     config: sessionConnection.config || sessionConnection,
   };
 
-  return { connection: normalizedConnection };
+  return { connection: normalizedConnection, adEligible: session?.adEligible === true };
 }
 
 /**

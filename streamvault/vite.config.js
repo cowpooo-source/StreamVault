@@ -5,6 +5,7 @@ import { copyFileSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
+import { createReleaseMetadata } from './release-metadata.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -36,28 +37,64 @@ function routeEntryPlugin() {
 
 function staticPageCopyPlugin() {
   const pages = ['landing.html', 'features.html', 'security.html', 'self-host.html', 'faq.html', 'privacy.html', 'terms.html', '404.html']
+  let outputDir = resolve(__dirname, 'dist')
   return {
     name: 'static-page-copy',
+    configResolved(config) {
+      outputDir = config.build.outDir
+    },
     closeBundle() {
-      for (const page of pages) copyFileSync(resolve(__dirname, page), resolve(__dirname, 'dist', page))
+      for (const page of pages) copyFileSync(resolve(__dirname, page), resolve(outputDir, page))
     },
   }
 }
 
-// Inject a unique build version so an active service worker replaces stale bundles.
+// Use the source commit so frontend assets and backend health can be compared.
 function swVersionPlugin() {
+  let cacheName = 'sv-dev'
+  let outputDir = resolve(__dirname, 'dist')
   return {
     name: 'sw-version',
+    configResolved(config) {
+      outputDir = config.build.outDir
+      const metadata = createReleaseMetadata({ env: { ...process.env, ...config.env } })
+      const safeCommit = metadata.commit.replace(/[^a-z0-9_-]/gi, '').slice(0, 64) || 'dev'
+      cacheName = `sv-${safeCommit}`
+    },
     writeBundle() {
-      const swPath = resolve('dist/sw.js')
+      const swPath = resolve(outputDir, 'sw.js')
       try {
         let sw = readFileSync(swPath, 'utf8')
-        const version = `sv-${Date.now().toString(36)}`
-        sw = sw.replace(/const CACHE = "[^"]+";/, `const CACHE = "${version}";`)
+        sw = sw.replace(/const CACHE = "[^"]+";/, `const CACHE = "${cacheName}";`)
         writeFileSync(swPath, sw)
       } catch (error) {
         console.warn('Service worker version update failed:', error.message)
       }
+    },
+  }
+}
+
+function releaseMetadataPlugin() {
+  let metadata = null
+  return {
+    name: 'release-metadata',
+    configResolved(config) {
+      metadata = createReleaseMetadata({ env: { ...process.env, ...config.env } })
+    },
+    transformIndexHtml(html) {
+      const content = String(metadata?.commit || 'unknown').replace(/"/g, '&quot;')
+      const tag = `<meta name="sv-release" content="${content}" />`
+      if (/<meta\s+name=["']sv-release["']/i.test(html)) {
+        return html.replace(/<meta\s+name=["']sv-release["'][^>]*>/i, tag)
+      }
+      return html.replace('</head>', `    ${tag}\n  </head>`)
+    },
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'release.json',
+        source: `${JSON.stringify(metadata, null, 2)}\n`,
+      })
     },
   }
 }
@@ -89,6 +126,7 @@ export default defineConfig({
     routeEntryPlugin(),
     react(),
     directContentConfigPlugin(),
+    releaseMetadataPlugin(),
     swVersionPlugin(),
     staticPageCopyPlugin(),
     legacy({

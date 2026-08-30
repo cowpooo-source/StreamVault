@@ -295,7 +295,10 @@ describe("redirect targets", () => {
       await expect(helpers.portalFetchRetry(session, { action: 'get_all_channels' }))
         .resolves.toEqual({ js: { data: [] } });
       await expect(helpers.portalFetchRetry(session, { action: 'get_genres' }))
-        .rejects.toThrow('Portal metadata response exceeds 65536 bytes');
+        .rejects.toMatchObject({
+          message: 'Portal metadata response exceeds 65536 bytes',
+          code: 'METADATA_TOO_LARGE',
+        });
     } finally {
       if (previousMetadataLimit === undefined) delete process.env.STALKER_METADATA_MAX_BYTES;
       else process.env.STALKER_METADATA_MAX_BYTES = previousMetadataLimit;

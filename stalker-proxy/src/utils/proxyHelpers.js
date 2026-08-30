@@ -64,11 +64,15 @@ const EMPTY_CATALOG_ACTIONS = new Set([
 
 async function readBoundedText(response, action) {
   const limit = stalkerMetadataLimit(action);
+  const tooLarge = () => Object.assign(
+    new Error(`Portal metadata response exceeds ${limit} bytes`),
+    { code: 'METADATA_TOO_LARGE' },
+  );
   const declared = Number(response.headers?.get?.('content-length') || 0);
-  if (declared > limit) throw new Error(`Portal metadata response exceeds ${limit} bytes`);
+  if (declared > limit) throw tooLarge();
   if (!response.body?.[Symbol.asyncIterator]) {
     const text = await response.text();
-    if (Buffer.byteLength(text) > limit) throw new Error(`Portal metadata response exceeds ${limit} bytes`);
+    if (Buffer.byteLength(text) > limit) throw tooLarge();
     return text;
   }
   const chunks = [];
@@ -78,7 +82,7 @@ async function readBoundedText(response, action) {
     bytes += buffer.length;
     if (bytes > limit) {
       response.body.destroy?.();
-      throw new Error(`Portal metadata response exceeds ${limit} bytes`);
+      throw tooLarge();
     }
     chunks.push(buffer);
   }

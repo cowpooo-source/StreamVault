@@ -105,8 +105,8 @@ describe("Billing Lifecycle & Real Integration Suite", () => {
         retrieve: vi.fn().mockResolvedValue({
           id: "pi_mock_123",
           status: "succeeded",
-          amount: 399,
-          amount_received: 399,
+          amount: 299,
+          amount_received: 299,
           currency: "usd",
           charges: { data: [{ id: "ch_mock_123", refunded: false, amount_refunded: 0 }] },
         }),
@@ -239,6 +239,7 @@ describe("Billing Lifecycle & Real Integration Suite", () => {
         object: {
           id: "cs_mock_12345",
           mode: "payment",
+          payment_status: "paid",
           payment_intent: "pi_mock_123",
           customer: "cus_mock_123",
           client_reference_id: orderId,
@@ -282,7 +283,7 @@ describe("Billing Lifecycle & Real Integration Suite", () => {
           payment_intent: "pi_mock_123",
           customer: "cus_mock_123",
           refunded: true,
-          amount_refunded: 399,
+          amount_refunded: 299,
         },
       },
     };

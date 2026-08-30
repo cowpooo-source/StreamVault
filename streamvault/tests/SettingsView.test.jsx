@@ -60,6 +60,21 @@ describe("SettingsView", () => {
     expect(onOpenSecureSettings).toHaveBeenCalledOnce();
   });
 
+  it("opens the plan comparison from the Billing & Plans entry", () => {
+    const onOpenPlans = vi.fn();
+    render(<SettingsView {...defaultProps} onOpenPlans={onOpenPlans} />);
+    fireEvent.click(screen.getByText("Account"));
+    fireEvent.click(screen.getByRole("button", { name: "Billing & Plans" }));
+    expect(onOpenPlans).toHaveBeenCalledOnce();
+  });
+
+  it("exposes plan comparison from the HTTP content settings", () => {
+    const onOpenPlans = vi.fn();
+    render(<SettingsView {...defaultProps} contentMode onOpenPlans={onOpenPlans} />);
+    fireEvent.click(screen.getByRole("button", { name: "Compare Plans" }));
+    expect(onOpenPlans).toHaveBeenCalledOnce();
+  });
+
   it("exposes appearance, account actions, and connection allowance", () => {
     const onThemeChange = vi.fn();
     const onLanguageChange = vi.fn();

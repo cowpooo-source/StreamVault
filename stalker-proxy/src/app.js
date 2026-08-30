@@ -94,6 +94,7 @@ function createApp(deps) {
     entitlementService,
     catalog: billingCatalog,
     stripeGateway,
+    getUserById: (userId) => auth.getUser?.(userId) || null,
   }) : null);
 
   if (billingCatalog?.enabled && stripeEventProcessor && stripeClient) {
@@ -160,6 +161,7 @@ function createApp(deps) {
 
   app.get("/health", (req, res) => res.json({
     status: "ok",
+    release: { commit: String(process.env.RELEASE_COMMIT || process.env.GIT_COMMIT || "unknown") },
     uptime: process.uptime(),
     requests: operationalMetrics.snapshot(),
     memory: { rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024) },

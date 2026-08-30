@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures/app.fixture.js";
+import { mockTurnstile } from "./fixtures/auth.fixture.js";
 
 test.describe("Login to Playback Smoke Flow", () => {
 
@@ -69,6 +70,7 @@ segment.ts
     });
 
     // 5. Navigate to the app
+    await mockTurnstile(appPage);
     await appPage.goto("/app");
 
     // 6. Click the Login tab on AuthScreen (two Login buttons - pick the tab)

@@ -15,18 +15,18 @@ describe("BillingSettings Component", () => {
           {
             code: "standard_pass_30d",
             name: "Standard 30-Day Pass",
-            display: { title: "Standard 30-Day Pass", priceFormatted: "$3.99" },
+            display: { title: "Standard 30-Day Pass", priceFormatted: "$2.99" },
           },
           {
             code: "standard_monthly",
             name: "Standard Monthly",
-            display: { title: "Standard Monthly", priceFormatted: "$2.99/mo" },
+            display: { title: "Standard Monthly", priceFormatted: "$2.85/mo" },
           },
         ],
         policies: {
-          terms: { version: "v1", url: "/terms" },
-          privacy: { version: "v1", url: "/privacy" },
-          refund: { version: "v1", url: "/refund" },
+          terms: { version: "v1", publicUrl: "https://media.portalheaven.stream/legal/terms-v1.html" },
+          privacy: { version: "v1", publicUrl: "https://media.portalheaven.stream/legal/privacy-v1.html" },
+          refund: { version: "v1", publicUrl: "https://media.portalheaven.stream/legal/refund-v1.html" },
         },
       }),
       listOrders: vi.fn().mockResolvedValue({
@@ -34,7 +34,7 @@ describe("BillingSettings Component", () => {
           {
             id: "ord_1",
             product_code: "standard_pass_30d",
-            amount_total: 399,
+            amount_total: 299,
             status: "paid",
             checkout_mode: "payment",
             refundable_until: Date.now() + 100000,
@@ -56,6 +56,16 @@ describe("BillingSettings Component", () => {
     await waitFor(() => {
       expect(screen.getByText(/Standard 30-Day Pass/i)).toBeDefined();
     });
+
+    // Verify policy link hrefs use publicUrl contract
+    const termsLink = screen.getByRole("link", { name: /Terms of Service/i });
+    expect(termsLink.getAttribute("href")).toBe("https://media.portalheaven.stream/legal/terms-v1.html");
+
+    const privacyLink = screen.getByRole("link", { name: /Privacy Policy/i });
+    expect(privacyLink.getAttribute("href")).toBe("https://media.portalheaven.stream/legal/privacy-v1.html");
+
+    const refundLink = screen.getByRole("link", { name: /Refund Policy/i });
+    expect(refundLink.getAttribute("href")).toBe("https://media.portalheaven.stream/legal/refund-v1.html");
 
     const checkoutBtn = screen.getByRole("button", { name: /Buy 30-Day Pass/i });
     expect(checkoutBtn.disabled).toBe(true);

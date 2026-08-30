@@ -23,6 +23,7 @@ describe('Integration Tests - Routes', () => {
     mockAuth = {
       init: vi.fn(),
       verifyToken: vi.fn(),
+      getUser: vi.fn(),
       optionalAuth: vi.fn((req, res, next) => {
         req.user = null;
         next();
@@ -143,6 +144,7 @@ describe('Integration Tests - Routes', () => {
     process.env.STALKER_MEDIA_RELAY_ENABLED = "true";
     process.env.STALKER_RELAY_GRANT_SECRET = "test-relay-secret";
     mockAuth.verifyToken.mockReturnValue({ id: 1, username: "testuser", role: "regular" });
+    mockAuth.getUser.mockReturnValue({ id: 1, username: "testuser", role: "regular", disabled: 0 });
     const { tokens, playbackSessions } = require("../src/routes/player");
     tokens.clear();
     playbackSessions.clear();
@@ -154,6 +156,7 @@ describe('Integration Tests - Routes', () => {
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+    expect(res.body.release).toEqual({ commit: expect.any(String) });
     expect(res.body.requests).toMatchObject({
       active: 0,
       requestsLastMinute: expect.any(Number),
@@ -329,6 +332,60 @@ describe('Integration Tests - Routes', () => {
       },
     });
     expect(validate.body.user).toBeUndefined();
+    expect(validate.body.adEligible).toBe(false);
+  });
+
+  it('marks guest content sessions as ad eligible without exposing account details', async () => {
+    const res = await request(app)
+      .post('/api/content-session')
+      .set('X-Guest-Id', '841f8a36-fb33-4e1b-bb0d-e57f9346d34a')
+      .send({
+        connection: {
+          id: 'guest-ad-eligible',
+          type: 'xtream',
+          label: 'Guest Xtream',
+          config: { type: 'xtream', server: 'http://provider.example.com', user: 'u', pass: 'p' },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    const validate = await request(app).get(`/api/content-session/validate?token=${res.body.token}`);
+    expect(validate.status).toBe(200);
+    expect(validate.body.adEligible).toBe(true);
+    expect(validate.body.role).toBeUndefined();
+  });
+
+  it('marks current free users as ad eligible and regular users as ineligible', async () => {
+    mockAuth.verifyToken.mockReturnValue({ id: 1, username: 'free-user', role: 'free' });
+    mockAuth.getUser.mockReturnValue({ id: 1, username: 'free-user', role: 'free', disabled: 0 });
+    const free = await request(app)
+      .post('/api/content-session')
+      .set('authorization', 'Bearer valid-token')
+      .send({
+        connection: {
+          id: 'free-ad-eligible',
+          type: 'xtream',
+          config: { type: 'xtream', server: 'http://provider.example.com', user: 'u', pass: 'p' },
+        },
+      });
+
+    const freeValidate = await request(app).get(`/api/content-session/validate?token=${free.body.token}`);
+    expect(freeValidate.body.adEligible).toBe(true);
+
+    mockAuth.getUser.mockReturnValue({ id: 1, username: 'regular-user', role: 'regular', disabled: 0 });
+    const regular = await request(app)
+      .post('/api/content-session')
+      .set('authorization', 'Bearer valid-token')
+      .send({
+        connection: {
+          id: 'regular-ad-ineligible',
+          type: 'xtream',
+          config: { type: 'xtream', server: 'http://provider.example.com', user: 'u', pass: 'p' },
+        },
+      });
+
+    const regularValidate = await request(app).get(`/api/content-session/validate?token=${regular.body.token}`);
+    expect(regularValidate.body.adEligible).toBe(false);
   });
 
   it('POST /api/content-session creates and hydrates a scoped Stalker connection', async () => {

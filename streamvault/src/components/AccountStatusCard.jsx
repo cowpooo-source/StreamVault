@@ -65,7 +65,7 @@ export default function AccountStatusCard({ accessState = {}, onManageBilling, o
         </div>
         {endsAt && (
           <div>
-            <p className="text-gray-400 text-xs uppercase font-medium">Access Through</p>
+            <p className="text-gray-400 text-xs uppercase font-medium">Subscription expires</p>
             <p className="font-semibold">{endsAt}</p>
           </div>
         )}

@@ -50,7 +50,53 @@ describe("Account Connections Router", () => {
     expect(res2.status).toBe(401);
   });
 
-  it("reconciles connections for authenticated user", async () => {
+  it("rejects cross-origin or missing origin headers for cookie-authenticated requests with 403 csrf_rejected", async () => {
+    const user = await auth.createUser("csrf_conn_user", "pass1234", "free");
+    const session = await auth.authenticate(user.username, "pass1234");
+
+    // Missing origin/referer with cookie authentication
+    const resMissing = await request(app)
+      .post("/api/account/connections/reconcile")
+      .set("Cookie", `sv_auth=${session.token}`)
+      .send({ connectionIds: ["c1"] });
+    expect(resMissing.status).toBe(403);
+    expect(resMissing.body.code).toBe("csrf_rejected");
+
+    // Cross-origin with cookie authentication
+    const resCross = await request(app)
+      .post("/api/account/connections/reconcile")
+      .set("Cookie", `sv_auth=${session.token}`)
+      .set("Origin", "https://malicious-attacker.com")
+      .send({ connectionIds: ["c1"] });
+    expect(resCross.status).toBe(403);
+    expect(resCross.body.code).toBe("csrf_rejected");
+
+    // Cross-origin select with cookie authentication
+    const resSelectCross = await request(app)
+      .post("/api/account/connections/select")
+      .set("Cookie", `sv_auth=${session.token}`)
+      .set("Origin", "https://malicious-attacker.com")
+      .send({ selectConnectionId: "c1", deselectConnectionId: "c2" });
+    expect(resSelectCross.status).toBe(403);
+    expect(resSelectCross.body.code).toBe("csrf_rejected");
+  });
+
+  it("accepts same-origin cookie requests for /reconcile and /select", async () => {
+    const user = await auth.createUser("same_origin_user", "pass1234", "free");
+    const session = await auth.authenticate(user.username, "pass1234");
+
+    const res = await request(app)
+      .post("/api/account/connections/reconcile")
+      .set("Cookie", `sv_auth=${session.token}`)
+      .set("Host", "media.portalheaven.stream")
+      .set("Origin", "https://media.portalheaven.stream")
+      .send({ connectionIds: ["c1", "c2"] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.maxActive).toBe(2);
+  });
+
+  it("reconciles connections for authenticated user with Bearer token", async () => {
     const user = await auth.createUser("conn_user", "pass1234", "free");
     const session = await auth.authenticate(user.username, "pass1234");
 

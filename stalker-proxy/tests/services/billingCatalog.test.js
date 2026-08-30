@@ -47,7 +47,7 @@ describe("billingCatalog", () => {
         code: "standard_pass_30d",
         mode: "payment",
         currency: "usd",
-        amount: 399,
+        amount: 299,
         interval: null,
         priceId: "price_pass_30d_123",
       });
@@ -57,7 +57,7 @@ describe("billingCatalog", () => {
         code: "standard_monthly",
         mode: "subscription",
         currency: "usd",
-        amount: 299,
+        amount: 285,
         interval: "month",
         priceId: "price_monthly_123",
       });
@@ -143,6 +143,17 @@ describe("billingCatalog", () => {
         expect(() => createBillingCatalog(env)).toThrow(new RegExp(key));
       });
     }
+
+    it("rejects numeric amounts where Stripe Price IDs are required", () => {
+      const env = {
+        ...validEnabledEnv,
+        STRIPE_PRICE_STANDARD_PASS_30D: "2.99",
+        STRIPE_PRICE_STANDARD_MONTHLY: "2.85",
+        STRIPE_PRICE_STANDARD_YEARLY: "29.99",
+      };
+
+      expect(() => createBillingCatalog(env)).toThrow(/Stripe Price ID|price_id/i);
+    });
   });
 
   describe("billingConfigStatus", () => {

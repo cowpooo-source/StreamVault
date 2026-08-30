@@ -8,12 +8,44 @@ import { shouldStopAutomaticRecovery, playbackHttpError } from "../iptv-errors.j
 import { canStalkerRefresh, canStallRecover, chooseStallAction } from "../player-recovery.js";
 import PlaybackLoadingOverlay from "./PlaybackLoadingOverlay.jsx";
 
+const VAST_CONTENT_PLAY_COUNT_KEY = "sv-vast-content-play-count";
+let inMemoryVastContentPlayCount = 0;
+
+function getVastContentPlayCount() {
+  try {
+    const stored = sessionStorage.getItem(VAST_CONTENT_PLAY_COUNT_KEY);
+    if (stored === null) {
+      inMemoryVastContentPlayCount = 0;
+      return 0;
+    }
+    const count = Number.parseInt(stored, 10);
+    if (Number.isFinite(count) && count >= 0) {
+      inMemoryVastContentPlayCount = count;
+      return count;
+    }
+  } catch {
+    // Private browsing modes may deny sessionStorage access.
+  }
+  return inMemoryVastContentPlayCount;
+}
+
+function recordVastContentPlay() {
+  const nextCount = getVastContentPlayCount() + 1;
+  inMemoryVastContentPlayCount = nextCount;
+  try {
+    sessionStorage.setItem(VAST_CONTENT_PLAY_COUNT_KEY, String(nextCount));
+  } catch {
+    // Continue with the in-memory count when storage is unavailable.
+  }
+  return nextCount;
+}
+
 function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatchup, onProgress, onRefreshStream, onRequestRelay, t: pt, isAdEligible, connType }) {
   const t = pt || ((k) => k);
   const videoRef   = useRef(null);
   const hlsRef     = useRef(null);
   const mpegtsRef  = useRef(null);
-  const adPlayedRef = useRef(false);
+  const establishedContentRef = useRef(null);
   const adSessionRef = useRef(0);
   const adFinishRef = useRef(null);
   const playbackPhaseRef = useRef("idle");
@@ -801,6 +833,15 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
     let lastProgressTime = 0;
     let playbackSuccessReported = false;
     const playbackAttemptStartedAt = Date.now();
+    const adEligibleForCount = Boolean(ENABLE_VAST && VAST_URL && isAdEligible);
+    let contentEstablished = establishedContentRef.current === contentIdentity;
+    const nextContentPlayNumber = getVastContentPlayCount() + 1;
+    let adPending = Boolean(
+      adEligibleForCount
+      && !contentEstablished
+      && (nextContentPlayNumber === 1 || nextContentPlayNumber % 5 === 0)
+    );
+    let adStarted = false;
 
     const reportProgress = (completed = false, reason = 'interval') => {
       if (!onProgress || current.type === "live" || playbackPhaseRef.current !== "content") return;
@@ -885,7 +926,48 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       loadingTimerRef.current = null;
     };
 
+    async function startVastAfterContentReady() {
+      if (!adPending || adStarted || cancelled || sessionId !== adSessionRef.current) return;
+
+      adStarted = true;
+      adPending = false;
+      playbackPhaseRef.current = "ad";
+      video.pause();
+      destroyPlayers();
+      setIsLoading(true);
+
+      try {
+        const ad = await fetchVastAd(VAST_URL, video);
+        if (cancelled || sessionId !== adSessionRef.current) return;
+        if (ad?.mediaUrl) {
+          await playVastPreroll(video, ad, () => cancelled || sessionId !== adSessionRef.current);
+          if (cancelled || sessionId !== adSessionRef.current) return;
+        }
+      } catch {
+        // Ad failures must not block the requested stream.
+      } finally {
+        setAdState(null);
+      }
+
+      if (cancelled || sessionId !== adSessionRef.current) return;
+      playbackPhaseRef.current = "content";
+      initPlayer(current.url);
+      showOSD();
+    }
+
     const handlePlay = () => {
+      if (adEligibleForCount && playbackPhaseRef.current === "content" && !contentEstablished) {
+        contentEstablished = true;
+        establishedContentRef.current = contentIdentity;
+        recordVastContentPlay();
+      }
+      if (adPending && !adStarted) {
+        // The provider has delivered playable media. Pause the probe and run
+        // the preroll only now, so failed streams never request an ad.
+        handleReady();
+        void startVastAfterContentReady();
+        return;
+      }
       handleReady();
       if (!playbackSuccessReported && playbackPhaseRef.current === "content") {
         playbackSuccessReported = true;
@@ -1005,24 +1087,6 @@ function Player({ item, channelList, epgData, onClose, onFav, isFav, onPlayCatch
       setStreamErr(null);
       setAdState(null);
       destroyPlayers();
-
-      if (ENABLE_VAST && VAST_URL && isAdEligible && !adPlayedRef.current) {
-        adPlayedRef.current = true;
-        try {
-          playbackPhaseRef.current = "ad";
-          const ad = await fetchVastAd(VAST_URL, video);
-          if (cancelled || sessionId !== adSessionRef.current) return;
-          if (ad?.mediaUrl) {
-            await playVastPreroll(video, ad, () => cancelled || sessionId !== adSessionRef.current);
-            if (cancelled || sessionId !== adSessionRef.current) return;
-          }
-        } catch {
-          // Ad failures must not block the requested stream.
-        } finally {
-          setAdState(null);
-        }
-      }
-
       if (cancelled || sessionId !== adSessionRef.current) return;
       playbackPhaseRef.current = "content";
       initPlayer(current.url);

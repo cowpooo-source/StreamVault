@@ -193,4 +193,39 @@ describe('stalker catalog services', () => {
     release('done');
     await expect(first).resolves.toBe('done');
   });
+
+  it('prioritizes a foreground request over a queued background probe', async () => {
+    const coordinator = createProviderMetadataCoordinator({ maxActive: 1, maxQueued: 2, safetyMs: 1000, backgroundDelayMs: 25 });
+    const order = [];
+    let release;
+    const active = coordinator.runProviderMetadata({
+      providerKey: 'p',
+      requestKey: 'active',
+      operation: () => new Promise(resolve => { release = resolve; }),
+    });
+    const background = coordinator.runProviderMetadata({
+      providerKey: 'p',
+      requestKey: 'background',
+      priority: 'background',
+      operation: () => {
+        order.push('background');
+        return 'background';
+      },
+    });
+    const foreground = coordinator.runProviderMetadata({
+      providerKey: 'p',
+      requestKey: 'foreground',
+      operation: () => {
+        order.push('foreground');
+        return 'foreground';
+      },
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+    release('active');
+    await expect(foreground).resolves.toBe('foreground');
+    expect(order[0]).toBe('foreground');
+    await expect(background).resolves.toBe('background');
+    await expect(active).resolves.toBe('active');
+  });
 });

@@ -59,7 +59,11 @@ function abortError() {
 
 async function request(path, { fetcher = fetch, signal, enabled = FEATURE_ENABLED } = {}) {
   requireFeature(enabled);
-  const response = await fetcher(`${BASE}${path}`, { credentials: 'include', signal });
+  const response = await fetcher(`${BASE}${path}`, {
+    credentials: 'include',
+    headers: { 'X-StreamVault-Catalog-Mode': 'lazy-v1' },
+    signal,
+  });
   let body = null;
   try { body = await response.json(); } catch { /* structured error below */ }
   if (!response.ok) {
@@ -99,8 +103,13 @@ export function createStalkerCatalogApi({ fetcher = fetch, enabled = FEATURE_ENA
       const params = new URLSearchParams({ kind, contentToken, ...(refresh ? { refresh: '1' } : {}) });
       return run(`categories:${kind}:${requestKeyPart(contentToken)}:${refresh}`, requestSignal => request(`/categories?${params}`, { fetcher, signal: requestSignal, enabled }), signal);
     },
-    fetchCatalogPage({ kind, category = 'all', page = 1, pageSize = 100, contentToken, refresh = false, signal }) {
-      const params = new URLSearchParams({ kind, category, page: String(page), pageSize: String(pageSize), contentToken, ...(refresh ? { refresh: '1' } : {}) });
+    fetchCatalogPage({ kind, category, page = 1, pageSize = 100, contentToken, refresh = false, signal }) {
+      const normalizedCategory = String(category ?? '').trim();
+      if ((kind === 'vod' || kind === 'series') && !normalizedCategory) {
+        return Promise.reject(new StalkerCatalogError('category is required', 'invalid_parameter', 400));
+      }
+      const requestCategory = normalizedCategory || 'all';
+      const params = new URLSearchParams({ kind, category: requestCategory, page: String(page), pageSize: String(pageSize), contentToken, ...(refresh ? { refresh: '1' } : {}) });
       return run(`items:${kind}:${category}:${page}:${pageSize}:${requestKeyPart(contentToken)}:${refresh}`, async requestSignal => assertPage(await request(`/items?${params}`, { fetcher, signal: requestSignal, enabled })), signal);
     },
     searchProvider({ kind, category = 'all', query, page = 1, pageSize = 100, contentToken, signal }) {

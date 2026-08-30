@@ -8,12 +8,12 @@ const FIXED_PRODUCTS = Object.freeze({
     name: "Standard 30-Day Pass",
     mode: "payment",
     currency: "usd",
-    amount: 399,
+    amount: 299,
     interval: null,
     envPriceKey: "STRIPE_PRICE_STANDARD_PASS_30D",
     display: {
       title: "Standard 30-Day Pass",
-      priceFormatted: "$3.99",
+      priceFormatted: "$2.99",
       billingBehavior: "One-time payment, 30 days of access",
       cadence: "one-time",
     },
@@ -23,12 +23,12 @@ const FIXED_PRODUCTS = Object.freeze({
     name: "Standard Monthly",
     mode: "subscription",
     currency: "usd",
-    amount: 299,
+    amount: 285,
     interval: "month",
     envPriceKey: "STRIPE_PRICE_STANDARD_MONTHLY",
     display: {
       title: "Standard Monthly",
-      priceFormatted: "$2.99",
+      priceFormatted: "$2.85",
       billingBehavior: "Renews monthly until canceled",
       cadence: "month",
     },
@@ -160,6 +160,17 @@ function createBillingCatalog(env = process.env) {
     throw new Error(`Billing configuration incomplete. Missing required variables: ${missing.join(", ")}`);
   }
 
+  const invalidPriceIds = Object.values(FIXED_PRODUCTS)
+    .map((product) => env[product.envPriceKey])
+    .filter((priceId) => !/^price_[A-Za-z0-9_]+$/.test(String(priceId).trim()));
+  if (invalidPriceIds.length > 0) {
+    throw billingError(
+      "Each STRIPE_PRICE_* variable must contain a Stripe Price ID such as price_123, not a numerical amount",
+      "billing_configuration_invalid",
+      500,
+    );
+  }
+
   const livemode = env.STRIPE_LIVE_MODE === "true" || env.STRIPE_LIVE_MODE === true;
   const taxEnabled = env.STRIPE_TAX_ENABLED !== "false";
   const refundWindowDays = Number(env.BILLING_REFUND_WINDOW_DAYS) || 7;
@@ -235,8 +246,8 @@ function createBillingCatalog(env = process.env) {
     <p>StreamVault offers multiple access tiers:</p>
     <ul>
       <li><strong>Free Plan:</strong> Access with up to two concurrent connections and a single active login session.</li>
-      <li><strong>Standard 30-Day Pass ($3.99 USD):</strong> 30 calendar days of uninterrupted access with up to five concurrent connections and three active logins. Does not auto-renew.</li>
-      <li><strong>Standard Monthly Subscription ($2.99 USD/month):</strong> Recurring monthly access with up to five concurrent connections and three active logins. Automatically renews unless canceled.</li>
+      <li><strong>Standard 30-Day Pass ($2.99 USD):</strong> 30 calendar days of uninterrupted access with up to five concurrent connections and three active logins. Does not auto-renew.</li>
+      <li><strong>Standard Monthly Subscription ($2.85 USD/month):</strong> Recurring monthly access with up to five concurrent connections and three active logins. Automatically renews unless canceled.</li>
       <li><strong>Standard Yearly Subscription ($29.99 USD/year):</strong> Recurring annual access with up to five concurrent connections and three active logins. Automatically renews unless canceled.</li>
     </ul>
 

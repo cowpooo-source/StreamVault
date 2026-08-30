@@ -62,4 +62,13 @@ describe('Stalker compatibility services', () => {
       stalker_media_relay_bytes_total: 128,
     });
   });
+
+  it('tracks lazy legacy-route blocks with a fixed route label', () => {
+    metrics.increment('stalker_lazy_legacy_route_blocked_total');
+    metrics.increment('stalker_lazy_legacy_route_blocked_channels_total');
+    expect(metrics.snapshot()).toMatchObject({
+      stalker_lazy_legacy_route_blocked_total: 1,
+      stalker_lazy_legacy_route_blocked_channels_total: 1,
+    });
+  });
 });

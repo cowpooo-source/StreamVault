@@ -132,6 +132,38 @@ describe("parseVastDocument", () => {
     expect(result.mediaUrl).toBe("http://example.com/video.mp4");
     expect(result.mediaType).toBe("video/mp4");
   });
+
+  it("parses the HilltopAds VAST response shape", () => {
+    const xml = `
+      <VAST version="3.0">
+        <Ad id="hilltop-test">
+          <InLine>
+            <AdSystem>HilltopAds</AdSystem>
+            <AdTitle>Sponsored Ad</AdTitle>
+            <Creatives>
+              <Creative>
+                <Linear skipoffset="00:00:05">
+                  <Duration>00:00:36</Duration>
+                  <VideoClicks><ClickThrough>https://ads.example/click</ClickThrough></VideoClicks>
+                  <MediaFiles>
+                    <MediaFile type="video/webm">https://ads.example/ad.webm</MediaFile>
+                    <MediaFile type="video/mp4">https://ads.example/ad.mp4</MediaFile>
+                  </MediaFiles>
+                </Linear>
+              </Creative>
+            </Creatives>
+          </InLine>
+        </Ad>
+      </VAST>
+    `;
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    const result = parseVastDocument(doc, "https://crookedagreement.com/vast", null, 0, {});
+
+    expect(result.title).toBe("Sponsored Ad");
+    expect(result.mediaUrl).toBe("https://ads.example/ad.webm");
+    expect(result.duration).toBe(36);
+    expect(result.skipOffset).toBe(5);
+  });
 });
 
 describe("fetchVastAd", () => {

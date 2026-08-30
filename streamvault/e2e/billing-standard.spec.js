@@ -31,18 +31,18 @@ test.describe("Standard Billing & Support Journeys", () => {
               name: "Standard 30-Day Pass",
               mode: "payment",
               currency: "usd",
-              amount: 399,
+              amount: 299,
               interval: null,
-              display: { title: "Standard 30-Day Pass", priceFormatted: "$3.99" },
+              display: { title: "Standard 30-Day Pass", priceFormatted: "$2.99" },
             },
             {
               code: "standard_monthly",
               name: "Standard (Monthly)",
               mode: "subscription",
               currency: "usd",
-              amount: 299,
+              amount: 285,
               interval: "month",
-              display: { title: "Standard Monthly", priceFormatted: "$2.99 / month" },
+              display: { title: "Standard Monthly", priceFormatted: "$2.85 / month" },
             },
           ],
           currentPolicies: {
@@ -61,7 +61,7 @@ test.describe("Standard Billing & Support Journeys", () => {
             {
               id: "ord_sample_1",
               product_code: "standard_pass_30d",
-              amount: 399,
+              amount: 299,
               currency: "usd",
               status: "paid",
               is_refund_eligible: 1,
@@ -80,7 +80,7 @@ test.describe("Standard Billing & Support Journeys", () => {
             {
               id: "ord_sample_1",
               product_code: "standard_pass_30d",
-              amount: 399,
+              amount: 299,
               currency: "usd",
               status: "paid",
               is_refund_eligible: 1,
@@ -122,7 +122,7 @@ test.describe("Standard Billing & Support Journeys", () => {
     await appPage.getByRole("tab", { name: "Billing" }).click();
 
     await expect(appPage.getByText("Standard 30-Day Pass")).toBeVisible();
-    await expect(appPage.getByText("$3.99")).toBeVisible();
+    await expect(appPage.getByText("$2.99")).toBeVisible();
 
     // Verify Pro and Friend & Family are NOT exposed as public choices
     await expect(appPage.getByText(/Friend & Family/i)).not.toBeVisible();
@@ -195,7 +195,7 @@ test.describe("Standard Billing & Support Journeys", () => {
             {
               id: "ord_refundable_1",
               product_code: "standard_pass_30d",
-              amount: 399,
+              amount: 299,
               currency: "usd",
               status: "paid",
               is_refund_eligible: 1,
@@ -214,7 +214,7 @@ test.describe("Standard Billing & Support Journeys", () => {
             {
               id: "ord_refundable_1",
               product_code: "standard_pass_30d",
-              amount: 399,
+              amount: 299,
               currency: "usd",
               status: "paid",
               is_refund_eligible: 1,

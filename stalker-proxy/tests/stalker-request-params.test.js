@@ -51,4 +51,20 @@ describe("pickAndValidateStalkerParams", () => {
 
     expect(params.season_id).toBe("14042:1");
   });
+
+  it("allows the bounded short EPG provider action", () => {
+    const { params } = pickAndValidateStalkerParams({
+      type: "itv",
+      action: "get_short_epg",
+      ch_id: "123",
+      size: "10",
+    }, "root");
+
+    expect(params).toEqual({
+      type: "itv",
+      action: "get_short_epg",
+      ch_id: "123",
+      size: "10",
+    });
+  });
 });

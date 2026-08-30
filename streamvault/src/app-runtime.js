@@ -78,13 +78,13 @@ export async function safeJsonFetch(res) {
 export function makeXtreamAPI(server, user, pass) {
   const base = `${server}/player_api.php?username=${user}&password=${pass}`;
 
-  const fetchJson = async (url) => {
-    const res = await proxyFetch(url);
+  const fetchJson = async (url, opts = {}) => {
+    const res = await proxyFetch(url, opts);
     return safeJsonFetch(res);
   };
 
   return {
-    auth: () => fetchJson(base),
+    auth: (opts = {}) => fetchJson(base, opts),
     getLiveCategories: () => fetchJson(`${base}&action=get_live_categories`),
     getLive: () => fetchJson(`${base}&action=get_live_streams`),
     getVODCategories: () => fetchJson(`${base}&action=get_vod_categories`),
