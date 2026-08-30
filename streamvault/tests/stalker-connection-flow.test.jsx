@@ -59,6 +59,23 @@ function catalogResponse(url) {
   });
 }
 
+function requestUrls() {
+  return [
+    ...harness.requests,
+    ...harness.fetch.mock.calls.map(([url]) => String(url)),
+  ];
+}
+
+function isCatalogItemsRequest(url, kind) {
+  const parsed = new URL(url, "http://test.local");
+  return parsed.pathname.endsWith("/items") && parsed.searchParams.get("kind") === kind;
+}
+
+function isLegacyItemsRequest(url, kind) {
+  const parsed = new URL(url, "http://test.local");
+  return parsed.pathname.endsWith(`/stalker/${kind}`) && parsed.searchParams.has("cat");
+}
+
 vi.mock("../src/app-runtime.js", () => ({
   GUEST_ID: "guest-test",
   authHeaders: (headers = {}) => headers,
@@ -141,6 +158,7 @@ vi.mock("../src/components/ComparePlansDialog.jsx", () => ({ default: () => null
 
 describe("Stalker connection activation", () => {
   it("does not request VOD or Series item pages during activation", async () => {
+    vi.resetModules();
     vi.stubEnv("VITE_STALKER_LAZY_CATALOG_ENABLED", "true");
     vi.stubGlobal("fetch", harness.fetch);
     harness.requests.length = 0;
@@ -157,13 +175,46 @@ describe("Stalker connection activation", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(harness.requests.some(url => url.includes("kind=live"))).toBe(true);
-      expect(harness.requests.some(url => url.includes("kind=vod") && url.includes("/categories"))).toBe(true);
-      expect(harness.requests.some(url => url.includes("kind=series") && url.includes("/categories"))).toBe(true);
+      const urls = requestUrls();
+      expect(urls.some(url => url.includes("kind=live"))).toBe(true);
+      expect(urls.some(url => url.includes("kind=vod") && url.includes("/categories"))).toBe(true);
+      expect(urls.some(url => url.includes("kind=series") && url.includes("/categories"))).toBe(true);
     });
 
-    expect(harness.requests).toContainEqual(expect.stringContaining("kind=live"));
-    expect(harness.requests).not.toContainEqual(expect.stringMatching(/\/items\?.*kind=vod&category=/));
-    expect(harness.requests).not.toContainEqual(expect.stringMatching(/\/items\?.*kind=series&category=/));
+    const urls = requestUrls();
+    expect(urls).toContainEqual(expect.stringContaining("kind=live"));
+    expect(urls.some(url => isCatalogItemsRequest(url, "vod"))).toBe(false);
+    expect(urls.some(url => isCatalogItemsRequest(url, "series"))).toBe(false);
+  });
+
+  it("keeps the existing background catalog behavior when lazy loading is disabled", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_STALKER_LAZY_CATALOG_ENABLED", "false");
+    vi.stubGlobal("fetch", harness.fetch);
+    harness.requests.length = 0;
+    harness.fetch.mockReset();
+    harness.fetch.mockImplementation(async (url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("/stalker/catalog/v1/")) return catalogResponse(requestUrl);
+      if (requestUrl.includes("/stalker/epg")) return jsonResponse({ programs: {} });
+      return jsonResponse({});
+    });
+    window.history.pushState({}, "", "/content?token=content-token");
+
+    const { default: App } = await import("../src/App.jsx");
+    render(<App />);
+
+    await waitFor(() => {
+      const urls = requestUrls();
+      expect(urls.some(url => new URL(url, "http://test.local").pathname.endsWith("/stalker/channels"))).toBe(true);
+      expect(urls.some(url => new URL(url, "http://test.local").pathname.endsWith("/stalker/vod/categories"))).toBe(true);
+      expect(urls.some(url => new URL(url, "http://test.local").pathname.endsWith("/stalker/series/categories"))).toBe(true);
+    });
+
+    const urls = requestUrls();
+    expect(urls.some(url => isCatalogItemsRequest(url, "vod"))).toBe(false);
+    expect(urls.some(url => isCatalogItemsRequest(url, "series"))).toBe(false);
+    expect(urls.some(url => isLegacyItemsRequest(url, "vod"))).toBe(false);
+    expect(urls.some(url => isLegacyItemsRequest(url, "series"))).toBe(false);
   });
 });
