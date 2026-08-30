@@ -2029,20 +2029,28 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(deps.portalFetchChannelCatalogPage).not.toHaveBeenCalled();
   });
 
-  it('does not use the full-catalog fallback when a real live category page is empty', async () => {
+  it('switches a real live category with genres and an empty provider page to one shared snapshot', async () => {
+    const records = new Map();
     const deps = makeDeps({
-      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
-      portalFetchRetry: vi.fn().mockResolvedValue({ js: [] }),
-      portalFetchChannelCatalogPage: vi.fn().mockResolvedValue({
-        js: { data: [{ id: 8, name: 'Sports', tv_genre_id: 3, cmd: 'http://cdn.example/live.ts' }], max_page_items: 1, total_items: 1, total_pages: 1 },
+      cache: cacheBackedBy(records),
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        return { js: { data: [] } };
       }),
+      portalFetchChannelCatalog: streamCatalog([
+        { id: 1, name: 'Sports One', tv_genre_id: '3010', cmd: 'sports-one' },
+        { id: 2, name: 'Sports Two', tv_genre_id: '3010', cmd: 'sports-two' },
+      ]),
     });
 
-    const res = await request(makeApp(deps)).get('/stalker/catalog/v1/items?kind=live&category=3&page=1&pageSize=1');
+    const res = await request(makeApp(deps))
+      .get('/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC');
 
     expect(res.status).toBe(200);
-    expect(res.body.items).toEqual([]);
-    expect(deps.portalFetchChannelCatalogPage).not.toHaveBeenCalled();
+    expect(res.body.items.map(item => item.id)).toEqual([1, 2]);
+    expect(res.body.capabilities).toMatchObject({ mode: 'bounded_live_snapshot', pagination: 'unsupported' });
+    expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1);
   });
 
   it('uses cached live categories as compatibility evidence without another provider call', async () => {
@@ -2080,23 +2088,64 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(deps.portalFetchChannelCatalog).not.toHaveBeenCalled();
   });
 
-  it('does not build a full live snapshot for a real category request', async () => {
+  it('joins All and real-category requests to one live snapshot scan', async () => {
+    const records = new Map();
     const deps = makeDeps({
-      getSession: vi.fn().mockResolvedValue({ token: 't', base: 'https://p.com/', apiPath: 's.php', headers: {}, refresh: vi.fn() }),
-      portalFetchRetry: vi.fn().mockResolvedValue({ js: { data: [] } }),
-      portalFetchChannelCatalog: vi.fn(),
-      portalFetchChannelCatalogPage: vi.fn().mockResolvedValue({
-        js: { data: [{ id: 1, name: 'Sports One', tv_genre_id: '1164', cmd: 'sports-one' }], max_page_items: 1, total_items: 1, total_pages: 1 },
+      cache: cacheBackedBy(records),
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        return { js: { data: [] } };
       }),
+      portalFetchChannelCatalog: streamCatalog([
+        { id: 1, name: 'Sports One', tv_genre_id: '3010', cmd: 'sports-one' },
+      ]),
     });
 
     const app = makeApp(deps);
-    const res = await request(app).get('/stalker/catalog/v1/items?kind=live&category=1164&page=1&pageSize=100');
+    const [all, category] = await Promise.all([
+      request(app).get('/stalker/catalog/v1/items?kind=live&category=all&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC'),
+      request(app).get('/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC'),
+    ]);
 
-    expect(res.status).toBe(200);
-    expect(res.body.items).toEqual([]);
+    expect(all.status).toBe(200);
+    expect(category.status).toBe(200);
+    expect(all.body.items).toHaveLength(1);
+    expect(category.body.items).toHaveLength(1);
+    expect(deps.portalFetchChannelCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps provider-page-compatible live responses out of the snapshot path', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        return { js: { data: [{ id: 1, name: 'Sports One', tv_genre_id: '3010', cmd: 'sports-one' }] } };
+      }),
+      portalFetchChannelCatalog: vi.fn(),
+    });
+    const response = await request(makeApp(deps))
+      .get('/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC');
+
+    expect(response.status).toBe(200);
+    expect(response.body.items).toHaveLength(1);
     expect(deps.portalFetchChannelCatalog).not.toHaveBeenCalled();
-    expect(deps.portalFetchChannelCatalogPage).not.toHaveBeenCalled();
+  });
+
+  it('does not start compatibility scanning for terminal live provider failures', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        throw Object.assign(new Error('Provider rate limited'), { code: 'RATE_LIMITED', status: 429 });
+      }),
+      portalFetchChannelCatalog: vi.fn(),
+    });
+    const response = await request(makeApp(deps))
+      .get('/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC');
+
+    expect(response.status).toBe(429);
+    expect(deps.portalFetchChannelCatalog).not.toHaveBeenCalled();
   });
 
   it('does not duplicate a provider-supplied All live category', async () => {

@@ -416,31 +416,19 @@ function createStalkerRouter(deps) {
     }
     return { type: kind, action: 'get_ordered_list', category, page, p: page, search: query || undefined };
   };
-  const canUseLiveCatalogFallback = error => {
+  const isLiveProviderPageCompatibilityError = error => {
+    const status = Number(error?.status || error?.statusCode);
     const code = String(error?.code || '').toUpperCase();
     const message = String(error?.message || '');
-    if (['RATE_LIMITED', 'PROVIDER_COOLDOWN', 'ABORT_ERR', 'PROVIDER_METADATA_BUSY', 'AUTHORIZATION_FAILURE', 'UNAUTHORIZED'].includes(code)) return false;
-    return !error?.status || ![401, 403, 429, 499].includes(Number(error.status))
-      && !/rate.?limited|cooldown|unauthori[sz]ed|authorization|device not found|access denied|\b429\b|aborted/i.test(message);
+    if ([401, 403, 429, 499].includes(status)) return false;
+    if (['UNAUTHORIZED', 'AUTHORIZATION_FAILURE', 'RATE_LIMITED', 'PROVIDER_COOLDOWN', 'ABORT_ERR', 'PROVIDER_METADATA_BUSY'].includes(code)) return false;
+    if (/rate.?limit|cooldown|authorization|unauthori[sz]ed|device not found|access denied|metadata response exceeds|\b5\d\d\b|aborted/i.test(message)) return false;
+    return [404, 405, 501].includes(status)
+      || /unknown action|get_ichannels_via_api.*unsupported|unsupported.*get_ichannels_via_api/i.test(message);
   };
   const fetchCatalogProviderPage = async (session, request, signal) => {
     const params = providerPageParams(request);
-    const canBuildFullSnapshot = request.kind === 'live'
-      && request.category === 'all'
-      && request.snapshot === true
-      && portalFetchChannelCatalog;
-    try {
-      const payload = await portalFetchRetry(session, Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined)), undefined, signal);
-      if (request.kind === 'live' && request.page === 1 && !request.query && !itemsFromPayload(payload).length && canBuildFullSnapshot && liveSnapshotStore) {
-        return { js: { data: [] }, __liveSnapshotFallback: true };
-      }
-      return payload;
-    } catch (error) {
-      if (request.kind === 'live' && !request.query && canUseLiveCatalogFallback(error) && canBuildFullSnapshot) {
-        return { js: { data: [] }, __liveSnapshotFallback: true };
-      }
-      throw error;
-    }
+    return portalFetchRetry(session, Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined)), undefined, signal);
   };
   const liveSnapshotGenerationKey = identityHash => `${identityHash}|live|snapshot`;
   const buildOrJoinLiveSnapshot = async ({ session, portal, mac, catalogOpts, request, signal }) => {
@@ -1115,10 +1103,11 @@ function createStalkerRouter(deps) {
       if (refresh === '1') invalidateCatalog(portal, mac, parsed.kind, parsed.category, parsed.size, catalogOpts);
       const operationGeneration = catalogGenerations.current(epochKey);
       const operationCapabilityGeneration = catalogGenerations.current(capabilityGenerationKey);
-      if (parsed.kind === 'live' && !cache.get(catalogCategoryCacheKey(portal, mac, 'live', catalogOpts))) {
+      let liveCategoryEvidence = null;
+      if (parsed.kind === 'live' && parsed.page === 1 && !parsed.query) {
         const categoryGenerationKey = `${catalogIdentityKey(portal, mac, catalogOpts)}|categories|live`;
         const categoryOperationGeneration = catalogGenerations.current(categoryGenerationKey);
-        await getLiveCategoryEvidence({
+        liveCategoryEvidence = await getLiveCategoryEvidence({
           portal,
           mac,
           catalogOpts,
@@ -1144,13 +1133,47 @@ function createStalkerRouter(deps) {
             const snapshotPage = await buildOrJoinLiveSnapshot({ session, portal, mac, catalogOpts, request: parsed, signal });
             if (snapshotPage) return snapshotPage;
           }
-          const payload = await fetchCatalogProviderPage(session, { ...parsed }, signal);
-          if (parsed.snapshot && payload?.__liveSnapshotFallback) {
-            const nextCapabilities = catalogCapabilities.recordPaginationUnsupported(providerKey, parsed.kind, {
-              canCommit: () => catalogGenerations.isCurrent(capabilityGenerationKey, operationCapabilityGeneration),
-            });
+          let payload;
+          try {
+            payload = await fetchCatalogProviderPage(session, { ...parsed }, signal);
+          } catch (error) {
+            const canFallback = parsed.kind === 'live'
+              && parsed.page === 1
+              && !parsed.query
+              && liveCategoryEvidence?.hasNonAggregateCategory
+              && portalFetchChannelCatalog
+              && isLiveProviderPageCompatibilityError(error);
+            if (!canFallback) throw error;
+            stalkerMetrics.increment('stalker_live_snapshot_compatibility_detected_total');
             const snapshotPage = await buildOrJoinLiveSnapshot({ session, portal, mac, catalogOpts, request: parsed, signal });
-            return { ...snapshotPage, capabilities: nextCapabilities };
+            if (!snapshotPage) throw error;
+            if (snapshotPage.items?.length || (snapshotPage.complete && Number(snapshotPage.total) > 0)) {
+              catalogCapabilities.recordLiveSnapshotMode(providerKey, {
+                canCommit: () => catalogGenerations.isCurrent(capabilityGenerationKey, operationCapabilityGeneration),
+              });
+              stalkerMetrics.increment('stalker_live_snapshot_compatibility_activated_total');
+            }
+            return snapshotPage;
+          }
+          if (parsed.kind === 'live' && parsed.page === 1 && !parsed.query && !itemsFromPayload(payload).length
+            && liveCategoryEvidence?.hasNonAggregateCategory && portalFetchChannelCatalog) {
+            stalkerMetrics.increment('stalker_live_snapshot_compatibility_detected_total');
+            const snapshotPage = await buildOrJoinLiveSnapshot({ session, portal, mac, catalogOpts, request: parsed, signal });
+            if (!snapshotPage) return normalizeCatalogPage(payload, {
+              kind: parsed.kind,
+              category: parsed.category,
+              page: parsed.page,
+              pageSize: parsed.size,
+              capabilities: currentCapabilities,
+              mapItem: item => mapCatalogItem(parsed.kind, item, catalogBinding(portal, mac, catalogOpts)),
+            });
+            if (snapshotPage.items?.length || (snapshotPage.complete && Number(snapshotPage.total) > 0)) {
+              catalogCapabilities.recordLiveSnapshotMode(providerKey, {
+                canCommit: () => catalogGenerations.isCurrent(capabilityGenerationKey, operationCapabilityGeneration),
+              });
+              stalkerMetrics.increment('stalker_live_snapshot_compatibility_activated_total');
+            }
+            return snapshotPage;
           }
           const capabilities = currentCapabilities;
           const pageHistoryKey = `${catalogIdentityKey(portal, mac, catalogOpts)}|${parsed.kind}|${hashPart(parsed.category)}|`;
