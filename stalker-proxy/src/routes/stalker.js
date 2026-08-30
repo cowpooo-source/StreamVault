@@ -1007,6 +1007,41 @@ function createStalkerRouter(deps) {
     } catch (e) { respondWithError(res, e); }
   });
 
+  const getLiveCategoryEvidence = async ({ portal, mac, catalogOpts, providerKey, categoryGenerationKey, operationGeneration, signal }) => {
+    const key = catalogCategoryCacheKey(portal, mac, 'live', catalogOpts);
+    const cached = cache.get(key);
+    if (cached?.categories) {
+      return {
+        ...cached,
+        hasNonAggregateCategory: cached.categories.some(category => !category.aggregate),
+      };
+    }
+
+    return metadataCoordinator.runProviderMetadata({
+      providerKey,
+      requestKey: `categories|live|generation:${operationGeneration}`,
+      signal,
+      operation: async requestSignal => {
+        stalkerMetrics.increment('stalker_catalog_upstream_calls_total');
+        const session = await getSession(portal, mac, catalogOpts);
+        const payload = await portalFetchRetry(session, { type: 'itv', action: 'get_genres' }, undefined, requestSignal);
+        const raw = Array.isArray(payload?.js) ? payload.js : Array.isArray(payload?.data) ? payload.data : [];
+        const categories = normalizeCatalogCategories(raw, { includeSyntheticAll: true });
+        const result = {
+          kind: 'live',
+          categories,
+          capabilities: catalogCapabilities.get(providerKey, 'live'),
+          refreshedAt: Date.now(),
+        };
+        if (!catalogGenerations.isCurrent(categoryGenerationKey, operationGeneration)) {
+          throw catalogRequestError('Catalog request was superseded by a refresh', 'catalog_superseded', 409);
+        }
+        cache.set(key, result, LAZY_CATALOG_TTL.categories);
+        return { ...result, hasNonAggregateCategory: categories.some(category => !category.aggregate) };
+      },
+    });
+  };
+
   router.get("/catalog/v1/categories", requireStalkerAuth, validateCatalogMode, async (req, res) => {
     if (!lazyCatalogEnabled()) return res.status(404).json({ error: 'Lazy catalog is disabled', code: 'feature_disabled' });
     stalkerMetrics.increment('stalker_catalog_requests_total');
@@ -1026,6 +1061,18 @@ function createStalkerRouter(deps) {
       }
       const providerKey = catalogProviderKey(portal, mac, catalogOpts);
       const operationGeneration = catalogGenerations.current(categoryGenerationKey);
+      if (kind === 'live') {
+        const data = await getLiveCategoryEvidence({
+          portal,
+          mac,
+          catalogOpts,
+          providerKey,
+          categoryGenerationKey,
+          operationGeneration,
+          signal: requestContext.getStore()?.signal,
+        });
+        return res.json(data);
+      }
       const data = await metadataCoordinator.runProviderMetadata({
         providerKey,
         requestKey: `categories|${kind}|generation:${operationGeneration}`,
@@ -1068,6 +1115,19 @@ function createStalkerRouter(deps) {
       if (refresh === '1') invalidateCatalog(portal, mac, parsed.kind, parsed.category, parsed.size, catalogOpts);
       const operationGeneration = catalogGenerations.current(epochKey);
       const operationCapabilityGeneration = catalogGenerations.current(capabilityGenerationKey);
+      if (parsed.kind === 'live' && !cache.get(catalogCategoryCacheKey(portal, mac, 'live', catalogOpts))) {
+        const categoryGenerationKey = `${catalogIdentityKey(portal, mac, catalogOpts)}|categories|live`;
+        const categoryOperationGeneration = catalogGenerations.current(categoryGenerationKey);
+        await getLiveCategoryEvidence({
+          portal,
+          mac,
+          catalogOpts,
+          providerKey,
+          categoryGenerationKey,
+          operationGeneration: categoryOperationGeneration,
+          signal: requestContext.getStore()?.signal,
+        });
+      }
       if (refresh !== '1') {
         const cached = cache.get(key);
         if (cached) { stalkerMetrics.increment('stalker_catalog_cache_hits_total'); return res.json(materializeCatalogPage(cached, catalogBinding(portal, mac, catalogOpts))); }

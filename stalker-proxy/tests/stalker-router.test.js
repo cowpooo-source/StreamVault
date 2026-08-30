@@ -53,6 +53,35 @@ function makeGuestApp(deps) {
   return app;
 }
 
+function cacheBackedBy(records) {
+  return {
+    get: key => records.get(key),
+    set: (key, value) => records.set(key, value),
+    del: key => records.delete(key),
+    keysByPrefix: prefix => [...records.keys()].filter(key => key.startsWith(prefix)),
+    deleteKeysByPrefix: prefix => {
+      for (const key of [...records.keys()]) if (key.startsWith(prefix)) records.delete(key);
+    },
+    trackWatch: vi.fn(),
+    trackCacheHit: vi.fn(),
+    trackCacheMiss: vi.fn(),
+    trackPortalHealth: vi.fn(),
+    trackRequest: vi.fn(),
+    cacheKey: vi.fn((portal, mac, endpoint, extra = '') => `${portal}|${mac}|${endpoint}|${extra}`),
+  };
+}
+
+function stalkerSession() {
+  return { portal: 'http://p.com/c', mac: '00:1A:79:AA:BB:CC', headers: {}, refresh: vi.fn() };
+}
+
+function streamCatalog(items) {
+  return vi.fn(async (_session, _limit, _timeout, { onItem } = {}) => {
+    for (const item of items) await onItem?.(item);
+    return items;
+  });
+}
+
 function relayGrant(cmd = 'ABC') {
   const expires = Date.now() + 60_000;
   const commandHash = crypto.createHash('sha256').update(cmd).digest('hex');
@@ -2014,6 +2043,41 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.items).toEqual([]);
     expect(deps.portalFetchChannelCatalogPage).not.toHaveBeenCalled();
+  });
+
+  it('uses cached live categories as compatibility evidence without another provider call', async () => {
+    const records = new Map();
+    const deps = makeDeps({
+      cache: cacheBackedBy(records),
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        return { js: { data: [] } };
+      }),
+    });
+    const app = makeApp(deps);
+
+    await request(app).get('/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC');
+
+    expect(deps.portalFetchRetry.mock.calls.filter(([, params]) => params.action === 'get_genres')).toHaveLength(1);
+  });
+
+  it('does not activate compatibility fallback when live categories contain only All', async () => {
+    const deps = makeDeps({
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '*', title: 'All' }] };
+        return { js: { data: [] } };
+      }),
+      portalFetchChannelCatalog: vi.fn(),
+    });
+    const app = makeApp(deps);
+    const response = await request(app)
+      .get('/stalker/catalog/v1/items?kind=live&category=all&page=1&pageSize=100&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC');
+
+    expect(response.status).toBe(200);
+    expect(response.body.items).toEqual([]);
+    expect(deps.portalFetchChannelCatalog).not.toHaveBeenCalled();
   });
 
   it('does not build a full live snapshot for a real category request', async () => {
