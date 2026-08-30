@@ -12,14 +12,14 @@
 
 ## Implementation Status (2026-08-30)
 
-Tasks 1-5 are implemented and committed on `vps/http-static`. Task 6 browser coverage and operational documentation are implemented in the current working tree; automated release-gate checks pass, while sandbox-only manual verification remains outstanding.
+Tasks 1-5 are implemented and committed on `vps/http-static`. Task 6 browser coverage and operational documentation are implemented and committed; automated release-gate checks pass, while sandbox-only manual verification remains outstanding.
 
 - Task 1: PASS, commit `3fe347c`.
 - Task 2: PASS, commit `9b48f32`.
 - Task 3: PASS, commit `ef8f00c`.
 - Task 4: PASS, commit `3ed7590`.
 - Task 5: PASS, commit `4d17740`.
-- Task 6: automated implementation and release-gate checks PASS; sandbox-only manual smoke verification BLOCKED because this local session did not deploy or access sandbox.
+- Task 6: automated implementation and release-gate checks PASS, commit `93b17c5`; sandbox-only manual smoke verification BLOCKED because this local session did not deploy or access sandbox.
 
 ## Global Constraints
 
@@ -763,5 +763,5 @@ If `README.md` was not changed, omit it from `git add`.
 - [x] Confirm fallback suppression paths do not start a scan.
 - [x] Confirm completed zero-channel fallback is negative-cached for five minutes and does not persist snapshot mode.
 - [x] Confirm the frontend leaves categories visible during live snapshot loading.
-- [ ] Inspect `git diff --check` and `git status --short` before deployment.
+- [x] Inspect `git diff --check` and `git status --short` before deployment.
 - [ ] Deploy to sandbox only after all release-gate commands pass; do not deploy to media production in this plan.
