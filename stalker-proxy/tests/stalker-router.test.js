@@ -2174,6 +2174,32 @@ describe('versioned lazy Stalker catalog routes', () => {
     expect(deps.portalFetchRetry).toHaveBeenCalledTimes(providerCalls);
   });
 
+  it('does not let an empty fallback cache hide a valid cached live page', async () => {
+    const records = new Map();
+    const deps = makeDeps({
+      cache: cacheBackedBy(records),
+      getSession: vi.fn().mockResolvedValue(stalkerSession()),
+      portalFetchRetry: vi.fn().mockImplementation((_session, params) => {
+        if (params.action === 'get_genres') return { js: [{ id: '3010', title: 'Sports' }] };
+        if (params.genre === '3010') return { js: { data: [{ id: 1, name: 'Sports One', tv_genre_id: '3010', cmd: 'sports-one' }] } };
+        return { js: { data: [] } };
+      }),
+      portalFetchChannelCatalog: streamCatalog([]),
+    });
+    const app = makeApp(deps);
+    const base = '&portal=http://p.com/c&mac=00:1A:79:AA:BB:CC';
+
+    const valid = await request(app).get(`/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100${base}`);
+    const empty = await request(app).get(`/stalker/catalog/v1/items?kind=live&category=999&page=1&pageSize=100${base}`);
+    const cached = await request(app).get(`/stalker/catalog/v1/items?kind=live&category=3010&page=1&pageSize=100${base}`);
+
+    expect(valid.status).toBe(200);
+    expect(valid.body.items.map(item => item.id)).toEqual([1]);
+    expect(empty.body.items).toEqual([]);
+    expect(cached.status).toBe(200);
+    expect(cached.body.items.map(item => item.id)).toEqual([1]);
+  });
+
   it('does not publish a failed snapshot manifest after a refresh invalidates the build', async () => {
     const records = new Map();
     let release;

@@ -1116,6 +1116,10 @@ function createStalkerRouter(deps) {
       if (refresh === '1') invalidateCatalog(portal, mac, parsed.kind, parsed.category, parsed.size, catalogOpts);
       const operationGeneration = catalogGenerations.current(epochKey);
       const operationCapabilityGeneration = catalogGenerations.current(capabilityGenerationKey);
+      if (refresh !== '1') {
+        const cached = cache.get(key);
+        if (cached) { stalkerMetrics.increment('stalker_catalog_cache_hits_total'); return res.json(materializeCatalogPage(cached, catalogBinding(portal, mac, catalogOpts))); }
+      }
       if (parsed.kind === 'live' && refresh !== '1' && cache.get(liveFallbackNegativeKey(portal, mac, catalogOpts))) {
         stalkerMetrics.increment('stalker_live_snapshot_negative_cache_hits_total');
         return res.json(emptySnapshotPage(parsed));
@@ -1133,10 +1137,6 @@ function createStalkerRouter(deps) {
           operationGeneration: categoryOperationGeneration,
           signal: requestContext.getStore()?.signal,
         });
-      }
-      if (refresh !== '1') {
-        const cached = cache.get(key);
-        if (cached) { stalkerMetrics.increment('stalker_catalog_cache_hits_total'); return res.json(materializeCatalogPage(cached, catalogBinding(portal, mac, catalogOpts))); }
       }
       const data = await metadataCoordinator.runProviderMetadata({
         providerKey,

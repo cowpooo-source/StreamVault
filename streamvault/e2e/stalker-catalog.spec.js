@@ -1,7 +1,7 @@
 import { test, expect } from "./fixtures/app.fixture.js";
 import { mockAuthenticatedUser, mockTurnstile, mockAppBackend } from "./fixtures/auth.fixture.js";
 
-async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVodTitles = false, rateLimitedVod = false, delayLiveItems = false } = {}) {
+async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVodTitles = false, rateLimitedVod = false, liveItemsGate = null } = {}) {
   await mockAuthenticatedUser(appPage);
   await mockTurnstile(appPage);
   await mockAppBackend(appPage);
@@ -69,8 +69,8 @@ async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVod
     }
 
     if (url.pathname.endsWith("/items")) {
-      if (delayLiveItems && kind === "live" && page === 1) {
-        await new Promise(resolve => setTimeout(resolve, 350));
+      if (liveItemsGate?.promise && kind === "live" && page === 1 && category === liveItemsGate.category) {
+        await liveItemsGate.promise;
       }
       if (rateLimitedVod && kind === "vod" && category === "10") {
         return route.fulfill({
@@ -81,9 +81,12 @@ async function setupLazyStalker(appPage, { unsupportedLive = false, duplicateVod
       }
       const id = kind === "live" ? `live-${page}` : `${kind}-${category}-${page}`;
       const itemCount = kind === "live" && page === 1 ? 50 : 1;
+      const liveItemLabel = liveItemsGate?.category === category && liveItemsGate.label
+        ? liveItemsGate.label
+        : `Lazy Live ${page}`;
       const items = Array.from({ length: itemCount }, (_, index) => ({
         id: `${id}-${index + 1}`,
-        name: kind === "live" ? `Lazy Live ${page}-${index + 1}` : `${kind === "vod" ? "Movie" : "Series"} ${category} ${page}`,
+        name: kind === "live" ? `${liveItemLabel}-${index + 1}` : `${kind === "vod" ? "Movie" : "Series"} ${category} ${page}`,
         type: kind,
         url: kind === "live" ? "http://provider.test/live.ts" : "http://provider.test/content.mp4",
       }));
@@ -177,14 +180,21 @@ test.describe("Stalker lazy catalog", () => {
   });
 
   test("keeps live categories visible while the selected page is loading", async ({ appPage }) => {
-    const requests = await setupLazyStalker(appPage, { delayLiveItems: true });
+    let releaseLiveItems;
+    const liveItemsGate = new Promise(resolve => { releaseLiveItems = resolve; });
+    const requests = await setupLazyStalker(appPage, { liveItemsGate: { category: "live-11", label: "Lazy Live Group 2", promise: liveItemsGate } });
     await connectStalker(appPage);
 
     await appPage.locator(".sidebar .nav", { hasText: "Live TV" }).click();
     await expect(appPage.getByText("Live Group 1", { exact: true })).toBeVisible({ timeout: 15000 });
+    await appPage.getByText("Live Group 2", { exact: true }).click();
+    await expect.poll(() => requests.filter(request => request.path.endsWith("/items") && request.kind === "live" && request.category === "live-11").length).toBe(1);
     await expect(appPage.locator(".cats")).toBeVisible();
-    await expect(appPage.getByText("Lazy Live 1-1", { exact: true })).toBeVisible({ timeout: 15000 });
-    expect(requests.filter(request => request.path.endsWith("/items") && request.kind === "live" && request.category === "live-10")).toHaveLength(1);
+    await expect(appPage.locator(".cats .cat").filter({ hasText: "Live Group 2" })).toBeVisible();
+    await expect(appPage.getByText(/Loading Live Group 2/)).toBeVisible();
+    releaseLiveItems();
+    await expect(appPage.getByText("Lazy Live Group 2-1", { exact: true })).toBeVisible({ timeout: 15000 });
+    expect(requests.filter(request => request.path.endsWith("/items") && request.kind === "live" && request.category === "live-11")).toHaveLength(1);
   });
 
   test("refreshes the active VOD category without requesting the aggregate catalog", async ({ appPage }) => {
