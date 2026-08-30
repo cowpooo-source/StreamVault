@@ -105,6 +105,41 @@ describe('stalker catalog services', () => {
     expect(capabilities.get('p|m', 'vod')).toMatchObject({ pagination: 'supported', search: 'unsupported' });
   });
 
+  it('records bounded live snapshot mode without changing search capability', () => {
+    const store = new Map();
+    const cache = { get: key => store.get(key), set: (key, value) => store.set(key, value) };
+    const capabilities = createCatalogCapabilities({ cache, now: () => 1_000 });
+
+    capabilities.recordSearchSuccess('identity-a', 'live');
+    const result = capabilities.recordLiveSnapshotMode('identity-a');
+
+    expect(result).toMatchObject({
+      pagination: 'unsupported',
+      mode: 'bounded_live_snapshot',
+      search: 'supported',
+    });
+  });
+
+  it('keeps live snapshot capability for the 30-day live catalog TTL', () => {
+    let now = 1_000;
+    const store = new Map();
+    const cache = { get: key => store.get(key), set: (key, value) => store.set(key, value) };
+    const capabilities = createCatalogCapabilities({ cache, now: () => now });
+    capabilities.recordLiveSnapshotMode('identity-a');
+
+    now += 30 * 24 * 60 * 60_000 - 1;
+    expect(capabilities.get('identity-a', 'live')).toMatchObject({
+      mode: 'bounded_live_snapshot',
+      pagination: 'unsupported',
+    });
+
+    now += 2;
+    expect(capabilities.get('identity-a', 'live')).toMatchObject({
+      mode: 'provider_pages',
+      pagination: 'unknown',
+    });
+  });
+
   it('does not persist a capability result when its generation is stale', () => {
     const store = new Map();
     const cache = { get: key => store.get(key), set: (key, value) => store.set(key, value) };

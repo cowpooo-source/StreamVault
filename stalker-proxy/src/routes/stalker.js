@@ -286,7 +286,7 @@ function createStalkerRouter(deps) {
   const catalogCapabilityGenerationKey = (portal, mac, kind, opts = {}) =>
     `${catalogIdentityKey(portal, mac, opts)}|${kind}|capabilities`;
   const catalogCacheKey = (portal, mac, kind, category, page, size, query = '', opts = {}) =>
-    `stalker-catalog-v2|${catalogIdentityKey(portal, mac, opts)}|${kind}|${hashPart(category || 'all')}|${page}|${size}|${hashPart(query)}`;
+    `stalker-catalog-v3|${catalogIdentityKey(portal, mac, opts)}|${kind}|${hashPart(category || 'all')}|${page}|${size}|${hashPart(query)}`;
   const catalogCategoryCacheKey = (portal, mac, kind, opts = {}) =>
     `stalker-catalog-categories-v2|${catalogIdentityKey(portal, mac, opts)}|${kind}`;
   const catalogSnapshotKey = (portal, mac, kind, category, size, opts = {}) =>
@@ -318,7 +318,7 @@ function createStalkerRouter(deps) {
     const manifestKey = catalogSnapshotKey(portal, mac, kind, category, size, opts);
     const manifest = cache.get(manifestKey);
     const categoryPrefix = category == null ? '' : `${hashPart(category || 'all')}|`;
-    const pagePrefix = `stalker-catalog-v2|${identityKey}|${kind}|${categoryPrefix}`;
+    const pagePrefix = `stalker-catalog-v3|${identityKey}|${kind}|${categoryPrefix}`;
     const snapshotPrefix = `stalker-catalog-snapshot-v1|${identityKey}|${kind}|${categoryPrefix}`;
     catalogPageHistory.clear(`${identityKey}|${kind}|${category == null ? '' : `${hashPart(category || 'all')}|`}`);
     for (const buildKey of snapshotBuilds.keys()) {
